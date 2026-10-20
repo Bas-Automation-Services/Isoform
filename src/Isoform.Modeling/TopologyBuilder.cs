@@ -14,7 +14,9 @@ public static class TopologyBuilder
 {
     public sealed record Result(Topology Topology, int[] FaceOfQuad);
 
-    public static Result Build(Mesh mesh, IReadOnlyList<Surface> surfaces, double tolerance)
+    /// <param name="surfaces">Best <see cref="Oriented"/>, so a face of a cut matches the coincident face it touches.</param>
+    /// <param name="field">The body's field: with it, an edge between two planes that meet the part in one point collapses.</param>
+    public static Result Build(Mesh mesh, IReadOnlyList<Surface> surfaces, double tolerance, Field? field = null)
     {
         // Plain arrays: in WebAssembly, arrays of structs read through IReadOnlyList are many times slower.
         var quads = mesh.Quads.ToArray();
@@ -108,10 +110,22 @@ public static class TopologyBuilder
             if (s.A == t.A && s.B == t.B && End(ends[k - 1]) == End(ends[k])) chains.Union(ends[k - 1] / 2, ends[k] / 2);
         }
         var (chainIndex, _) = Number(segments.Count, chains);
+        // A chain between two planes whose common line meets the part in one point is no edge: the cells joined the
+        // faces across a sliver of a third one there (a cut whose trace touches a face at a vertex). It collapses to
+        // that vertex.
+        var collapsed = new Dictionary<int, List<int>>(); // chain root → its mesh vertices
+        Surface? Plane(HashSet<int> owners) => owners.All(o => surfaces[o].Kind == SurfaceKind.Plane) ? surfaces[owners.Min()] : null;
+        if (field is not null)
+            foreach (var chain in Enumerable.Range(0, segments.Count).GroupBy(chains.Find))
+            {
+                var (a, b) = (Plane(faceOwners[segments[chain.Key].A]), Plane(faceOwners[segments[chain.Key].B]));
+                var near = chain.SelectMany(k => new[] { segments[k].V1, segments[k].V2 }).Distinct().ToList();
+                if (a is not null && b is not null && PointContact(field, a, b, near.Select(v => vertices[v]).ToList(), tolerance)) collapsed[chain.Key] = near;
+            }
         // A chain's root is its smallest segment: numbered in that order.
         var topoEdges = new List<TopoEdge>();
         for (var i = 0; i < segments.Count; i++)
-            if (chainIndex[i] >= 0) topoEdges.Add(new TopoEdge(chainIndex[i], segments[i].A, segments[i].B));
+            if (chainIndex[i] >= 0 && !collapsed.ContainsKey(i)) topoEdges.Add(new TopoEdge(topoEdges.Count, segments[i].A, segments[i].B));
 
         // Vertices: clusters of mesh vertices where three or more faces meet.
         var corners = new List<(int Vertex, List<int> Faces)>();
@@ -144,6 +158,12 @@ public static class TopologyBuilder
                         clusters.Union(slot, other);
                 }
 
+        foreach (var chain in collapsed.Values)
+        {
+            var slots = chain.Where(cornerSlot.ContainsKey).Select(v => cornerSlot[v]).ToList();
+            foreach (var slot in slots.Skip(1)) clusters.Union(slots[0], slot);
+        }
+
         bool SameCorner((int Vertex, List<int> Faces) x, (int Vertex, List<int> Faces) y) =>
             x.Faces.All(y.Faces.Contains) || y.Faces.All(x.Faces.Contains)
             || (vertices[x.Vertex] - vertices[y.Vertex]).Length <= 10 * tolerance;
@@ -156,6 +176,91 @@ public static class TopologyBuilder
             .ToList();
 
         return new Result(new Topology(topoFaces, topoEdges, topoVertices, bodyOfQuad.Count), faceOfQuad);
+    }
+
+    /// <summary>
+    /// The planes' common line touches the part near the chain's vertices in a single point: the lowest field along it
+    /// is zero there and has risen ten tolerances away on both sides. A real edge, also between faces coincident within
+    /// the tolerance, keeps the field flat along it.
+    /// </summary>
+    static bool PointContact(Field field, Surface a, Surface b, List<Point3D> near, double tolerance)
+    {
+        var u = a.Axis.Cross(b.Axis);
+        if (u.Length < 1e-6) return false;
+        var (ha, hb) = (a.Axis.Dot(a.Origin.AsVector()), b.Axis.Dot(b.Origin.AsVector()));
+        var o = (b.Axis.Cross(u) * ha + u.Cross(a.Axis) * hb) / u.LengthSquared;
+        var origin = new Point3D(o.X, o.Y, o.Z);
+        var d = u.Normalized();
+        double F(double t) => field.Value(origin + d * t);
+
+        var ts = near.Select(p => (p - origin).Dot(d)).Order().ToList();
+        var reach = near.Max(p => ((p - origin) - d * (p - origin).Dot(d)).Length);
+        for (var k = 1; k < ts.Count; k++) reach = Math.Max(reach, ts[k] - ts[k - 1]);
+        // Golden section round the lowest vertex: along a line between planes the field is piecewise linear.
+        var t0 = ts.MinBy(F);
+        var (lo, hi) = (t0 - reach, t0 + reach);
+        const double golden = 0.6180339887498949;
+        for (var it = 0; it < 80 && hi - lo > tolerance / 100; it++)
+        {
+            var (x1, x2) = (hi - golden * (hi - lo), lo + golden * (hi - lo));
+            if (F(x1) <= F(x2)) hi = x2;
+            else lo = x1;
+        }
+        var t = (lo + hi) / 2;
+        var low = F(t);
+        // Below zero the line runs through material: a concave edge.
+        return Math.Abs(low) <= tolerance && F(t - 10 * tolerance) > low + tolerance / 10 && F(t + 10 * tolerance) > low + tolerance / 10;
+    }
+
+    /// <summary>
+    /// The surfaces as the body's boundary sees them: a plane whose leaf is complemented (a face of a cut) faces the
+    /// other way, so it matches a coincident face of the part it touches. A plane in the body both ways, or another
+    /// kind, keeps its record.
+    /// </summary>
+    public static IReadOnlyList<Surface> Oriented(IReadOnlyList<Surface> surfaces, Field body)
+    {
+        var sense = new Dictionary<int, bool>();
+        var both = new HashSet<int>();
+        void Walk(Field f, bool negated)
+        {
+            switch (f)
+            {
+                case LeafField l:
+                    var flipped = l.Complement ^ negated;
+                    if (sense.TryGetValue(l.Surface.Id, out var known) && known != flipped) both.Add(l.Surface.Id);
+                    sense[l.Surface.Id] = flipped;
+                    break;
+                case NegateField n:
+                    Walk(n.Child, !negated);
+                    break;
+                case MaxField m:
+                    foreach (var c in m.Children) Walk(c, negated);
+                    break;
+                case MinField m:
+                    foreach (var c in m.Children) Walk(c, negated);
+                    break;
+                case ProfileField p:
+                    foreach (var l in p.Leaves) Walk(l, negated);
+                    break;
+                case RoundedEdgeField r:
+                    Walk(r.A, negated);
+                    Walk(r.B, negated);
+                    break;
+                case LoopEdgeField l:
+                    Walk(l.Cap, negated);
+                    Walk(l.Side, negated);
+                    break;
+                case BlendField b:
+                    Walk(b.A, negated);
+                    Walk(b.B, negated);
+                    break;
+                case ShellField s:
+                    Walk(s.Outer, negated);
+                    break;
+            }
+        }
+        Walk(body, false);
+        return surfaces.Select(s => s.Kind == SurfaceKind.Plane && sense.GetValueOrDefault(s.Id) && !both.Contains(s.Id) ? s with { Axis = -s.Axis } : s).ToList();
     }
 
     /// <summary>Vertex → quads adjacency in compressed rows.</summary>
