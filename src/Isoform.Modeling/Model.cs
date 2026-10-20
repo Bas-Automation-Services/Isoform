@@ -7,8 +7,14 @@ public sealed record ModelingSettings
     /// <summary>Modeling tolerance in mm. Matches OCCT's Precision::Confusion.</summary>
     public double Tolerance { get; init; } = 1e-7;
 
-    /// <summary>Sampling cell size in mm for meshing and topology extraction.</summary>
+    /// <summary>
+    /// Finest cell size in mm for meshing and topology extraction: the resolution at edges and corners. Walls, gaps
+    /// and holes of at least 2 × CellSize are always resolved; smaller ones give a below-resolution diagnostic.
+    /// </summary>
     public double CellSize { get; init; } = 0.5;
+
+    /// <summary>Largest distance in mm the mesh may stray from a curved surface away from its edges.</summary>
+    public double ChordTolerance { get; init; } = 0.01;
 }
 
 /// <summary>Something the user or agent must know about: invalid input, degenerate geometry, a feature that failed.</summary>

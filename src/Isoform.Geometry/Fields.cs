@@ -40,6 +40,12 @@ public abstract class Field
     /// <summary>Safe bounds of the field over a box.</summary>
     public abstract Interval Bounds(Box3D box);
 
+    /// <summary>
+    /// If the zero set inside <paramref name="box"/> can only be part of one analytic surface, the smallest radius of
+    /// curvature it has there (∞ for a plane); otherwise null. Ask it of a field simplified for the same box.
+    /// </summary>
+    public virtual double? SinglePatch(Box3D box) => null;
+
     /// <summary>The bound every 1-Lipschitz field satisfies: f(centre) ± half the box diagonal.</summary>
     protected Interval LipschitzBounds(Box3D box)
     {
@@ -76,8 +82,19 @@ public sealed class LeafField(Surface surface, bool complement = false) : Field
 
     public override FieldSample? SampleSurface(int owner, Point3D p) => owner == Surface.Id ? Sample(p) : null;
 
+    public override double? SinglePatch(Box3D box) => Surface.Kind == SurfaceKind.Plane ? double.PositiveInfinity : Surface.Radius;
+
     public override Interval Bounds(Box3D box)
     {
+        if (Surface.Kind == SurfaceKind.Cylinder && AxisIndex(Surface.Axis) is { } axis)
+        {
+            // Axis-aligned cylinder: the nearest and farthest distance from the axis over the box are exact.
+            var (u, v) = ((axis + 1) % 3, (axis + 2) % 3);
+            double Gap(int a) => Math.Max(0, Math.Max(At(box.Min, a) - At(Surface.Origin, a), At(Surface.Origin, a) - At(box.Max, a)));
+            double Far(int a) => Math.Max(Math.Abs(At(box.Min, a) - At(Surface.Origin, a)), Math.Abs(At(box.Max, a) - At(Surface.Origin, a)));
+            var radial = new Interval(Math.Sqrt(Gap(u) * Gap(u) + Gap(v) * Gap(v)) - Surface.Radius, Math.Sqrt(Far(u) * Far(u) + Far(v) * Far(v)) - Surface.Radius);
+            return Complement ? radial.Negate() : radial;
+        }
         if (Surface.Kind != SurfaceKind.Plane) return LipschitzBounds(box);
         // Linear: exact over the box.
         var n = Surface.Axis;
@@ -86,6 +103,11 @@ public sealed class LeafField(Surface surface, bool complement = false) : Field
         var plane = new Interval(centre - spread, centre + spread);
         return Complement ? plane.Negate() : plane;
     }
+
+    static int? AxisIndex(Vector3D a) =>
+        a.Y == 0 && a.Z == 0 ? 0 : a.X == 0 && a.Z == 0 ? 1 : a.X == 0 && a.Y == 0 ? 2 : null;
+
+    static double At(Point3D p, int axis) => axis switch { 0 => p.X, 1 => p.Y, _ => p.Z };
 }
 
 /// <summary>Intersection.</summary>
@@ -130,13 +152,7 @@ public sealed class MaxField(IReadOnlyList<Field> children) : Field
     }
 
     // A child whose upper bound is below another child's lower bound is never the maximum in the box.
-    public override Field Simplify(Box3D box)
-    {
-        var bounds = Children.Select(c => c.Bounds(box)).ToArray();
-        var floor = bounds.Max(b => b.Lo);
-        var kept = Children.Where((_, i) => bounds[i].Hi >= floor).Select(c => c.Simplify(box)).ToList();
-        return kept.Count == 1 ? kept[0] : new MaxField(kept);
-    }
+    public override Field Simplify(Box3D box) => FieldAlgebra.Keep(this, Children, box, intersection: true);
 }
 
 /// <summary>Union.</summary>
@@ -180,13 +196,7 @@ public sealed class MinField(IReadOnlyList<Field> children) : Field
         return result;
     }
 
-    public override Field Simplify(Box3D box)
-    {
-        var bounds = Children.Select(c => c.Bounds(box)).ToArray();
-        var ceiling = bounds.Min(b => b.Hi);
-        var kept = Children.Where((_, i) => bounds[i].Lo <= ceiling).Select(c => c.Simplify(box)).ToList();
-        return kept.Count == 1 ? kept[0] : new MinField(kept);
-    }
+    public override Field Simplify(Box3D box) => FieldAlgebra.Keep(this, Children, box, intersection: false);
 }
 
 /// <summary>Complement. <see cref="FieldAlgebra.Normalize"/> pushes it down to the leaves where it can.</summary>
@@ -207,7 +217,9 @@ public sealed class NegateField(Field child) : Field
 
     public override Interval Bounds(Box3D box) => Child.Bounds(box).Negate();
 
-    public override Field Simplify(Box3D box) => new NegateField(Child.Simplify(box));
+    public override double? SinglePatch(Box3D box) => Child.SinglePatch(box);
+
+    public override Field Simplify(Box3D box) => Child.Simplify(box) is var c && ReferenceEquals(c, Child) ? this : new NegateField(c);
 }
 
 /// <summary>
@@ -221,9 +233,12 @@ public sealed class RoundedEdgeField : Field
 {
     readonly double _c;
 
+    readonly MaxField _sharp;
+
     public RoundedEdgeField(LeafField a, LeafField b, double radius, Surface fillet)
     {
         (A, B, Radius, Fillet) = (a, b, radius, fillet);
+        _sharp = new MaxField([a, b]);
         var origin = new Point3D(0, 0, 0);
         _c = a.Sample(origin).Gradient.Dot(b.Sample(origin).Gradient);
     }
@@ -284,6 +299,21 @@ public sealed class RoundedEdgeField : Field
         return new Interval(sharp.Lo, Math.Max(sharp.Hi, wMax - Radius)).Intersect(LipschitzBounds(box));
     }
 
+    /// <summary>A box entirely inside the fillet sector holds only the fillet: a cylinder, or a torus round a cylinder.</summary>
+    public override double? SinglePatch(Box3D box)
+    {
+        var denom = 1 - _c * _c;
+        if (denom < 1e-12) return null;
+        var (ia, ib) = (A.Bounds(box), B.Bounds(box));
+        var (aLo, aHi, bLo, bHi) = (ia.Lo + Radius, ia.Hi + Radius, ib.Lo + Radius, ib.Hi + Radius);
+        var alphaLo = (aLo - Math.Max(_c * bLo, _c * bHi)) / denom;
+        var betaLo = (bLo - Math.Max(_c * aLo, _c * aHi)) / denom;
+        if (alphaLo < 1e-9 || betaLo < 1e-9) return null;
+        var cylinder = A.Surface.Kind == SurfaceKind.Cylinder ? A.Surface.Radius
+            : B.Surface.Kind == SurfaceKind.Cylinder ? B.Surface.Radius : double.PositiveInfinity;
+        return Math.Min(Radius, cylinder);
+    }
+
     // Upper ends of α and β over the box: if either is negative, no point of the box is in the fillet sector.
     (double AlphaHi, double BetaHi) SectorReach(Interval ia, Interval ib, double denom)
     {
@@ -296,9 +326,9 @@ public sealed class RoundedEdgeField : Field
     public override Field Simplify(Box3D box)
     {
         var denom = 1 - _c * _c;
-        if (denom < 1e-12) return new MaxField([A, B]).Simplify(box);
+        if (denom < 1e-12) return _sharp.Simplify(box);
         var (alphaHi, betaHi) = SectorReach(A.Bounds(box), B.Bounds(box), denom);
-        return alphaHi < 0 || betaHi < 0 ? new MaxField([A, B]).Simplify(box) : this;
+        return alphaHi < 0 || betaHi < 0 ? _sharp.Simplify(box) : this;
     }
 
     FieldSample Rounded(FieldSample sa, FieldSample sb, double alpha, double beta)
@@ -364,16 +394,58 @@ public sealed class ShellField : Field
         return Interval.Max(c, new Interval(-c.Hi - Thickness, -c.Lo - Thickness));
     }
 
+    /// <summary>Where only the inner surface can win, it is the offset of a single child surface or unknown.</summary>
+    public override double? SinglePatch(Box3D box)
+    {
+        if (Child.Bounds(box).Hi >= -Thickness / 2 - 1e-9 || Child.Simplify(box) is not LeafField leaf) return null;
+        if (leaf.Surface.Kind == SurfaceKind.Plane) return double.PositiveInfinity;
+        var r = leaf.Complement ? leaf.Surface.Radius + Thickness : leaf.Surface.Radius - Thickness;
+        return r > 0 ? r : null;
+    }
+
     // Where the cavity cannot reach, the shell is just its child.
     public override Field Simplify(Box3D box)
     {
         var c = Child.Bounds(box);
-        return -c.Lo - Thickness < c.Lo ? Child.Simplify(box) : new ShellField(Child.Simplify(box), Thickness, _innerOf, _outerOf);
+        if (-c.Lo - Thickness < c.Lo) return Child.Simplify(box);
+        var child = Child.Simplify(box);
+        return ReferenceEquals(child, Child) ? this : new ShellField(child, Thickness, _innerOf, _outerOf);
     }
 }
 
 public static class FieldAlgebra
 {
+    /// <summary>
+    /// Simplify for an intersection or union: drops the children that can never decide it in the box and
+    /// simplifies the rest. Returns <paramref name="self"/> when nothing changes, so a settled tree allocates nothing.
+    /// </summary>
+    internal static Field Keep(Field self, IReadOnlyList<Field> children, Box3D box, bool intersection)
+    {
+        var n = children.Count;
+        Span<Interval> bounds = n <= 64 ? stackalloc Interval[n] : new Interval[n];
+        // Intersection: a child whose upper bound is below another's lower bound never wins. Union: mirrored.
+        var limit = intersection ? double.NegativeInfinity : double.PositiveInfinity;
+        for (var i = 0; i < n; i++)
+        {
+            bounds[i] = children[i].Bounds(box);
+            limit = intersection ? Math.Max(limit, bounds[i].Lo) : Math.Min(limit, bounds[i].Hi);
+        }
+        List<Field>? kept = null;
+        for (var i = 0; i < n; i++)
+        {
+            var keep = intersection ? bounds[i].Hi >= limit : bounds[i].Lo <= limit;
+            var simple = keep ? children[i].Simplify(box) : null;
+            if (kept is null && (!keep || !ReferenceEquals(simple, children[i])))
+            {
+                kept = new List<Field>(n);
+                for (var j = 0; j < i; j++) kept.Add(children[j]); // all kept and unchanged so far
+            }
+            if (keep) kept?.Add(simple!);
+        }
+        if (kept is null) return self;
+        return kept.Count == 1 ? kept[0] : intersection ? new MaxField(kept) : new MinField(kept);
+    }
+
     /// <summary>
     /// Pushes complements down to the leaves (De Morgan) and flattens nested intersections and unions,
     /// so two leaves that meet in a convex edge end up as siblings of one <see cref="MaxField"/>.

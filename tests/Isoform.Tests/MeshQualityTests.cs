@@ -31,11 +31,11 @@ public class MeshQualityTests(ITestOutputHelper output)
     }
 
     [Fact]
-    public void Error_shrinks_quadratically_and_meets_the_chord_tolerance()
+    public void With_a_tight_chord_tolerance_error_shrinks_quadratically_with_the_cell_size()
     {
         var errors = new[] { 0.5, 0.25, 0.125 }.Select(h =>
         {
-            var r = Regenerate(Small, h);
+            var r = new FrepModeler(new ModelingSettings { CellSize = h, ChordTolerance = 1e-6 }).Regenerate(Small);
             var (vertex, chord) = Errors(r);
             output.WriteLine($"h {h}: max vertex error {vertex:E2}, max chord error {chord:E2}");
             return (vertex, chord);
@@ -43,8 +43,42 @@ public class MeshQualityTests(ITestOutputHelper output)
 
         errors[1].chord.Should().BeLessThan(errors[0].chord / 3, "halving h should cut chord error ~4×");
         errors[2].chord.Should().BeLessThan(errors[1].chord / 3);
-        errors[2].chord.Should().BeLessThan(0.01, "default chord tolerance is 0.01 mm");
         errors.Should().OnlyContain(e => e.vertex <= 1e-7, "vertices lie on the exact surface within the modeling tolerance");
+    }
+
+    [Fact]
+    public void Coarse_cells_on_curved_surfaces_keep_the_chord_tolerance()
+    {
+        // Cells on a hole wall may grow to √(4rε), up to 8 times the 0.25 mm finest cell. R25 at 0.04 hits that limit.
+        foreach (var (d, chord) in new[] { (50.0, 0.04), (30, 0.04), (30, 0.01), (30, 0.0025) })
+        {
+            var doc = new PartDocument([new Block("plate", BooleanOp.New, [0, 0, 0], [d + 10, d + 10, 10]), new Hole("hole", [d / 2 + 5, d / 2 + 5], d)]);
+            var r = new FrepModeler(new ModelingSettings { CellSize = 0.25, ChordTolerance = chord }).Regenerate(doc);
+            var (vertex, error) = Errors(r);
+            output.WriteLine($"Ø{d} at chord tolerance {chord}: max chord error {error:E2}, {r.Mesh!.Quads.Count:N0} polygons");
+            error.Should().BeLessThanOrEqualTo(chord);
+            vertex.Should().BeLessThanOrEqualTo(1e-7);
+        }
+    }
+
+    [Fact]
+    public void Adaptive_mesh_has_the_uniform_topology_with_far_fewer_polygons()
+    {
+        foreach (var doc in new[] { EditSuite.Base, new([.. EditSuite.Base.Features, new Shell("shell", 1.5)]) })
+        {
+            var part = new Compiler(new ModelingSettings()).Compile(doc);
+            var adaptive = DualContouring.Build(part.Field!, part.Min, part.Max, 0.25, 0.01);
+            var uniform = DualContouring.Build(part.Field!, part.Min, part.Max, 0.25, 0.01, adaptive: false);
+            var (a, u) = (TopologyBuilder.Build(adaptive, part.Surfaces, 1e-7).Topology, TopologyBuilder.Build(uniform, part.Surfaces, 1e-7).Topology);
+            output.WriteLine($"{adaptive.Quads.Count:N0} adaptive vs {uniform.Quads.Count:N0} uniform polygons");
+
+            adaptive.IsWatertight().Should().BeTrue();
+            a.Faces.Select(f => string.Join(",", f.Sources)).Should().Equal(u.Faces.Select(f => string.Join(",", f.Sources)));
+            a.Edges.Count.Should().Be(u.Edges.Count);
+            a.Vertices.Select(v => v.Faces.Count).Should().Equal(u.Vertices.Select(v => v.Faces.Count));
+            adaptive.Quads.Count.Should().BeLessThan(uniform.Quads.Count / 3);
+            SignedVolume(adaptive).Should().BeApproximately(SignedVolume(uniform), SignedVolume(uniform) * 1e-4);
+        }
     }
 
     [Fact]
@@ -59,6 +93,7 @@ public class MeshQualityTests(ITestOutputHelper output)
         b.Topology.Edges.Should().Equal(a.Topology.Edges);
     }
 
+    /// <summary>On uniform cells pruning is a pure speed-up: certified-empty cells and dropped surfaces change nothing.</summary>
     [Fact]
     public void Interval_pruning_gives_the_bit_identical_mesh()
     {
@@ -79,8 +114,8 @@ public class MeshQualityTests(ITestOutputHelper output)
         foreach (var doc in docs)
         {
             var part = new Compiler(new ModelingSettings()).Compile(doc);
-            var pruned = DualContouring.Build(part.Field!, part.Min, part.Max, 0.5, prune: true);
-            var dense = DualContouring.Build(part.Field!, part.Min, part.Max, 0.5, prune: false);
+            var pruned = DualContouring.Build(part.Field!, part.Min, part.Max, 1.0, 0.01, adaptive: false, prune: true);
+            var dense = DualContouring.Build(part.Field!, part.Min, part.Max, 1.0, 0.01, adaptive: false, prune: false);
 
             pruned.Quads.Should().Equal(dense.Quads);
             pruned.Vertices.Select(Bits).Should().Equal(dense.Vertices.Select(Bits));

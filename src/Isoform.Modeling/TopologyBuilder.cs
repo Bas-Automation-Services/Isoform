@@ -8,7 +8,7 @@ namespace Isoform.Modeling;
 /// Derives result topology from the owner-labelled mesh on every regeneration. Identity comes from the sources;
 /// the mesh only says which owner regions are connected. Adjacent regions on geometrically identical surfaces
 /// (e.g. two coplanar tops) become one face that keeps both sources. Works on flat arrays: a vertex→quads
-/// adjacency instead of an edge dictionary.
+/// adjacency instead of an edge dictionary. A triangle is a quad whose last corner repeats.
 /// </summary>
 public static class TopologyBuilder
 {
@@ -36,6 +36,7 @@ public static class TopologyBuilder
             for (var e = 0; e < 4; e++)
             {
                 var (a, b) = Edge(quads[q], e);
+                if (a == b) continue; // a triangle's repeated corner
                 var n = incident.Sharing(a, b, around);
                 for (var k = 0; k < n; k++)
                 {
@@ -69,6 +70,7 @@ public static class TopologyBuilder
             for (var e = 0; e < 4; e++)
             {
                 var (a, b) = Edge(quads[q], e);
+                if (a == b) continue;
                 var n = incident.Sharing(a, b, around);
                 var lowest = true;
                 var mixed = false;
@@ -117,13 +119,21 @@ public static class TopologyBuilder
             fs.Sort();
             corners.Add((v, fs));
         }
+        // Neighbouring corner vertices are one vertex when one's faces include the other's (a corner spread over
+        // several cells) or when they coincide (a vertex of four or more faces). Different corners closer than a
+        // cell, such as the top and bottom of a thin plate's edge, stay apart.
         var cornerSlot = corners.Select((c, i) => (c.Vertex, i)).ToDictionary(x => x.Vertex, x => x.i);
         var clusters = new UnionFind(corners.Count);
         foreach (var (vertex, slot) in cornerSlot)
             foreach (var q in incident.QuadsOf(vertex).ToArray())
                 foreach (var (a, b) in Edges(quads[q]))
-                    if ((a == vertex || b == vertex) && cornerSlot.TryGetValue(a == vertex ? b : a, out var other))
+                    if (a != b && (a == vertex || b == vertex) && cornerSlot.TryGetValue(a == vertex ? b : a, out var other)
+                        && SameCorner(corners[slot], corners[other]))
                         clusters.Union(slot, other);
+
+        bool SameCorner((int Vertex, List<int> Faces) x, (int Vertex, List<int> Faces) y) =>
+            x.Faces.All(y.Faces.Contains) || y.Faces.All(x.Faces.Contains)
+            || (mesh.Vertices[x.Vertex] - mesh.Vertices[y.Vertex]).Length <= 10 * tolerance;
         var clusterIndex = Number(corners.Count, clusters);
         var topoVertices = corners
             .Select((c, i) => (Cluster: clusterIndex[clusters.Find(i)], c.Faces))
@@ -151,7 +161,7 @@ public static class TopologyBuilder
                 _start[q.A + 1]++;
                 _start[q.B + 1]++;
                 _start[q.C + 1]++;
-                _start[q.D + 1]++;
+                if (!q.IsTriangle) _start[q.D + 1]++;
             }
             for (var v = 0; v < mesh.Vertices.Count; v++) _start[v + 1] += _start[v];
             _quads = new int[_start[^1]];
@@ -161,7 +171,7 @@ public static class TopologyBuilder
                 _quads[cursor[_all[q].A]++] = q;
                 _quads[cursor[_all[q].B]++] = q;
                 _quads[cursor[_all[q].C]++] = q;
-                _quads[cursor[_all[q].D]++] = q;
+                if (!_all[q].IsTriangle) _quads[cursor[_all[q].D]++] = q;
             }
         }
 

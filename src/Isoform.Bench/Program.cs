@@ -6,7 +6,7 @@ using Isoform.Meshing;
 using Isoform.Modeling;
 using Isoform.Occt;
 
-// Baseline measurements for K2. Run with: dotnet run -c Release --project src/Isoform.Bench
+// Measurements for K2/K3. Run with: dotnet run -c Release --project src/Isoform.Bench
 var settings = new ModelingSettings();
 Console.WriteLine($"Isoform bench — {Environment.ProcessorCount} logical cores, .NET {Environment.Version}");
 
@@ -62,14 +62,17 @@ foreach (var (name, doc) in parts)
         return s;
     });
 
-    foreach (var h in new[] { 0.5, 0.25, 0.1 })
+    // Chord tolerances match the OCCT deflections below.
+    foreach (var (h, chord) in new[] { (0.5, 0.02), (0.25, 0.0054), (0.1, 0.0013) })
     {
+        GC.Collect();
         var total = Stopwatch.StartNew();
         var stages = new List<string>();
-        var mesh = DualContouring.Build(field, part.Min, part.Max, h, (stage, t) => stages.Add($"{stage}: {t.TotalMilliseconds:N0} ms"));
+        var mesh = DualContouring.Build(field, part.Min, part.Max, h, chord, (stage, t) => stages.Add($"{stage}: {t.TotalMilliseconds:N0} ms"));
         var meshMs = total.Elapsed.TotalMilliseconds;
+        var memory = System.Diagnostics.Process.GetCurrentProcess().PeakWorkingSet64;
         TopologyBuilder.Build(mesh, part.Surfaces, settings.Tolerance);
-        Console.WriteLine($"  mesh h={h}: {meshMs:N0} ms + topology {total.Elapsed.TotalMilliseconds - meshMs:N0} ms, {mesh.Quads.Count:N0} quads, {GC.GetTotalMemory(false) / 1e6:N0} MB live");
+        Console.WriteLine($"  mesh h={h} chord={chord}: {meshMs:N0} ms + topology {total.Elapsed.TotalMilliseconds - meshMs:N0} ms, {mesh.Triangles().Count():N0} triangles, {memory / 1e6:N0} MB peak working set, {mesh.ThinSpots.Count} thin spots");
         foreach (var s in stages) Console.WriteLine($"      {s}");
     }
 }

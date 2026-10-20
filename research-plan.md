@@ -204,3 +204,41 @@ Build methods come **after** a solid kernel. OCCT is only a test oracle from now
 
 Order: K1 → K2 → K3 → K4 → K5 → K6 → K7. The spike-1 reference layer, document format and edit suite stay;
 every new operation must keep the edit suite green.
+
+## 14. Kernel progress
+
+Benchmark: `src/Isoform.Bench`, 20 logical cores. "20-op" is a 100×50×10 plate with 8 holes, slots, a pocket, tabs,
+a boss, a chamfer and 3 fillets (60 surfaces). OCCT times are regenerate + tessellate at the same chord deflection.
+
+**K1 — guarantees (done).** Every field is 1-Lipschitz (property test over random point pairs) and `Bounds(box)`
+encloses every value in the box (random boxes, zero violations). Planes and axis-aligned cylinders have exact bounds.
+
+**K2 — fast evaluation (done for now).** Interval-pruned octree, per-cell simplification of the tree, Illinois root
+finding, allocation-free inner loops. Pruning is a pure speed-up: on uniform cells the mesh is bit-identical with and
+without it (test). A compiled instruction list with SIMD is deferred: it matters for lattices and AI variant sweeps,
+not for these parts.
+
+**K3 — adaptive, certified meshing (done).** Octree dual contouring (Ju et al.): cells holding one plane stay coarse
+at any size, one curved surface while chords stay within `ChordTolerance` (cell ≤ √(4rε)), everything else is refined
+to `CellSize`. Polygons are dual to minimal edges, so the mesh has no cracks.
+
+- *Guarantee:* walls, gaps and holes of at least 2 × `CellSize` are always resolved; smaller ones are either right
+  or reported as `below-resolution` (holes, shells and fillets by size; thin walls and gaps by the mesher, which
+  looks for opposing surfaces through one finest cell that do not meet within four cells).
+- *Torture suite* (236 cases at 0.5 mm cells: pocket walls in x/y/z, a hole beside a 30°/45° face, two holes, slot
+  gaps, small holes, thin plates; 0.2–3 cells; four grid alignments): all 87 cases ≥ 2 cells exact (faces, edges,
+  vertices, one body, watertight) with nothing reported. Below 2 cells: 91 correct, 58 wrong but reported, 0 silent.
+- *Chord tolerance:* measured error ≤ 0.67 ε on coarse curved cells.
+- On the 20-op part it found a real defect: hole h5 and the boss's y+ face touch tangentially (0.004 mm sliver).
+
+| 20-op, mesh + topology | K2 start | K2 end | K3 | OCCT |
+|---|---|---|---|---|
+| 0.5 mm cells, chord 0.02 mm | 0.8 s | 0.10 s | **0.07 s** | 0.22 s |
+| 0.25 mm, chord 0.0054 mm | 2.8 s | 0.32 s | **0.19–0.23 s** | 0.26 s |
+| 0.1 mm, chord 0.0013 mm | 18.7 s | 1.76 s | **0.63–0.69 s** | 0.23–0.26 s |
+| Triangles at 0.1 mm | ~3.5 M | ~3.5 M | **785 k** | 5.2 k |
+
+Still open: triangle count. Octree cells are isotropic, so a hole wall at chord 0.0013 mm needs cells of 0.1 mm in
+both directions where OCCT uses one strip along the axis. That gap closes with per-face tessellation from exact
+face boundaries (K6) or a bounded-error decimation pass, not with more octree work. Peak working set at 0.1 mm on
+20-op is ~670 MB.

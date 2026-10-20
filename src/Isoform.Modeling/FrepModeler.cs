@@ -17,7 +17,7 @@ public sealed class FrepModeler(ModelingSettings settings) : IModeler
         var part = new Compiler(Settings).Compile(document);
         if (part.Field is null) return new FrepResult(part.Diagnostics, null, part, null, []);
 
-        var mesh = DualContouring.Build(part.Field, part.Min, part.Max, Settings.CellSize);
+        var mesh = DualContouring.Build(part.Field, part.Min, part.Max, Settings.CellSize, Settings.ChordTolerance);
         var built = TopologyBuilder.Build(mesh, part.Surfaces, Settings.Tolerance);
         var topology = built.Topology;
 
@@ -25,12 +25,43 @@ public sealed class FrepModeler(ModelingSettings settings) : IModeler
         if (topology.BodyCount > 1)
             diagnostics.Add(new Diagnostic(Diagnostic.MultipleBodies, null, $"the part falls apart into {topology.BodyCount} bodies"));
 
+        diagnostics.AddRange(Resolution(document, part, mesh, diagnostics));
+
         var present = topology.Faces.SelectMany(f => f.Sources).ToHashSet();
-        foreach (var feature in document.Features.Where(f => f is not Fillet))
+        var unresolved = diagnostics.Where(d => d.Code == Diagnostic.BelowResolution).Select(d => d.FeatureId).ToHashSet();
+        foreach (var feature in document.Features.Where(f => f is not Fillet && !unresolved.Contains(f.Id)))
             if (!part.Surfaces.Any(s => s.Source.StartsWith(feature.Id + "/") && present.Contains(s.Source)))
                 diagnostics.Add(new Diagnostic(Diagnostic.NoEffect, feature.Id, $"{feature.Id} does not touch the part"));
 
         return new FrepResult(diagnostics, topology, part, mesh, built.FaceOfQuad);
+    }
+
+    /// <summary>
+    /// Features the cells cannot resolve: holes, shells and fillets below the guaranteed size, and every pair of
+    /// surfaces the mesher found with a thinner wall or gap between them. A thin spot at a tangent contact is
+    /// already reported as such.
+    /// </summary>
+    IEnumerable<Diagnostic> Resolution(PartDocument document, CompiledPart part, Mesh mesh, IReadOnlyList<Diagnostic> earlier)
+    {
+        var smallest = 2 * Settings.CellSize;
+        foreach (var feature in document.Features)
+        {
+            var size = feature switch { Hole x => x.Diameter, Shell x => x.Thickness, Fillet x => 2 * x.Radius, _ => double.PositiveInfinity };
+            if (size < smallest)
+                yield return new Diagnostic(Diagnostic.BelowResolution, feature.Id, $"{feature.Id} ({size:G4} mm) is below the resolved size of {smallest:G4} mm; use a smaller CellSize");
+        }
+
+        var tangent = earlier.Where(d => d.Code == Diagnostic.TangentContact).Select(d => d.FeatureId).ToHashSet();
+        string FeatureOf(int owner) => part.Surfaces[owner].Source.Split('/')[0];
+        foreach (var pair in mesh.ThinSpots.GroupBy(s => (s.OwnerA, s.OwnerB)))
+        {
+            var (a, b) = (FeatureOf(pair.Key.OwnerA), FeatureOf(pair.Key.OwnerB));
+            if (tangent.Contains(a) || tangent.Contains(b)) continue;
+            var thinnest = pair.MinBy(s => s.Thickness);
+            var p = thinnest.Location;
+            yield return new Diagnostic(Diagnostic.BelowResolution, b,
+                $"{part.Surfaces[pair.Key.OwnerA].Source} and {part.Surfaces[pair.Key.OwnerB].Source} are {thinnest.Thickness:G3} mm apart near ({p.X:F2}, {p.Y:F2}, {p.Z:F2}), below the resolved size of {smallest:G4} mm");
+        }
     }
 }
 
