@@ -55,8 +55,15 @@ public static class DualContouring
 
     readonly record struct Crossing(Point3D Point, Vector3D Normal, int Owner);
 
-    public static Mesh Build(Field field, Point3D min, Point3D max, double cellSize)
+    public static Mesh Build(Field field, Point3D min, Point3D max, double cellSize, Action<string, TimeSpan>? trace = null)
     {
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        void Stage(string name)
+        {
+            trace?.Invoke(name, clock.Elapsed);
+            clock.Restart();
+        }
+
         var h = cellSize;
         var origin = new Point3D(min.X - (2 + GridShift) * h, min.Y - (2 + GridShift) * h, min.Z - (2 + GridShift) * h);
         var nx = (int)Math.Ceiling((max.X - origin.X) / h) + 2;
@@ -72,6 +79,8 @@ public static class DualContouring
                 values[grid.Point(i, j, k)] = field.Value(grid.Position(i, j, k));
         });
 
+        Stage($"grid values ({values.Length:N0} points)");
+
         // Sign-changing grid edges, in a fixed order: (axis, i, j, k).
         var edges = new List<(int Axis, int I, int J, int K)>();
         for (var k = 0; k <= nz; k++)
@@ -84,6 +93,7 @@ public static class DualContouring
             if (k < nz && inside != values[grid.Point(i, j, k + 1)] < 0) edges.Add((2, i, j, k));
         }
 
+        Stage($"sign changes ({edges.Count:N0} edges)");
         var crossings = new Crossing[edges.Count];
         Parallel.For(0, edges.Count, e =>
         {
@@ -94,6 +104,8 @@ public static class DualContouring
             var s = field.Sample(c);
             crossings[e] = new(c, s.Gradient.Normalized(), s.Owner);
         });
+
+        Stage("crossings (bisection)");
 
         // Crossings per cell (each edge touches up to four cells).
         var cellCrossings = new Dictionary<int, List<int>>();
@@ -108,6 +120,7 @@ public static class DualContouring
         var positions = new Point3D[cells.Length];
         Parallel.For(0, cells.Length, c =>
             positions[c] = CellVertex(field, grid, cells[c], cellCrossings[cells[c]].Select(e => crossings[e]).ToList()));
+        Stage($"cell vertices ({cells.Length:N0} cells)");
         var vertexOfCell = new Dictionary<int, int>(cells.Length);
         for (var c = 0; c < cells.Length; c++) vertexOfCell[cells[c]] = c;
 
@@ -123,6 +136,7 @@ public static class DualContouring
                 : new Quad(around[3], around[2], around[1], around[0], crossings[e].Owner));
         }
 
+        Stage($"quads ({quads.Count:N0})");
         return new Mesh(positions, quads);
     }
 
