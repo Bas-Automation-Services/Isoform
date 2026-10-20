@@ -545,8 +545,16 @@ public static class FieldAlgebra
         // A face that a rounded edge in the same intersection holds is never above it: the rounded edge is at least
         // the face's own value, and equal to it with the face's own sample. Fillets sharing a face leave such pairs.
         if (intersection)
-            kept.RemoveAll(c => c is LeafField l && kept.Any(k => k is RoundedEdgeField r && (r.A == l || r.B == l)));
+            for (var i = kept.Count - 1; i >= 0; i--)
+                if (kept[i] is LeafField l && HeldByRoundedEdge(kept, l)) kept.RemoveAt(i);
         return kept.Count == 1 ? kept[0] : intersection ? new MaxField(kept) : new MinField(kept);
+    }
+
+    static bool HeldByRoundedEdge(List<Field> fields, LeafField leaf)
+    {
+        foreach (var f in fields)
+            if (f is RoundedEdgeField r && (r.A == leaf || r.B == leaf)) return true;
+        return false;
     }
 
     /// <summary>
