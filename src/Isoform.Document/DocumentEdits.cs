@@ -154,7 +154,7 @@ public static partial class DocumentEdits
     {
         for (var i = 0; i < list.Count; i++)
             if (list[i]?["id"] is JsonValue v && v.TryGetValue<string>(out var s) && s == id) return i;
-        throw new FormatException($"there is no {what} '{id}'");
+        throw new FormatException($"'{id}' is not a {what} id in the document");
     }
 
     static bool Exists(JsonObject root, string[] keys)

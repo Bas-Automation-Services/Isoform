@@ -93,13 +93,13 @@ public class DocumentEditTests
         var bundle = Text(Brackets);
 
         Problem(part, """[{ "set": "hole.diamter", "value": 60 }]""").Should().Contain("'hole.diamter' is not a field");
-        Problem(part, """[{ "set": "slot.diameter", "value": 60 }]""").Should().Contain("no feature 'slot'");
+        Problem(part, """[{ "set": "slot.diameter", "value": 60 }]""").Should().Contain("'slot' is not a feature id");
         Problem(part, """[{ "set": "plate.size.3", "value": 1 }]""").Should().Contain("no entry '3'");
         Problem(part, """[{ "set": "hole.diameter", "value": "wide" }]""").Should().Contain("does not read");
         Problem(part, """[{ "set": "hole.diameter.x", "value": 1 }]""").Should().Contain("has no field 'x'");
         Problem(part, """[{ "set": "parameters.width", "value": "120 / 2" }]""").Should().Contain("'='");
         Problem(part, """[{ "insert": { "type": "hole" } }]""").Should().Contain("with an id");
-        Problem(part, """[{ "insert": { "id": "h2", "type": "hole", "center": [1, 1], "diameter": 2 }, "before": "nope" }]""").Should().Contain("no feature 'nope'");
+        Problem(part, """[{ "insert": { "id": "h2", "type": "hole", "center": [1, 1], "diameter": 2 }, "before": "nope" }]""").Should().Contain("'nope' is not a feature id");
         Problem(part, """[{ "remove": "" }]""").Should().Contain("removed whole");
         Problem(part, """[{ "move": "hole" }]""").Should().Contain("set, an insert or a remove");
         Problem(part, """[{ "set": "hole.diameter" }]""").Should().Contain("needs a value");
@@ -109,10 +109,10 @@ public class DocumentEditTests
         Problem("{ not json", "[]").Should().Contain("does not read");
         Problem("""{ "format": "isoform/9" }""", "[]").Should().Contain("Unsupported format");
 
-        Problem(bundle, """[{ "set": "components.left.placement.origin", "value": [0, 0, 0] }]""").Should().Contain("no component 'left'");
+        Problem(bundle, """[{ "set": "components.left.placement.origin", "value": [0, 0, 0] }]""").Should().Contain("'left' is not a component id");
         Problem(bundle, """[{ "set": "components.upper.placment.origin", "value": [0, 0, 0] }]""").Should().Contain("not a field");
         Problem(bundle, """[{ "set": "upper.placement", "value": 1 }]""").Should().Contain("starts with components.<id> or mates.<id>");
-        Problem(bundle, """[{ "set": "mates.seat.offset", "value": 1 }]""").Should().Contain("no mate 'seat'");
+        Problem(bundle, """[{ "set": "mates.seat.offset", "value": 1 }]""").Should().Contain("'seat' is not a mate id");
         Problem(bundle, """[{ "insert": { "id": "x" } }]""").Should().Contain("a component (with a part) or a mate");
         Problem(bundle, """[{ "set": "components.pin.placement.origin", "value": [1, 2] }]""").Should().Contain("Expected 3 numbers");
         Problem(bundle, """[{ "document": "nut.json", "set": "plate.size.0", "value": 1 }]""").Should().Contain("no document 'nut.json'");
