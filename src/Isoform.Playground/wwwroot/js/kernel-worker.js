@@ -41,6 +41,7 @@ function gathered() {
 // Result v2 (src/Isoform.Interactive/README.md) and the mesh buffers; edits is an edit, an array of them, or [].
 function regenerate({ document, edits = [], cell, chord, slot = 'main' }) {
   const info = JSON.parse(kernel.Regenerate(document, JSON.stringify(edits), cell, chord, slot));
+  info.cell = cell; // the cell size it was made at: what the diagnostics' resolve and "back to" compare with
   if (info.error) return { info };
   return {
     info,
