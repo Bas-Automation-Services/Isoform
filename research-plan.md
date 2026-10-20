@@ -262,7 +262,54 @@ Sample, bounds enclose, simplification bit-exact) and keeps its face names under
   Inside a cut the tool's convex edge is rounded. Where two joined solids meet a filler is added, cut flush by both
   solids' other faces.
 
+- *Loop fillets and chamfers:* one feature on every edge round a face. Between a flat cap and the exact side of a
+  swept profile the rolling ball is exact for the whole loop (lines → cylinders, arcs → tori, chamfers → planes and
+  cones), on boss tops, outlines, pocket floors and the rims of cut-outs. Loop faces are named after the face across
+  the edge (`round/rib/a`).
+- *Multi-body parts:* `op: new` starts a named body anywhere; features aim at a body or the current one; `combine`
+  joins or cuts bodies. Each body is meshed on its own, so overlapping bodies stay separate solids.
+- *Playground:* the kernel compiled to WebAssembly runs in the browser (`src/Isoform.Playground`): document editor,
+  3D view with face names on hover, edge picking for fillets, diagnostics, example parts. One thread there, so
+  0.3–2 s per regeneration against ~50–100 ms on the desktop.
+
 Not yet: a spherical or rolled patch where fillets meet at a corner (they mitre, and two flush inside fillets leave
 the corner between them open); fillets on cone, sphere and torus edges; a fillet on the rim of a cut (a face of the
 part against a face of the tool); a single-edge fillet on a swept edge the profile is not behind; offsetting a shell. The OCCT baseline does not run the new features, so
 they are checked against analytic answers only; cross-checking them is part of K7.
+
+## 15. Where this stands (2026-10-20)
+
+**Is it adding something?** The pieces exist elsewhere: implicit kernels (nTop, libfive, Fidget) never fail a
+boolean but have no faces or exact output; B-rep kernels (Parasolid, ACIS, OCCT) are exact but fail or silently go
+wrong on booleans and fillets, and their face naming is brittle; text CAD for agents exists (CadQuery on OCCT, Zoo's
+KCL). What we have not seen together is: operations that cannot fail silently (certified, or a machine-readable
+reason), every face with a stable name through edits, cheap robust field queries, a canonical hashable document an
+agent can edit and verify, and exact output, as an open-source .NET kernel.
+
+**Risks and what follows from them:**
+1. *Exactness rests on K6.* Today the output is a mesh. A thin K6 spike (planar and cylindrical parts → STEP, OCCT
+   reads it back valid) comes right after K5, not at the end.
+2. *Breadth.* Mature kernels have decades of breadth; ours follows what the build methods of section 12 need.
+3. *Proof by demo.* One end-to-end case should show the point: a frame or bracket design model rationalised into
+   plates and tubes, exported as exact STEP, with a verification report.
+4. *Oracles.* New operations are checked against analytic answers; K7 adds OCCT cross-checks.
+
+## 16. Assemblies (planned)
+
+A layer above the kernel, built on what exists: canonical hashed documents, stable face names, rigid frames.
+
+1. *Assembly document* (`isoform-assembly/0`): components with stable instance ids, a part (path + content hash, so
+   regeneration is reproducible and the assembly's hash covers its parts), a placement frame, or a sub-assembly.
+2. *Geometry without merging:* an instance is its part's field seen through the inverse placement (exact and
+   1-Lipschitz under rigid motion). Identical parts share one compiled field and mesh, cached by hash. Faces get
+   occurrence paths: `bracket-left/plate/z+`.
+3. *Mates by name:* "`shaft/big` concentric with `bracket-left/bore/wall`", "`plate/z-` flush on `base/z+`".
+   Because names survive edits, mates do too; analytic faces keep the rigid-body solver small. Joints (rigid,
+   rotational, slider) fit the same scheme.
+4. *Queries across instances:* interference, clearance, mass properties, bill of materials (K5 applied per pair).
+5. *Generated assemblies:* the build methods of section 12 output an assembly of exact parts; the verification loop
+   unions its instances and compares them with the design model. Hand-made and generated assemblies are the same
+   document.
+
+Before that: part parameters (one bolt document, several lengths) and exact STEP with assembly structure (K6).
+Order: K5 → K6 spike → assembly document and placed instances with interference/clearance → mates → parameters.
