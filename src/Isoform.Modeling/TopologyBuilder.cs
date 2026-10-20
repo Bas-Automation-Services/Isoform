@@ -124,7 +124,7 @@ public static class TopologyBuilder
     }
 }
 
-sealed class UnionFind
+public sealed class UnionFind
 {
     readonly int[] _parent;
 

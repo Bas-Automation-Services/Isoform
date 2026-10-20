@@ -35,14 +35,11 @@ public sealed class Compiler(ModelingSettings settings)
             return s;
         }
 
+        if (DocumentRules.FirstProblem(doc, _tol) is { } invalid)
+            return new CompiledPart(null, surfaces, min, max, [invalid]);
+
         foreach (var feature in doc.Features)
         {
-            if (Validate(feature, tree) is { } invalid)
-            {
-                diagnostics.Add(invalid);
-                return new CompiledPart(null, surfaces, min, max, diagnostics);
-            }
-
             switch (feature)
             {
                 case Block b:
@@ -79,23 +76,6 @@ public sealed class Compiler(ModelingSettings settings)
         }
 
         return new CompiledPart(FieldAlgebra.Normalize(tree!), surfaces, min, max, diagnostics);
-    }
-
-    Diagnostic? Validate(Feature feature, Field? tree)
-    {
-        string? problem = feature switch
-        {
-            Block { Op: BooleanOp.New } when tree is not null => "only the first feature may start a new body",
-            Block { Op: not BooleanOp.New } when tree is null => "the first feature must be a new block",
-            Block b when b.Size.Any(s => s <= _tol) => $"block size must be positive, got [{string.Join(", ", b.Size)}]",
-            Hole h when h.Diameter <= _tol => $"hole diameter must be positive, got {h.Diameter}",
-            PlaneCut c when V(c.Normal).Length <= _tol => "plane-cut normal must not be zero",
-            Fillet f when f.Radius <= _tol => $"fillet radius must be positive, got {f.Radius}",
-            Fillet f when f.Edge.Length != 2 => "a fillet edge names exactly two source faces",
-            not Block when tree is null => "the first feature must be a new block",
-            _ => null,
-        };
-        return problem is null ? null : new Diagnostic(Diagnostic.InvalidParameter, feature.Id, problem);
     }
 
     static Field BlockField(Block b, Func<string, SurfaceKind, Point3D, Vector3D, double, Surface> add)

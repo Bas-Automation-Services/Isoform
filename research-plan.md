@@ -1,7 +1,6 @@
 # Isoform: Geometry Core Research Plan
 
-> Status: proposed (2026-10-20). Builds on `cad_geometry_engine_draft.md`.
-> Nothing is implemented until this plan is approved.
+> Status: spike run (2026-10-20); results in section 11. Builds on `cad_geometry_engine_draft.md`.
 
 ## 1. Goal
 
@@ -145,4 +144,35 @@ and closed-source applications can still be built on top. Consequences for the s
 
 ## 10. Still open
 
-- Nothing blocking the spike. New questions get added here as they come up.
+- Direction after the spike (section 11): build the product on OCCT, or keep F-rep in a supporting role.
+
+## 11. Results (2026-10-20)
+
+Default settings: tolerance 1e-7 mm, cell size 0.5 mm. Core: 27 tests, OCCT baseline: 19 tests, all green.
+
+| | Result | Evidence |
+|---|---|---|
+| H1 – References | **Pass.** All 11 edit cases resolve as expected, including split, merge, gone and ambiguous piece references. The base part's derived topology is exactly a B-rep's: 8 faces, 17 edges, 10 vertices. | `EditSuiteTests`, `FrepTopologyTests` |
+| H2 – Advantage over B-rep | **Fail: no naming advantage.** On OCCT with history-based naming plus the same source/signature layer, every reference resolves identically (0 mismatches on either backend). Topology is identical in 10 of 11 cases. The only difference is E03 (hole tangent to a side): F-rep flags the zero-thickness contact; OCCT builds a pinched solid, splits the hole wall in two, reports it valid, and gives no warning. | `BackendComparisonTests`, `reference-comparison.md` in its output |
+| H3a – Mesh | **Pass.** Watertight, outward, volume within 7e-5 of exact. Vertices lie on the exact surface to ~1e-15 mm. Chord error converges quadratically: 2.0e-2 / 5.4e-3 / 1.3e-3 mm at 0.5 / 0.25 / 0.125 mm cells, so 0.01 mm needs cells of about 0.35 mm around R2 features. | `MeshQualityTests` |
+| H3b – Exact output | **Pass, via OCCT.** The same document rebuilt in OCCT exports to STEP, and its faces map 1:1 to the F-rep faces by sources and neighbour signatures. The exact output is a B-rep, so the B-rep has to be built anyway. | `BackendComparisonTests` |
+| H4 – Fillets | **Pass for the supported pairs.** Fillet vertices lie within 7e-15 mm of the analytic rolling-ball surface at 90°, 60° and 120°, and on the hole-edge torus. OCCT's own fillet surfaces are the same cylinders and torus to 1e-9. Limits: exact only for plane–plane and plane ⊥ cylinder; only convex edges inside one intersection. | `FilletTests`, `FilletCrossCheckTests` |
+| H5 – Determinism | **Pass.** Golden content hash; regeneration is bit-for-bit identical. | `DocumentTests`, `MeshQualityTests` |
+
+### What this means
+
+- **Naming robustness comes from the reference layer, not the representation.** Binding references to
+  sources (feature + primitive surface) plus neighbour signatures, with explicit split / merged / gone / ambiguous,
+  works the same on both backends. F-rep's ownership makes the sources cheap to compute; OCCT's history gives them too.
+- **Exact output requires a B-rep anyway.** STEP came from OCCT. In a pure F-rep product the B-rep becomes a
+  second, always-required representation, and keeping it consistent is the hard part.
+- **Fillets are F-rep's weak spot beyond the simple cases.** Exactness here relied on closed-form pairs; general
+  surface pairs, concave edges, variable radius and corner blends are routine for OCCT and open research for F-rep.
+- **Where F-rep did better:** cheap point classification caught the degenerate tangent case that OCCT built
+  silently. Analytic checks like that can also run in front of a B-rep kernel.
+
+### Stop / go
+
+By section 9, H2 equal means **pivot: build on OCCT B-rep and keep the reference + versioning layer.**
+Everything backend-neutral carries over unchanged: `Isoform.Document` (canonical format, hash, edits),
+the `Isoform.Modeling` API (topology, references, diagnostics), the edit suite, and the comparison harness.

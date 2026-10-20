@@ -1,8 +1,18 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
+  <PropertyGroup>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <!-- Output of native/Isoform.Occt (isoform_occt.dll + OCCT DLLs). Optional: without it the OCCT modeler is unavailable. -->
+    <IsoformNativeDir Condition="'$(IsoformNativeDir)' == ''">$(MSBuildThisFileDirectory)../../native/build/Release/</IsoformNativeDir>
+  </PropertyGroup>
+
   <ItemGroup>
     <ProjectReference Include="../Isoform.Document/Isoform.Document.csproj" />
     <ProjectReference Include="../Isoform.Modeling/Isoform.Modeling.csproj" />
+  </ItemGroup>
+
+  <ItemGroup Condition="Exists('$(IsoformNativeDir)isoform_occt.dll')">
+    <None Include="$(IsoformNativeDir)*.dll" Link="%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" Visible="false" />
   </ItemGroup>
 
 </Project>
