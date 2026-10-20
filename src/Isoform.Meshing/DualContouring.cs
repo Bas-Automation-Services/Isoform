@@ -67,7 +67,7 @@ public sealed class Mesh(IReadOnlyList<Point3D> vertices, IReadOnlyList<Quad> qu
 /// roots of the exact field, normals its exact gradients, and each cell vertex minimises the quadric error of its
 /// crossings' tangent planes, so sharp edges and corners are reproduced. Output is deterministic.
 /// </summary>
-public static class DualContouring
+public static partial class DualContouring
 {
     // Shifts the grid off round numbers so grid points never land exactly on axis-aligned faces.
     const double GridShift = 0.31830988618379067;
@@ -79,12 +79,15 @@ public static class DualContouring
     // top-level nodes, so this goes deeper than the core count alone would suggest.
     const int ParallelDepth = 4;
 
-    readonly record struct Crossing(Point3D Point, Vector3D Normal, int Owner);
+    internal readonly record struct Crossing(Point3D Point, Vector3D Normal, int Owner);
 
-    /// <summary>A sign-changing minimal edge, the four leaves around it in counter-clockwise order, and the smallest.</summary>
-    readonly record struct Hit(Point3D P0, Point3D P1, bool StartInside, Node N0, Node N1, Node N2, Node N3, Node Smallest);
+    /// <summary>
+    /// A sign-changing minimal edge, the four leaves around it in counter-clockwise order, and the smallest. The edge
+    /// starts at grid point (I, J, K) and runs along <see cref="Axis"/> for the smallest leaf's size.
+    /// </summary>
+    readonly record struct Hit(Point3D P0, Point3D P1, bool StartInside, Node N0, Node N1, Node N2, Node N3, Node Smallest, int I, int J, int K, int Axis);
 
-    sealed class Node(int i, int j, int k, int size)
+    internal sealed class Node(int i, int j, int k, int size)
     {
         public readonly int I = i, J = j, K = k, Size = size;
         public Node[]? Children;
@@ -95,12 +98,18 @@ public static class DualContouring
         /// <summary>A finest leaf holding more than one surface.</summary>
         public bool Multi;
 
+        /// <summary>A region of a <see cref="MeshPlan"/>, not split yet: the field simplified for the node's box.</summary>
+        public Field? Pending;
+
         public int Id = -1;
         public bool IsLeaf => Children is null;
         public bool IsEmpty => Children is null && Field is null;
     }
 
-    sealed record Context(Grid Grid, bool Prune, bool Adaptive, double ChordTolerance);
+    /// <param name="UnitDepth">Depth at which a plan stops splitting and leaves the node pending; -1 never stops.</param>
+    /// <param name="Region">A region job builds only the nodes touching this node's closed box.</param>
+    /// <param name="Serial">No nested parallelism: region jobs run in parallel with each other instead.</param>
+    internal sealed record Context(Grid Grid, bool Prune, bool Adaptive, double ChordTolerance, int UnitDepth = -1, Node? Region = null, bool Serial = false);
 
     /// <param name="chordTolerance">Largest distance a polygon may stray from a curved surface away from edges.</param>
     /// <param name="adaptive">False refines every surface cell to <paramref name="cellSize"/>.</param>
@@ -108,8 +117,9 @@ public static class DualContouring
     /// Skip cells whose interval bounds prove they hold no surface, and simplify the field per cell. With
     /// <paramref name="adaptive"/> false the mesh is identical either way; false exists to test exactly that.
     /// </param>
+    /// <param name="snapGrid">Put the lattice on a fixed world grid instead of the part's corner (see <see cref="Plan"/>).</param>
     public static Mesh Build(Field field, Point3D min, Point3D max, double cellSize, double chordTolerance,
-        Action<string, TimeSpan>? trace = null, bool adaptive = true, bool prune = true)
+        Action<string, TimeSpan>? trace = null, bool adaptive = true, bool prune = true, bool snapGrid = false)
     {
         var clock = System.Diagnostics.Stopwatch.StartNew();
         void Stage(string name)
@@ -118,17 +128,10 @@ public static class DualContouring
             clock.Restart();
         }
 
-        var h = cellSize;
-        var origin = new Point3D(min.X - (2 + GridShift) * h, min.Y - (2 + GridShift) * h, min.Z - (2 + GridShift) * h);
-        var nx = (int)Math.Ceiling((max.X - origin.X) / h) + 2;
-        var ny = (int)Math.Ceiling((max.Y - origin.Y) / h) + 2;
-        var nz = (int)Math.Ceiling((max.Z - origin.Z) / h) + 2;
-        var grid = new Grid(origin, h, nx, ny, nz);
+        var grid = Grid.Around(min, max, cellSize, snapGrid);
         var ctx = new Context(grid, prune, adaptive && prune, chordTolerance);
 
-        var rootSize = 1;
-        while (rootSize < Math.Max(nx, Math.Max(ny, nz))) rootSize *= 2;
-        var root = new Node(0, 0, 0, rootSize);
+        var root = new Node(0, 0, 0, grid.RootSize);
         Subdivide(root, field, ctx, 0);
         var leaves = new List<Node>();
         Number(root, leaves);
@@ -169,6 +172,7 @@ public static class DualContouring
         var vertexOfCell = new int[leaves.Count];
         for (var v = 0; v < cellCount; v++) vertexOfCell[(int)(pairs[cellStart[v]] >> 32)] = v;
 
+        var regions = new ConcurrentDictionary<(int, int, int, int), Field>();
         var positions = new Point3D[cellCount];
         Parallel.For(0, cellCount, v =>
         {
@@ -176,45 +180,67 @@ public static class DualContouring
             Span<Crossing> local = n <= 48 ? stackalloc Crossing[48] : new Crossing[n];
             for (var k = 0; k < n; k++) local[k] = crossings[(int)(uint)pairs[cellStart[v] + k]];
             var node = leaves[(int)(pairs[cellStart[v]] >> 32)];
-            // Where several surfaces meet the vertex may sit up to half a cell outside the node, so it gets a field
-            // exact one cell size around it. A vertex on one surface is projected onto that surface.
-            var near = !prune ? field : SingleOwner(local[..n]) ? node.Field! : field.Simplify(grid.Box(node, node.Size));
+            // A vertex on one surface is projected onto that surface.
+            var near = !prune ? field : SingleOwner(local[..n]) ? node.Field! : Near(field, grid, node,
+                regions.GetOrAdd(grid.UnitOf(node), u => field.Simplify(grid.Box(u, 1))), out _);
             positions[v] = CellVertex(near, grid, node, local[..n]);
         });
         Stage($"cell vertices ({cellCount:N0} cells)");
 
         var quads = new List<Quad>(hits.Count);
-        Span<int> ring = stackalloc int[4];
-        Span<int> around = stackalloc int[4];
         for (var e = 0; e < hits.Count; e++)
         {
             var hit = hits[e];
-            (around[0], around[1], around[2], around[3]) = (vertexOfCell[hit.N0.Id], vertexOfCell[hit.N1.Id], vertexOfCell[hit.N2.Id], vertexOfCell[hit.N3.Id]);
-            // Drop a repeated neighbour (duplicates are adjacent around the edge), keeping the cyclic order.
-            var count = 0;
-            for (var q = 0; q < 4; q++)
-                if (around[q] != around[(q + 3) % 4]) ring[count++] = around[q];
-            var owner = crossings[e].Owner;
-            // Wind so the polygon faces outward: away from the inside end of the edge.
-            if (count == 4)
-                quads.Add(hit.StartInside ? new Quad(ring[0], ring[1], ring[2], ring[3], owner) : new Quad(ring[3], ring[2], ring[1], ring[0], owner));
-            else
-                quads.Add(hit.StartInside ? new Quad(ring[0], ring[1], ring[2], ring[2], owner) : new Quad(ring[2], ring[1], ring[0], ring[0], owner));
+            quads.Add(Polygon(vertexOfCell[hit.N0.Id], vertexOfCell[hit.N1.Id], vertexOfCell[hit.N2.Id], vertexOfCell[hit.N3.Id], hit.StartInside, crossings[e].Owner));
         }
         Stage($"polygons ({quads.Count:N0})");
 
         var spots = new ConcurrentBag<ThinSpot>();
         if (prune) Parallel.ForEach(leaves.Where(l => l.Multi), node => FindThin(node, grid, spots));
-        var thin = spots.OrderBy(s => s.OwnerA).ThenBy(s => s.OwnerB).ThenBy(s => s.Location.X).ThenBy(s => s.Location.Y).ThenBy(s => s.Location.Z).ToList();
+        var thin = Sorted(spots);
         Stage($"thin spots ({thin.Count:N0})");
 
         return new Mesh(positions, quads, thin);
+    }
+
+    static List<ThinSpot> Sorted(IEnumerable<ThinSpot> spots) =>
+        spots.OrderBy(s => s.OwnerA).ThenBy(s => s.OwnerB).ThenBy(s => s.Location.X).ThenBy(s => s.Location.Y).ThenBy(s => s.Location.Z).ToList();
+
+    /// <summary>The polygon round an edge from the vertices of its four leaves, in counter-clockwise order.</summary>
+    static Quad Polygon(int v0, int v1, int v2, int v3, bool startInside, int owner)
+    {
+        Span<int> around = [v0, v1, v2, v3];
+        Span<int> ring = stackalloc int[4];
+        // Drop a repeated neighbour (duplicates are adjacent around the edge), keeping the cyclic order.
+        var count = 0;
+        for (var q = 0; q < 4; q++)
+            if (around[q] != around[(q + 3) % 4]) ring[count++] = around[q];
+        // Wind so the polygon faces outward: away from the inside end of the edge.
+        if (count == 4)
+            return startInside ? new Quad(ring[0], ring[1], ring[2], ring[3], owner) : new Quad(ring[3], ring[2], ring[1], ring[0], owner);
+        return startInside ? new Quad(ring[0], ring[1], ring[2], ring[2], owner) : new Quad(ring[2], ring[1], ring[0], ring[0], owner);
+    }
+
+    /// <summary>
+    /// Where several surfaces meet the vertex may sit up to half a cell outside the node, so it gets a field exact one
+    /// node size around it. That field is simplified from the field of the node's region grown by one cell (which
+    /// region keys hash), so a region's vertices depend on nothing outside it. Only a coarse node at the side of its
+    /// region reaches further and takes the whole field; <paramref name="local"/> is then false.
+    /// </summary>
+    static Field Near(Field field, Grid grid, Node node, Field region, out bool local)
+    {
+        var u = grid.UnitOf(node);
+        var s = node.Size;
+        local = node.I - s >= u.I - 1 && node.J - s >= u.J - 1 && node.K - s >= u.K - 1
+            && node.I + 2 * s <= u.I + u.Size + 1 && node.J + 2 * s <= u.J + u.Size + 1 && node.K + 2 * s <= u.K + u.Size + 1;
+        return (local ? region : field).Simplify(grid.Box(node, s));
     }
 
     static void Subdivide(Node node, Field field, Context ctx, int depth)
     {
         var g = ctx.Grid;
         if (node.I >= g.Nx || node.J >= g.Ny || node.K >= g.Nz) return; // beyond the part's margin: empty
+        if (ctx.Region is { } region && !Touches(node, region)) return; // a region job builds its neighbours only where they touch it
         var box = g.Box(node);
         if (ctx.Prune)
         {
@@ -231,14 +257,32 @@ public static class DualContouring
             node.Multi = ctx.Prune && node.Size == 1 && patch is null;
             return;
         }
+        if (depth == ctx.UnitDepth)
+        {
+            node.Pending = field;
+            return;
+        }
+        Split(node, field, ctx, depth);
+    }
+
+    static void Split(Node node, Field field, Context ctx, int depth)
+    {
         var half = node.Size / 2;
         var children = new Node[8];
         for (var c = 0; c < 8; c++)
             children[c] = new Node(node.I + (c & 1) * half, node.J + (c >> 1 & 1) * half, node.K + (c >> 2) * half, half);
         node.Children = children;
-        if (depth < ParallelDepth) Parallel.For(0, 8, c => Subdivide(children[c], field, ctx, depth + 1));
+        if (depth < ParallelDepth && !ctx.Serial) Parallel.For(0, 8, c => Subdivide(children[c], field, ctx, depth + 1));
         else foreach (var child in children) Subdivide(child, field, ctx, depth + 1);
     }
+
+    /// <summary>The closed boxes of two nodes meet, if only in a corner.</summary>
+    static bool Touches(Node a, Node b) =>
+        a.I <= b.I + b.Size && b.I <= a.I + a.Size && a.J <= b.J + b.Size && b.J <= a.J + a.Size && a.K <= b.K + b.Size && b.K <= a.K + a.Size;
+
+    /// <summary>The node lies in the region (whose leaves own it).</summary>
+    static bool Within(Node n, Node region) =>
+        n.I >= region.I && n.I < region.I + region.Size && n.J >= region.J && n.J < region.J + region.Size && n.K >= region.K && n.K < region.K + region.Size;
 
     /// <summary>
     /// Largest cell on a surface of curvature radius r. A chord of length c strays c²/8r from the arc. The longest
@@ -268,7 +312,8 @@ public static class DualContouring
     static void CellProc(Node n, List<Hit> output, Context ctx, int depth)
     {
         if (n.Children is not { } ch) return;
-        if (depth < ParallelDepth)
+        if (ctx.Region is { } r && !Touches(n, r)) return; // a region job only looks for edges at its region
+        if (depth < ParallelDepth && !ctx.Serial)
         {
             var parts = new List<Hit>[26];
             Parallel.For(0, 26, t => CellPart(ch, t, parts[t] = [], ctx, depth));
@@ -305,6 +350,7 @@ public static class DualContouring
     static void FaceProc(Node n0, Node n1, int a, List<Hit> output, Context ctx)
     {
         if (n0.IsEmpty || n1.IsEmpty || n0.IsLeaf && n1.IsLeaf) return;
+        if (ctx.Region is { } r && (!Touches(n0, r) || !Touches(n1, r))) return;
         int b = (a + 1) % 3, c = (a + 2) % 3;
         for (var m = 0; m < 4; m++)
         {
@@ -331,6 +377,7 @@ public static class DualContouring
     {
         // An edge in the closed box of a certified-empty cell has no sign change.
         if (n0.IsEmpty || n1.IsEmpty || n2.IsEmpty || n3.IsEmpty) return;
+        if (ctx.Region is { } r && (!Touches(n0, r) || !Touches(n1, r) || !Touches(n2, r) || !Touches(n3, r))) return;
         if (n0.IsLeaf && n1.IsLeaf && n2.IsLeaf && n3.IsLeaf)
         {
             ProcessEdge(n0, n1, n2, n3, e, output, ctx);
@@ -357,13 +404,14 @@ public static class DualContouring
         Span<int> p = [s.I, s.J, s.K];
         if (Side(qs, e1, e) == 0) p[e1] += s.Size;
         if (Side(qs, e2, e) == 0) p[e2] += s.Size;
-        var a = ctx.Grid.Position(p[0], p[1], p[2]);
+        var (i, j, k) = (p[0], p[1], p[2]);
+        var a = ctx.Grid.Position(i, j, k);
         p[e] += s.Size;
         var b = ctx.Grid.Position(p[0], p[1], p[2]);
 
         // The smallest leaf's field is exact on its closed box, so every leaf agrees on these signs.
         var inside = s.Field!.Value(a) < 0;
-        if (inside != s.Field.Value(b) < 0) output.Add(new Hit(a, b, inside, n0, n1, n2, n3, s));
+        if (inside != s.Field.Value(b) < 0) output.Add(new Hit(a, b, inside, n0, n1, n2, n3, s, i, j, k, e));
     }
 
     // ---- Vertices ----
@@ -568,17 +616,65 @@ public static class DualContouring
         && p.Y >= b.Min.Y - margin && p.Y <= b.Max.Y + margin
         && p.Z >= b.Min.Z - margin && p.Z <= b.Max.Z + margin;
 
-    sealed class Grid(Point3D origin, double h, int nx, int ny, int nz)
+    /// <summary>
+    /// The cell lattice: node index i sits at <c>origin + (offset + i)·h</c>. Unsnapped, the origin is the part's
+    /// corner less a margin and the offset zero. Snapped, the origin is fixed in the world and only the integer offset
+    /// follows the part, so a region keeps its exact coordinates when an edit moves the part's bounding box.
+    /// </summary>
+    internal sealed class Grid(Point3D origin, double h, int nx, int ny, int nz, (int I, int J, int K) offset = default)
     {
         public int Nx => nx;
         public int Ny => ny;
         public int Nz => nz;
         public double H => h;
+        public Point3D Origin => origin;
+        public (int I, int J, int K) Offset => offset;
 
-        public Point3D Position(int i, int j, int k) => new(origin.X + i * h, origin.Y + j * h, origin.Z + k * h);
+        /// <summary>Smallest power of two holding the grid: the octree root's size.</summary>
+        public int RootSize { get; } = (int)System.Numerics.BitOperations.RoundUpToPowerOf2((uint)Math.Max(nx, Math.Max(ny, nz)));
+
+        /// <summary>Side of a region in cells.</summary>
+        public int RegionSize => RegionSizeFor(RootSize);
+
+        /// <summary>At least 16 cells, so a region's own work outweighs its border; no more than 32 along the root.</summary>
+        static int RegionSizeFor(int root) => Math.Min(root, Math.Max(16, root / 32));
+
+        public int UnitDepth => System.Numerics.BitOperations.Log2((uint)(RootSize / RegionSize));
+
+        /// <summary>Two cells of margin round the part, on a lattice shifted off round numbers.</summary>
+        public static Grid Around(Point3D min, Point3D max, double h, bool snap)
+        {
+            int Count(double from, double to) => (int)Math.Ceiling((to - from) / h) + 2;
+            if (!snap)
+            {
+                var origin = new Point3D(min.X - (2 + GridShift) * h, min.Y - (2 + GridShift) * h, min.Z - (2 + GridShift) * h);
+                return new Grid(origin, h, Count(origin.X, max.X), Count(origin.Y, max.Y), Count(origin.Z, max.Z));
+            }
+            // The lattice starts on a multiple of the region size; a larger grid can mean larger regions, so repeat.
+            var shift = new Point3D(-GridShift * h, -GridShift * h, -GridShift * h);
+            for (var size = 16; ; )
+            {
+                int Snap(double m) => (int)Math.Floor((m / h - 2) / size) * size;
+                var o = (Snap(min.X), Snap(min.Y), Snap(min.Z));
+                var g = new Grid(shift, h, Count(shift.X + o.Item1 * h, max.X), Count(shift.Y + o.Item2 * h, max.Y), Count(shift.Z + o.Item3 * h, max.Z), o);
+                if (g.RegionSize <= size) return g;
+                size = g.RegionSize;
+            }
+        }
+
+        public Point3D Position(int i, int j, int k) => new(origin.X + (offset.I + i) * h, origin.Y + (offset.J + j) * h, origin.Z + (offset.K + k) * h);
 
         /// <summary>The closed box of a node, grown by <paramref name="margin"/> cells on every side.</summary>
-        public Box3D Box(Node n, int margin = 0) =>
+        public Box3D Box(Node n, int margin = 0) => Box((n.I, n.J, n.K, n.Size), margin);
+
+        public Box3D Box((int I, int J, int K, int Size) n, int margin = 0) =>
             new(Position(n.I - margin, n.J - margin, n.K - margin), Position(n.I + n.Size + margin, n.J + n.Size + margin, n.K + n.Size + margin));
+
+        /// <summary>The region a leaf belongs to: its ancestor of region size, or the leaf itself if it is larger.</summary>
+        public (int I, int J, int K, int Size) UnitOf(Node n)
+        {
+            var s = RegionSize;
+            return n.Size >= s ? (n.I, n.J, n.K, n.Size) : (n.I / s * s, n.J / s * s, n.K / s * s, s);
+        }
     }
 }

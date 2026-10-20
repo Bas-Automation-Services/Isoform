@@ -5,16 +5,49 @@ using Isoform.Meshing;
 
 namespace Isoform.Modeling;
 
-/// <summary>Regenerates a document on the implicit (F-rep/CSG) core.</summary>
-public sealed class FrepModeler(ModelingSettings settings) : IModeler
+/// <summary>
+/// Regenerates a document on the implicit (F-rep/CSG) core. Bodies are meshed as regions (<see cref="MeshPlan"/>);
+/// with a <paramref name="cache"/> a regeneration reuses every region whose content did not change.
+/// </summary>
+/// <param name="cache">Region results kept across regenerations; the caller sweeps it after each one.</param>
+public sealed class FrepModeler(ModelingSettings settings, RegionCache? cache = null) : IModeler
 {
     public ModelingSettings Settings { get; } = settings;
 
+    public RegionCache? Cache { get; } = cache;
+
     ModelResult IModeler.Regenerate(PartDocument document) => Regenerate(document);
+
+    sealed record Prepared(string Hash, CompiledPart Part, MeshPlan[] Plans);
+
+    // With a cache, the last document's compiled part and plans are kept: a pool's coordinator meshes its share of a
+    // document and then regenerates the same one. A modeler with a cache is therefore not for concurrent use.
+    Prepared? _last;
+
+    Prepared Prepare(PartDocument document)
+    {
+        var hash = Cache is null ? "" : CanonicalFormat.Hash(document);
+        if (_last is { } last && Cache is not null && last.Hash == hash) return last;
+        var part = new Compiler(Settings).Compile(document);
+        var plans = part.Field is null ? [] : part.Bodies.Select(b => DualContouring.Plan(b.Field, b.Min, b.Max, Settings.CellSize, Settings.ChordTolerance, Settings.SnapGrid)).ToArray();
+        var prepared = new Prepared(hash, part, plans);
+        if (Cache is not null) _last = prepared;
+        return prepared;
+    }
+
+    /// <summary>
+    /// Meshes this process's share of the regions into the cache, and nothing else: share <paramref name="index"/> of
+    /// <paramref name="count"/> (<see cref="MeshPlan.Share"/>). Processes that each mesh a share and pass their
+    /// results on (<see cref="RegionCache.TakeComputed"/>) let one of them regenerate from its cache alone.
+    /// </summary>
+    public void MeshShare(PartDocument document, int index, int count)
+    {
+        foreach (var plan in Prepare(document).Plans) plan.MeshRegions(Cache!, r => plan.Share(r, count) == index);
+    }
 
     public FrepResult Regenerate(PartDocument document)
     {
-        var part = new Compiler(Settings).Compile(document);
+        var (_, part, plans) = Prepare(document);
         if (part.Field is null) return new FrepResult(part.Diagnostics, null, part, null, [], []);
         document = Parametric.Resolve(document);
 
@@ -26,9 +59,9 @@ public sealed class FrepModeler(ModelingSettings settings) : IModeler
         var faceOfQuad = new List<int>();
         var bodies = new List<BodyResult>();
         var pieces = 0;
-        foreach (var body in part.Bodies)
+        foreach (var (body, plan) in part.Bodies.Zip(plans))
         {
-            var bodyMesh = DualContouring.Build(body.Field, body.Min, body.Max, Settings.CellSize, Settings.ChordTolerance);
+            var bodyMesh = plan.Build(Cache);
             var built = TopologyBuilder.Build(bodyMesh, part.Surfaces, Settings.Tolerance);
             var t = built.Topology;
             if (t.BodyCount > 1)

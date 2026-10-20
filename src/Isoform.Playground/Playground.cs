@@ -9,9 +9,11 @@ using Isoform.Modeling;
 namespace Isoform.Playground;
 
 /// <summary>
-/// What the page's worker calls. <see cref="Regenerate"/> keeps the last result; the mesh then comes out as flat
+/// What the page's workers call. <see cref="Regenerate"/> keeps the last result; the mesh then comes out as flat
 /// arrays the page reads straight into WebGL buffers: three corners per triangle, a face index per triangle, and the
-/// lines where faces meet as segment end points, split into sharp edges and smooth (tangent) ones.
+/// lines where faces meet as segment end points, split into sharp edges and smooth (tangent) ones. Region results
+/// stay in a cache, so an edit re-meshes only the regions it changed; in a pool of workers each one meshes its
+/// <see cref="Share"/> and the coordinating worker <see cref="Import"/>s the others' before it regenerates.
 /// </summary>
 [SupportedOSPlatform("browser")]
 public static partial class Playground
@@ -20,6 +22,14 @@ public static partial class Playground
     static int[] _faces = [];
     static double[] _lines = [];
     static double[] _smooth = [];
+    static byte[] _share = [];
+    static readonly RegionCache Cache = new();
+    static FrepModeler? _modeler;
+    static int _pooled; // regions the pool meshed for this regeneration outside Regenerate: own share and imports
+
+    /// <summary>One modeler per settings, so the coordinator regenerates from the plans its share already made.</summary>
+    static FrepModeler Modeler(ModelingSettings settings) =>
+        _modeler is { } m && m.Settings == settings ? m : _modeler = new FrepModeler(settings, Cache);
 
     // Faces meeting at less than this angle are tangent: drawn faintly, like the tangent edges in a CAD view.
     static readonly double SharpCos = Math.Cos(20 * Math.PI / 180);
@@ -39,17 +49,23 @@ public static partial class Playground
         {
             view = CanonicalFormat.FormatOf(document) == Bundle.FormatVersion ? Assembly(CanonicalFormat.ReadBundle(document), settings) : Part(CanonicalFormat.Read(document), settings);
         }
-        catch (Exception e) when (e is JsonException or FormatException or InvalidOperationException or NullReferenceException or KeyNotFoundException or InvalidCastException)
+        catch (Exception e) when (Unreadable(e))
         {
             (_positions, _faces, _lines, _smooth) = ([], [], [], []);
+            Cache.Sweep();
+            _pooled = 0;
             return Json(w => w.WriteString("error", e.Message));
         }
         var ms = clock.Elapsed.TotalMilliseconds;
         Flatten(view.Mesh, view.FaceOfQuad);
+        var (reused, meshed) = Cache.Sweep();
+        (reused, meshed, _pooled) = (reused - _pooled, meshed + _pooled, 0);
 
         return Json(w =>
         {
             w.WriteNumber("ms", ms);
+            w.WriteNumber("reused", reused);
+            w.WriteNumber("meshed", meshed);
             w.WriteNumber("triangles", _faces.Length);
             w.WriteNumber("edges", view.Edges);
             w.WriteNumber("vertices", view.Vertices);
@@ -95,9 +111,47 @@ public static partial class Playground
         });
     }
 
+    static bool Unreadable(Exception e) =>
+        e is JsonException or FormatException or InvalidOperationException or NullReferenceException or KeyNotFoundException or InvalidCastException;
+
+    /// <summary>
+    /// Meshes share <paramref name="index"/> of <paramref name="count"/> of the regions of the document (of every part
+    /// in a bundle) into the cache, and returns the results this worker had to mesh, for the coordinator to import.
+    /// A document that does not read gives nothing: the coordinator reports the error.
+    /// </summary>
+    [JSExport]
+    [return: JSMarshalAs<JSType.MemoryView>]
+    public static ArraySegment<byte> Share(string document, double cellSize, double chordTolerance, int index, int count)
+    {
+        var modeler = Modeler(new ModelingSettings { CellSize = cellSize, ChordTolerance = chordTolerance });
+        try
+        {
+            if (CanonicalFormat.FormatOf(document) != Bundle.FormatVersion) modeler.MeshShare(CanonicalFormat.Read(document), index, count);
+            else
+                foreach (var text in CanonicalFormat.ReadBundle(document).Documents.Values)
+                    if (CanonicalFormat.FormatOf(text) != AssemblyDocument.FormatVersion) modeler.MeshShare(CanonicalFormat.Read(text), index, count);
+        }
+        catch (Exception e) when (Unreadable(e)) { }
+        _pooled += Cache.TakeCounts().Misses;
+        _share = Cache.TakeComputed();
+        return _share;
+    }
+
+    /// <summary>Region results another worker meshed (its <see cref="Share"/>).</summary>
+    [JSExport]
+    public static void Import(byte[] regions) => _pooled += Cache.Import(regions);
+
+    /// <summary>Ends a regeneration in a worker that only meshes shares, as <see cref="Regenerate"/> does in the coordinator.</summary>
+    [JSExport]
+    public static void Sweep()
+    {
+        Cache.Sweep();
+        _pooled = 0;
+    }
+
     static View Part(PartDocument doc, ModelingSettings settings)
     {
-        var r = new FrepModeler(settings).Regenerate(doc);
+        var r = Modeler(settings).Regenerate(doc);
         var t = r.Topology;
         return new View(r.Mesh, r.FaceOfQuad, t?.Faces.Select(f => f.Sources).ToList() ?? [], r.Bodies.Select(b => (b.Name, b.Faces)).ToList(),
             r.Diagnostics, t?.Edges.Count ?? 0, t?.Vertices.Count ?? 0, r.Mesh?.ThinSpots.Select(s => s.Location) ?? []);
@@ -106,7 +160,7 @@ public static partial class Playground
     /// <summary>Every instance in place, its faces named by occurrence (<c>left/plate/z+</c>), one group per instance.</summary>
     static View Assembly(Bundle bundle, ModelingSettings settings)
     {
-        var r = new AssemblyModeler(settings).Regenerate(bundle.Assembly, path => bundle.Documents.GetValueOrDefault(path));
+        var r = new AssemblyModeler(settings, Cache).Regenerate(bundle.Assembly, path => bundle.Documents.GetValueOrDefault(path));
         var (mesh, _) = r.WorldMesh();
         var (faceOfQuad, faces, groups) = (new List<int>(), new List<IReadOnlyList<string>>(), new List<(string, IReadOnlyList<int>)>());
         var (edges, vertices) = (0, 0);
@@ -160,6 +214,8 @@ public static partial class Playground
         foreach (var (name, bundle) in Isoform.Playground.Examples.Bundles) w.WriteString(name, CanonicalFormat.Write(bundle));
     });
 
+    // Plain arrays, integer keys and no closures: in WebAssembly, arrays of structs read through IReadOnlyList and
+    // tuple keys are many times slower.
     static void Flatten(Mesh? mesh, IReadOnlyList<int> faceOf)
     {
         if (mesh is null)
@@ -167,48 +223,85 @@ public static partial class Playground
             (_positions, _faces, _lines, _smooth) = ([], [], [], []);
             return;
         }
-        var v = mesh.Vertices;
-        var positions = new List<double>(mesh.Quads.Count * 18);
-        var faces = new List<int>(mesh.Quads.Count * 2);
-        void Add(int a, int b, int c, int face)
-        {
-            foreach (var i in new[] { a, b, c }) positions.AddRange([v[i].X, v[i].Y, v[i].Z]);
-            faces.Add(face);
-        }
+        var v = mesh.Vertices.ToArray();
+        var quads = mesh.Quads.ToArray();
+        var faceOfQuad = faceOf.ToArray();
+        (_positions, _faces) = Triangles(v, quads, faceOfQuad);
+        (_lines, _smooth) = Lines(v, quads, faceOfQuad);
+    }
 
-        // Lines: mesh edges whose two sides belong to different faces, sharp or tangent by the quads' normals.
-        var firstQuad = new Dictionary<(int, int), int>();
-        var (lines, smooth) = (new List<double>(), new List<double>());
-        BasAutomation.Geometry.Vector3D Normal(Isoform.Meshing.Quad q) => (v[q.C] - v[q.A]).Cross(v[q.D] - v[q.B]).Normalized();
-        void Edge(int a, int b, int q)
+    /// <summary>Three corners per triangle and its face; each quad split along its shorter diagonal.</summary>
+    static (double[] Positions, int[] Faces) Triangles(BasAutomation.Geometry.Point3D[] v, Quad[] quads, int[] faceOf)
+    {
+        var count = 0;
+        foreach (var q in quads) count += q.IsTriangle ? 1 : 2;
+        var positions = new double[count * 9];
+        var faces = new int[count];
+        var t = 0;
+        for (var i = 0; i < quads.Length; i++)
         {
-            if (a == b) return;
-            var key = (Math.Min(a, b), Math.Max(a, b));
-            if (firstQuad.TryAdd(key, q) || faceOf[firstQuad[key]] == faceOf[q]) return;
-            var sharp = Normal(mesh.Quads[firstQuad[key]]).Dot(Normal(mesh.Quads[q])) < SharpCos;
-            (sharp ? lines : smooth).AddRange([v[a].X, v[a].Y, v[a].Z, v[b].X, v[b].Y, v[b].Z]);
-        }
-
-        for (var q = 0; q < mesh.Quads.Count; q++)
-        {
-            var quad = mesh.Quads[q];
-            var face = faceOf[q];
-            if (quad.IsTriangle) Add(quad.A, quad.B, quad.C, face);
-            else if ((v[quad.A] - v[quad.C]).LengthSquared <= (v[quad.B] - v[quad.D]).LengthSquared)
+            var q = quads[i];
+            var (a, b, c, d) = (q.A, q.B, q.C, q.D);
+            if (q.IsTriangle) t = Triangle(positions, faces, t, v[a], v[b], v[c], faceOf[i]);
+            else if ((v[a] - v[c]).LengthSquared <= (v[b] - v[d]).LengthSquared)
             {
-                Add(quad.A, quad.B, quad.C, face);
-                Add(quad.A, quad.C, quad.D, face);
+                t = Triangle(positions, faces, t, v[a], v[b], v[c], faceOf[i]);
+                t = Triangle(positions, faces, t, v[a], v[c], v[d], faceOf[i]);
             }
             else
             {
-                Add(quad.A, quad.B, quad.D, face);
-                Add(quad.B, quad.C, quad.D, face);
+                t = Triangle(positions, faces, t, v[a], v[b], v[d], faceOf[i]);
+                t = Triangle(positions, faces, t, v[b], v[c], v[d], faceOf[i]);
             }
-            Edge(quad.A, quad.B, q);
-            Edge(quad.B, quad.C, q);
-            Edge(quad.C, quad.D, q);
-            Edge(quad.D, quad.A, q);
         }
-        (_positions, _faces, _lines, _smooth) = (positions.ToArray(), faces.ToArray(), lines.ToArray(), smooth.ToArray());
+        return (positions, faces);
+    }
+
+    static int Triangle(double[] positions, int[] faces, int t, BasAutomation.Geometry.Point3D a, BasAutomation.Geometry.Point3D b, BasAutomation.Geometry.Point3D c, int face)
+    {
+        Put(positions, 9 * t, a);
+        Put(positions, 9 * t + 3, b);
+        Put(positions, 9 * t + 6, c);
+        faces[t] = face;
+        return t + 1;
+    }
+
+    /// <summary>Mesh edges whose two sides belong to different faces, sharp or tangent by the quads' normals.</summary>
+    static (double[] Sharp, double[] Smooth) Lines(BasAutomation.Geometry.Point3D[] v, Quad[] quads, int[] faceOf)
+    {
+        var firstQuad = new Dictionary<long, int>(quads.Length * 2);
+        var (sharp, smooth) = (new List<double>(), new List<double>());
+        for (var q = 0; q < quads.Length; q++)
+            for (var e = 0; e < 4; e++)
+            {
+                var quad = quads[q];
+                var (a, b) = e switch { 0 => (quad.A, quad.B), 1 => (quad.B, quad.C), 2 => (quad.C, quad.D), _ => (quad.D, quad.A) };
+                if (a == b) continue;
+                // Not min << 32 | max: a long hashes as its two halves xor-ed, and neighbouring indices would collide.
+                var key = (long)Math.Min(a, b) * v.Length + Math.Max(a, b);
+                if (firstQuad.TryAdd(key, q)) continue;
+                var other = firstQuad[key];
+                if (faceOf[other] == faceOf[q]) continue;
+                var into = Normal(v, quads[other]).Dot(Normal(v, quad)) < SharpCos ? sharp : smooth;
+                Append(into, v[a]);
+                Append(into, v[b]);
+            }
+        return (sharp.ToArray(), smooth.ToArray());
+    }
+
+    static BasAutomation.Geometry.Vector3D Normal(BasAutomation.Geometry.Point3D[] v, Quad q) => (v[q.C] - v[q.A]).Cross(v[q.D] - v[q.B]).Normalized();
+
+    static void Put(double[] into, int at, BasAutomation.Geometry.Point3D p)
+    {
+        into[at] = p.X;
+        into[at + 1] = p.Y;
+        into[at + 2] = p.Z;
+    }
+
+    static void Append(List<double> into, BasAutomation.Geometry.Point3D p)
+    {
+        into.Add(p.X);
+        into.Add(p.Y);
+        into.Add(p.Z);
     }
 }

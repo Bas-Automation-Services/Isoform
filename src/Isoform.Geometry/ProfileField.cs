@@ -171,6 +171,17 @@ public sealed class ProfileField : Field
     /// <summary>The surface of every edge that has one, and of every round corner.</summary>
     public IReadOnlyList<LeafField> Leaves { get; }
 
+    public IReadOnlyList<ProfileEdge2D> Edges => _edges;
+
+    /// <summary>The surface of each edge, null for an edge on the revolve axis.</summary>
+    public IReadOnlyList<LeafField?> EdgeLeaves => _leaves;
+
+    /// <summary>The round face at the end of each edge, where an offset gave the corner one.</summary>
+    public IReadOnlyList<LeafField?> Corners => _corners;
+
+    /// <summary>How far the solid has been grown (see <see cref="Offset"/>).</summary>
+    public double Grown => _offset;
+
     /// <summary>
     /// The same profile grown by <paramref name="d"/>: <paramref name="offsetLeaf"/> gives each face's offset, and a
     /// corner that turns round gets a face of its own, a cylinder round the corner line (extrude) or a torus or

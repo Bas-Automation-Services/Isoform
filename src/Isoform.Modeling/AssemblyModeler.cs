@@ -86,14 +86,15 @@ public sealed class AssemblyResult(IReadOnlyList<Instance> instances, IReadOnlyL
 /// (by content hash, so a hundred identical bolts cost one; a component's parameters make a variant, hashed once
 /// resolved), and places it. Sub-assemblies nest their placements.
 /// </summary>
-public sealed class AssemblyModeler(ModelingSettings settings)
+/// <param name="cache">Region results kept across regenerations (see <see cref="FrepModeler"/>).</param>
+public sealed class AssemblyModeler(ModelingSettings settings, RegionCache? cache = null)
 {
     /// <param name="load">The text of the document at a path, or null when there is none.</param>
     public AssemblyResult Regenerate(AssemblyDocument assembly, Func<string, string?> load)
     {
         var diagnostics = new List<Diagnostic>();
         var parts = new Dictionary<string, FrepResult>();
-        var modeler = new FrepModeler(settings);
+        var modeler = new FrepModeler(settings, cache);
         // Instances keep their pose inside their top-level component; mates move whole top-level components.
         var found = new List<(int Top, string Id, string Part, string Hash, Frame Inner, FrepResult Result)>();
 
