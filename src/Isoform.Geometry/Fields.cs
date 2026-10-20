@@ -402,6 +402,9 @@ public sealed class ShellField : Field
 
     public double Thickness { get; }
 
+    /// <summary>The inner surface for each owner of <see cref="Child"/>.</summary>
+    public IReadOnlyDictionary<int, int> InnerOf => _innerOf;
+
     bool Plain => ReferenceEquals(Outer, Child);
 
     public ShellField WithOuter(Field outer) => new(Child, Thickness, _innerOf, _outerOf, outer);
