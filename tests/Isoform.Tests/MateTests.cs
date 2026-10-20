@@ -68,6 +68,25 @@ public class MateTests
     }
 
     [Fact]
+    public void A_mated_pin_clears_its_bore_and_touches_its_seat()
+    {
+        var assembly = new AssemblyDocument(
+            [new Component("bracket", "bracket.json", Placement.Identity), new Component("pin", "pin.json", Askew)],
+            [new Mate("in", MateKind.Axis, "pin/pin/shank", "bracket/bore/wall"), new Mate("seat", MateKind.Mate, "pin/pin/head", "bracket/plate/z+")]);
+
+        var (_, _, clearance) = Modeler.Regenerate(assembly, Files).Clearances().Single();
+
+        // The head sits on the plate, so the two touch; the Ø5.8 shank never enters the Ø6 bore's wall.
+        clearance.Interferes.Should().BeFalse();
+        clearance.Upper.Should().BeApproximately(0, 1e-6);
+
+        var sunk = assembly with { Mates = [assembly.Mates![0], assembly.Mates[1] with { Offset = -1 }] };
+        var (_, _, overlap) = Modeler.Regenerate(sunk, Files).Clearances().Single();
+        overlap.Interferes.Should().BeTrue("the head pushed 1 mm into the plate");
+        overlap.Upper.Should().BeApproximately(-1, 1e-6);
+    }
+
+    [Fact]
     public void Mates_that_cannot_all_hold_are_reported()
     {
         var assembly = new AssemblyDocument(

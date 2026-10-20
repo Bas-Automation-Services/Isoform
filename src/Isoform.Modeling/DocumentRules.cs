@@ -8,11 +8,16 @@ public static class DocumentRules
     public static Diagnostic? FirstProblem(PartDocument doc, double tolerance)
     {
         var bodies = new List<string>();
+        var ids = new HashSet<string>();
+        string? current = null;
         for (var i = 0; i < doc.Features.Count; i++)
         {
             var feature = doc.Features[i];
             string? problem = feature switch
             {
+                _ when feature.Id.Length == 0 || feature.Id.Contains('/') => $"feature ids may not be empty or contain '/', got '{feature.Id}'",
+                _ when !ids.Add(feature.Id) => $"the feature id '{feature.Id}' is used twice",
+                CombineBodies c when c.Tool == (c.Body ?? current) => $"body '{c.Tool}' cannot be combined with itself",
                 _ when StartsBody(feature) && bodies.Contains(feature.Body ?? feature.Id) => $"there already is a body named '{feature.Body ?? feature.Id}'",
                 _ when !StartsBody(feature) && feature.Body is { } b && !bodies.Contains(b) => $"there is no body named '{b}'",
                 CombineBodies c when !bodies.Contains(c.Tool) => $"there is no body named '{c.Tool}'",
@@ -38,7 +43,9 @@ public static class DocumentRules
                 _ => null,
             };
             if (problem is not null) return new Diagnostic(Diagnostic.InvalidParameter, feature.Id, problem);
-            if (StartsBody(feature)) bodies.Add(feature.Body ?? feature.Id);
+            // The current body: the one last started or named. Edge features and patterns find theirs by themselves.
+            if (StartsBody(feature)) bodies.Add(current = feature.Body ?? feature.Id);
+            else if (feature.Body is { } named && feature is not (Fillet or Chamfer or Pattern)) current = named;
             if (feature is CombineBodies { Keep: false } used) bodies.Remove(used.Tool);
         }
         return null;

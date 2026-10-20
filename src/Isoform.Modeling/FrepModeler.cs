@@ -50,7 +50,8 @@ public sealed class FrepModeler(ModelingSettings settings) : IModeler
         diagnostics.AddRange(Resolution(document, part, mesh, diagnostics));
 
         var present = topology.Faces.SelectMany(f => f.Sources).ToHashSet();
-        var unresolved = diagnostics.Where(d => d.Code == Diagnostic.BelowResolution).Select(d => d.FeatureId).ToHashSet();
+        // A feature that already has a diagnostic (below resolution, rejected, unsupported) says enough.
+        var unresolved = diagnostics.Select(d => d.FeatureId).ToHashSet();
         // An offset or a combine moves or merges faces that keep their names; it has none of its own to look for.
         foreach (var feature in document.Features.Where(f => f is not (Fillet or Offset or CombineBodies) && !unresolved.Contains(f.Id)))
             if (!part.Surfaces.Any(s => s.Source.StartsWith(feature.Id + "/") && present.Contains(s.Source)))

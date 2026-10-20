@@ -24,14 +24,14 @@ public sealed class PlacedField(Field child, Frame placement) : Field
     public override FieldSample? SampleSurface(int owner, Point3D p) =>
         Child.SampleSurface(owner, Placement.ToLocal(p)) is { } s ? s with { Gradient = Placement.ToWorld(s.Gradient) } : null;
 
-    public override Interval Bounds(Box3D box) => Child.Bounds(Local(box));
+    public override Interval Bounds(Box3D box) => Child.Bounds(LocalBox(box));
 
-    public override Field Simplify(Box3D box) => Child.Simplify(Local(box)) is var c && ReferenceEquals(c, Child) ? this : new PlacedField(c, Placement);
+    public override Field Simplify(Box3D box) => Child.Simplify(LocalBox(box)) is var c && ReferenceEquals(c, Child) ? this : new PlacedField(c, Placement);
 
-    public override double? SinglePatch(Box3D box) => Child.SinglePatch(Local(box));
+    public override double? SinglePatch(Box3D box) => Child.SinglePatch(LocalBox(box));
 
     /// <summary>A box in part coordinates holding the whole world box.</summary>
-    Box3D Local(Box3D box)
+    public Box3D LocalBox(Box3D box)
     {
         var (lo, hi) = (new Point3D(double.MaxValue, double.MaxValue, double.MaxValue), new Point3D(double.MinValue, double.MinValue, double.MinValue));
         foreach (var x in new[] { box.Min.X, box.Max.X })

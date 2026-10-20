@@ -200,6 +200,11 @@ public static partial class Queries
                     if (box is { } b && Rod(r, b) is { } rod) list.Add(rod);
                     break;
                 case ShellField s: Collect(s.Outer); break;
+                // A placed part holds the same faces, moved: a rigid motion keeps planes, cylinders and spheres what they are.
+                case PlacedField p:
+                    foreach (var l in Conjuncts(p.Child, box is { } world ? p.LocalBox(world) : null))
+                        list.Add(new LeafField(l.Surface with { Origin = p.Placement.ToWorld(l.Surface.Origin), Axis = p.Placement.ToWorld(l.Surface.Axis) }, l.Complement));
+                    break;
                 case MinField m: list.AddRange(SharedPlanes(m, box)); break;
             }
         }

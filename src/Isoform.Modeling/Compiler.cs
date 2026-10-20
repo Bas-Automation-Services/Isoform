@@ -135,6 +135,8 @@ public sealed class Compiler(ModelingSettings settings)
             else if (feature.Body is { } named) Switch(named);
             else if (EdgeFace(feature) is { } face && bodyOfSource.TryGetValue(face, out var holder)) Switch(holder);
             bodyOfFeature[feature.Id] = current!;
+            // Edge features and patterns work where their faces or copies are, then hand the current body back.
+            var resume = current;
 
             switch (feature)
             {
@@ -164,11 +166,17 @@ public sealed class Compiler(ModelingSettings settings)
                         bodies.Remove(c.Tool);
                         order.Remove(c.Tool);
                         foreach (var source in bodyOfSource.Where(kv => kv.Value == c.Tool).Select(kv => kv.Key).ToList()) bodyOfSource[source] = into;
+                        foreach (var id in bodyOfFeature.Where(kv => kv.Value == c.Tool).Select(kv => kv.Key).ToList()) bodyOfFeature[id] = into;
                     }
                     break;
 
                 case Shell sh:
-                    tree = ShellOf(sh, FieldAlgebra.Normalize(tree!), Register);
+                    var solid = FieldAlgebra.Normalize(tree!);
+                    // The cavity of a second shell would need inner faces of inner faces; shell once.
+                    if (FieldAlgebra.Descendants(solid).Any(n => n is ShellField))
+                        diagnostics.Add(new Diagnostic(Diagnostic.InvalidParameter, sh.Id, "this body is already shelled; a body can be shelled once"));
+                    else
+                        tree = ShellOf(sh, solid, Register);
                     break;
 
                 case Offset o:
@@ -198,6 +206,7 @@ public sealed class Compiler(ModelingSettings settings)
                     Place(feature, Frame.Identity, s => s, feature.Id);
                     break;
             }
+            if (feature is Fillet or Chamfer or Pattern && resume is not null && bodies.ContainsKey(resume)) Switch(resume);
         }
 
         bodies[current!] = (tree, min, max);
@@ -217,28 +226,54 @@ public sealed class Compiler(ModelingSettings settings)
     {
         var t = sh.Thickness;
         var innerOf = new Dictionary<int, int>();
-        foreach (var node in FieldAlgebra.Descendants(tree))
+        void Add(Surface s, bool complement)
         {
-            if (node is LoopEdgeField loop)
-            {
-                foreach (var face in loop.FaceOf.Values.Where(f => !innerOf.ContainsKey(f.Id)))
-                    innerOf[face.Id] = register(face.Offset(0, $"{sh.Id}/inner:{face.Source}", -t)).Id;
-                continue;
-            }
-            var (s, complement) = node switch
-            {
-                LeafField leaf => (leaf.Surface, leaf.Complement),
-                RoundedEdgeField r => (r.Fillet, false),
-                BlendField b => (b.Blend, false),
-                _ => (null, false),
-            };
-            if (s is null || innerOf.ContainsKey(s.Id)) continue;
+            if (innerOf.ContainsKey(s.Id)) return;
             // The material shrinks by t; a complemented surface has its material outside, so it grows the other way.
             var inner = s.Offset(0, $"{sh.Id}/inner:{s.Source}", complement ? t : -t);
             // A flat inner face looks back at its outer face: it keeps the outer face's sense only if complemented.
             if (s.Kind == SurfaceKind.Plane && !complement) inner = inner with { Axis = -inner.Axis };
             innerOf[s.Id] = register(inner).Id;
         }
+        // Walk with the number of complements above each face, so a face of a cut, or a fillet that adds material,
+        // has its material on the right side.
+        void Walk(Field f, bool negated)
+        {
+            switch (f)
+            {
+                case LeafField l:
+                    Add(l.Surface, l.Complement ^ negated);
+                    break;
+                case NegateField n:
+                    Walk(n.Child, !negated);
+                    break;
+                case MaxField m:
+                    foreach (var c in m.Children) Walk(c, negated);
+                    break;
+                case MinField m:
+                    foreach (var c in m.Children) Walk(c, negated);
+                    break;
+                case RoundedEdgeField r:
+                    Add(r.Fillet, negated);
+                    Walk(r.A, negated);
+                    Walk(r.B, negated);
+                    break;
+                case LoopEdgeField l:
+                    foreach (var face in l.FaceOf.Values) Add(face, negated);
+                    Walk(l.Cap, negated);
+                    Walk(l.Side, negated);
+                    break;
+                case BlendField b:
+                    Add(b.Blend, negated);
+                    Walk(b.A, negated);
+                    Walk(b.B, negated);
+                    break;
+                case ProfileField p:
+                    foreach (var l in p.Leaves) Walk(l, negated);
+                    break;
+            }
+        }
+        Walk(tree, false);
         return new ShellField(tree, t, innerOf);
     }
 
@@ -265,6 +300,19 @@ public sealed class Compiler(ModelingSettings settings)
                 return Leaf(l, d);
             case MaxField m:
                 return Each(m.Children, c => new MaxField(c));
+            case MinField m when m.Children.OfType<LoopEdgeField>().FirstOrDefault(l => l.Side is NegateField) is { Side: NegateField { Child: var tool } } rim
+                                 && m.Children.Any(c => c is LeafField l && l.Surface.Id == rim.Cap.Surface.Id && l.Complement != rim.Cap.Complement):
+                // What a cut-out's rim round takes away, normalized to min(−cap, tool, rim): the cap and the outside of
+                // the cut are faces of the part, so as the part grows the cap rises and the tool shrinks, while the
+                // round itself grows with the part.
+                var parts = m.Children.Select(c => c switch
+                {
+                    LeafField l when l.Surface.Id == rim.Cap.Surface.Id => Leaf(l, -d),
+                    LoopEdgeField l when l == rim => OffsetOf(rim, d, register, done, id),
+                    _ when c == tool => OffsetOf(tool, -d, register, done, id),
+                    _ => OffsetOf(c, d, register, done, id),
+                }).ToList();
+                return parts.Any(c => c is null) ? null : new MinField(parts!);
             case MinField m:
                 return Each(m.Children, c => new MinField(c));
             case NegateField n:
@@ -286,12 +334,17 @@ public sealed class Compiler(ModelingSettings settings)
                 if (OffsetOf(lp.Side, d, register, done, id) is not { } side) return null;
                 if (size <= 1e-9) return new MaxField([Leaf(lp.Cap, d), side]);
                 var faces = lp.FaceOf.ToDictionary(kv => kv.Key, kv => register(kv.Value with { Radius = size }));
-                // The side's owners are offset leaves now: map the new ids to the new faces.
+                // The side's owners are offset leaves now (moved by ±d: a cut's side is a complement): map the new ids
+                // to the new faces, and give any new side face (a round corner of a grown profile) a face of its own.
                 var remapped = new Dictionary<int, Surface>();
+                var present = FieldAlgebra.Descendants(side).OfType<LeafField>().Select(l => l.Surface.Id).ToHashSet();
                 foreach (var (oldOwner, face) in faces)
                     foreach (var ((leaf, by), moved) in done)
-                        if (leaf.Surface.Id == oldOwner && by == d) remapped[moved.Surface.Id] = face;
-                return new LoopEdgeField(Leaf(lp.Cap, d), side, size, lp.Round, remapped.Count > 0 ? remapped : faces);
+                        if (leaf.Surface.Id == oldOwner && Math.Abs(by) == Math.Abs(d) && present.Contains(moved.Surface.Id)) remapped[moved.Surface.Id] = face;
+                var prefix = lp.FaceOf.Values.First().Source.Split('/')[0];
+                foreach (var l in FieldAlgebra.Descendants(side).OfType<ProfileField>().SelectMany(pf => pf.Leaves).Where(l => !remapped.ContainsKey(l.Surface.Id)))
+                    remapped[l.Surface.Id] = register(new Surface(0, $"{prefix}/{l.Surface.Source}", SurfaceKind.Fillet, new Point3D(0, 0, 0), new Vector3D(0, 0, 1), size));
+                return new LoopEdgeField(Leaf(lp.Cap, d), side, size, lp.Round, remapped);
             default:
                 return null;
         }
@@ -419,8 +472,10 @@ public sealed class Compiler(ModelingSettings settings)
     /// </list>
     /// Inside a shell the feature reshapes only the shell's outside.
     /// </summary>
-    Field ApplyEdge(Feature feature, Field tree, Func<Surface, Surface> register, Point3D min, Point3D max, List<Diagnostic> diagnostics)
+    /// <param name="faceName">The new face's name; <c>id/face</c> unless a loop names it after the other face.</param>
+    Field ApplyEdge(Feature feature, Field tree, Func<Surface, Surface> register, Point3D min, Point3D max, List<Diagnostic> diagnostics, string? faceName = null)
     {
+        var name0 = faceName ?? $"{feature.Id}/face";
         var (edge, size, fillet) = feature switch
         {
             Fillet x => (x.Edge, x.Radius, true),
@@ -439,11 +494,25 @@ public sealed class Compiler(ModelingSettings settings)
         {
             var (la, lb) = (p.Leaves.FirstOrDefault(l => l.Surface.Source == edge[0]), p.Leaves.FirstOrDefault(l => l.Surface.Source == edge[1]));
             if (la is null || lb is null || p.CornerBetween(la, lb) is not { } corner) continue;
-            var rebuilt = p.WithCorner(corner, size, fillet, e => ProfileField.EdgeLeaf(e, p.Frame, p.Revolved,
-                (k, o, a, r, m, ang) => register(new Surface(0, $"{feature.Id}/face", k, o, a, r, m, ang))));
-            return rebuilt is null
-                ? Fail(invalid, $"{(fillet ? "radius" : "distance")} {size} does not fit on the straight profile edges next to the corner")
-                : Replace(tree, p, rebuilt);
+            // A loop fillet already run round this profile names its faces per side and would not know the new one.
+            if (Intersections(tree, null).SelectMany(x => FieldAlgebra.Descendants(x.Host)).Concat(FieldAlgebra.Descendants(tree))
+                .OfType<LoopEdgeField>().Any(l => FieldAlgebra.Descendants(l.Side).Contains(p)))
+                return Fail(unsupported, $"round the corner between {edge[0]} and {edge[1]} before the loop fillet round this profile");
+            var rebuilt = p.WithCorner(corner, size, fillet, (e, offset) =>
+            {
+                var leaf = ProfileField.EdgeLeaf(e, p.Frame, p.Revolved, (k, o, a, r, m, ang) => register(new Surface(0, name0, k, o, a, r, m, ang)));
+                return leaf is null || offset == 0 ? leaf : new LeafField(register(leaf.Surface.Offset(0, leaf.Surface.Source, leaf.Complement ? -offset : offset)), leaf.Complement);
+            });
+            if (rebuilt is null)
+                return Fail(invalid, $"{(fillet ? "radius" : "distance")} {size} does not fit on the straight profile edges next to the corner");
+            var next = Replace(tree, p, rebuilt);
+            // In a shell, the new face must stay clear of the cavity: probe its middle line on the new outside.
+            // Project onto the new outside alone: where the wall is cut through, the shelled field is not zero there.
+            var around = Intersections(next, null).FirstOrDefault(x => x.Shell is not null && FieldAlgebra.Descendants(x.Host).Contains(rebuilt)).Shell;
+            if (around is not null && rebuilt.Leaves.Except(p.Leaves).SelectMany(l => rebuilt.MiddleOf(l, (max - min).Length))
+                .Select(q => Project(around.Outer, q)).Any(q => Math.Abs(around.Outer.Value(q)) <= 1e-6 && Math.Abs(next.Value(q)) > 1e-9 || CutsShell(around, q) && Math.Abs(around.Outer.Value(q)) <= 1e-6))
+                return Fail(invalid, $"radius {size} cuts through the shell wall");
+            return next;
         }
 
         (MaxField Host, ShellField? Shell, LeafField? A, LeafField? B) Find() => Intersections(tree, null)
@@ -459,7 +528,7 @@ public sealed class Compiler(ModelingSettings settings)
         }
         if (found.Host is null)
             return fillet
-                ? ConcaveFillet(feature.Id, edge, size, tree, register, min, max, Fail)
+                ? ConcaveFillet(feature.Id, edge, size, tree, register, min, max, Fail, faceName)
                 : Fail(unsupported, $"edge {name} is not a convex edge between two faces of one intersection");
         var (host, shell, a, b) = (found.Host, found.Shell, found.A!, found.B!);
 
@@ -471,7 +540,7 @@ public sealed class Compiler(ModelingSettings settings)
         Field addition;
         if (fillet)
         {
-            var rounded = new RoundedEdgeField(a, b, size, register(new Surface(0, $"{feature.Id}/face", SurfaceKind.Fillet, new Point3D(0, 0, 0), new Vector3D(0, 0, 1), size)));
+            var rounded = new RoundedEdgeField(a, b, size, register(new Surface(0, name0, SurfaceKind.Fillet, new Point3D(0, 0, 0), new Vector3D(0, 0, 1), size)));
             // On a face's own plane the solid field is ≥ 0, and 0 only on the face itself: a contact point with
             // a positive value means the ball does not fit on that face.
             if (onEdge.Select(rounded.Contacts).Any(c => tree.Value(c.OnA) > 10 * _tol || tree.Value(c.OnB) > 10 * _tol))
@@ -485,7 +554,7 @@ public sealed class Compiler(ModelingSettings settings)
         {
             if (onEdge.Select(q => Setback(a, b, q, size)).Any(c => tree.Value(c.OnA) > 10 * _tol || tree.Value(c.OnB) > 10 * _tol))
                 return Fail(invalid, $"distance {size} does not fit between the faces next to the edge");
-            addition = ChamferLeaf(feature.Id, a, b, onEdge[0], size, register);
+            addition = ChamferLeaf(feature.Id, a, b, onEdge[0], size, s => register(s with { Source = name0 }));
         }
 
         // A face held directly is now inside the fillet; a chamfer only adds its own face.
@@ -562,7 +631,9 @@ public sealed class Compiler(ModelingSettings settings)
         {
             if (m.Children.OfType<LeafField>().FirstOrDefault(l => l.Surface.Source == edge[s]) is not { } leaf) continue;
             var other = edge[1 - s];
-            if (m.Children.OfType<MinField>().FirstOrDefault(u => Intersections(u, null).Any(x => Held(x.Host, other) is not null)) is not { } union) continue;
+            // The union holds the other face in one of its solids, or as a wall of its own (a block-shaped cut).
+            if (m.Children.OfType<MinField>().FirstOrDefault(u => u.Children.Any(c => c is LeafField l && l.Surface.Source == other)
+                    || Intersections(u, null).Any(x => Held(x.Host, other) is not null)) is not { } union) continue;
             Field Push(Field c) => c is MaxField mx ? new MaxField([.. mx.Children, leaf]) : new MaxField([c, leaf]);
             var pushed = new MinField(union.Children.Select(Push).ToList());
             return Replace(tree, m, new MaxField([.. m.Children.Where(c => c != leaf && c != union), pushed]));
@@ -592,24 +663,34 @@ public sealed class Compiler(ModelingSettings settings)
         }
         Surface Named(string other) => register(new Surface(0, $"{feature.Id}/{other}", SurfaceKind.Fillet, new Point3D(0, 0, 0), new Vector3D(0, 0, 1), size));
         Dictionary<int, Surface> FacesOf(ProfileField p) => p.Leaves.ToDictionary(l => l.Surface.Id, l => Named(l.Surface.Source));
-        bool Across(ProfileField p, LeafField cap) => !p.Revolved && Math.Abs(p.Frame.Z.Dot(cap.Surface.Axis)) > 1 - 1e-9;
+        // The swept profile under a field: itself, or under loops already run round it (an extrude looped at both ends).
+        ProfileField? Across(Field f, LeafField cap) => f switch
+        {
+            ProfileField p when !p.Revolved && Math.Abs(p.Frame.Z.Dot(cap.Surface.Axis)) > 1 - 1e-9 => p,
+            LoopEdgeField l => Across(l.Side, cap),
+            _ => null,
+        };
+        bool OnPart(Point3D q) => Math.Abs(tree.Value(q)) <= 10 * _tol;
 
-        // The loop exists where the cap meets the profile on the part, and the ball (or setback) lands on both faces.
-        string? Problem(LoopEdgeField loop, ProfileField p)
+        // Where the cap meets the profile on the part (and, for a rim, where the cut really reaches the cap), and
+        // whether the ball (or setback) lands on both faces there. Null samples: the loop does not exist there.
+        (List<Point3D>? Samples, string? Problem) Check(LoopEdgeField loop, ProfileField p, bool rim, ShellField? shell)
         {
             var onEdge = p.Leaves
                 .SelectMany(e => EdgeSamples(loop.Cap.Surface, e.Surface, min, max) ?? [])
-                .Where(q => Math.Abs(tree.Value(q)) <= 10 * _tol && Math.Abs(p.Value(q)) <= 10 * _tol)
+                .Where(q => OnPart(q) && Math.Abs(p.Value(q)) <= 10 * _tol)
+                .Where(q => !rim || tree.Value(q + (loop.Side.Sample(q).Gradient - loop.Cap.Sample(q).Gradient) * 1e-4) > 0)
                 .ToList();
-            if (onEdge.Count == 0) return $"{face} meets no swept side there";
+            if (onEdge.Count == 0) return (null, null);
             foreach (var q in onEdge)
             {
                 var (ga, gb) = (loop.Cap.Sample(q).Gradient, loop.Side.Sample(q).Gradient);
-                if (Math.Abs(tree.Value(q - gb * size)) > 10 * _tol || Math.Abs(tree.Value(q - ga * size)) > 10 * _tol)
-                if (Math.Abs(tree.Value(q - gb * size)) > 10 * _tol || Math.Abs(tree.Value(q - ga * size)) > 10 * _tol)
-                    return $"{(round ? "radius" : "distance")} {size} does not fit round {face}";
+                if (!OnPart(q - gb * size) || !OnPart(q - ga * size))
+                    return (onEdge, $"{(round ? "radius" : "distance")} {size} does not fit round {face}");
+                if (shell is not null && CutsShell(shell, MidEdge(q, ga, gb, size, round)))
+                    return (onEdge, $"{(round ? "radius" : "distance")} {size} cuts through the shell wall");
             }
-            return null;
+            return (onEdge, null);
         }
 
         var found = Intersections(tree, null).FirstOrDefault(x => x.Host.Children.Any(c => c is LeafField l && l.Surface.Source == face));
@@ -619,59 +700,78 @@ public sealed class Compiler(ModelingSettings settings)
             if (cap.Surface.Kind != SurfaceKind.Plane) return Fail(unsupported, $"a loop runs round a flat face; {face} is a {cap.Surface.Kind.ToString().ToLowerInvariant()}");
             var children = new List<Field>();
             var added = new List<Field>();
+            var walls = new List<string>();
+            var unhandled = new List<string>();
             foreach (var c in host.Children)
             {
                 switch (c)
                 {
-                    case ProfileField p when Across(p, cap):
-                        var loop = new LoopEdgeField(cap, p, size, round, FacesOf(p));
-                        if (Problem(loop, p) is { } problem) return Fail(invalid, problem);
-                        children.Add(loop);
+                    case ProfileField or LoopEdgeField when Across(c, cap) is { } p:
+                        var loop = new LoopEdgeField(cap, c, size, round, FacesOf(p));
+                        var (samples, problem) = Check(loop, p, rim: false, found.Shell);
+                        if (problem is not null) return Fail(invalid, problem);
+                        children.Add(samples is null ? c : loop);
                         break;
 
-                    case LeafField l when l != cap && EdgeSamples(cap.Surface, l.Surface, min, max) is { } samples:
-                        var onEdge = samples.Where(q => Math.Abs(tree.Value(q)) <= 10 * _tol).ToList();
-                        if (onEdge.Count == 0)
-                        {
-                            children.Add(l);
-                            break;
-                        }
+                    case LeafField l when l != cap && EdgeSamples(cap.Surface, l.Surface, min, max) is { } lineOrCircle:
+                        var onEdge = lineOrCircle.Where(OnPart).ToList();
+                        children.Add(l);
+                        if (onEdge.Count == 0) break;
                         if (round)
                         {
                             var rounded = new RoundedEdgeField(cap, l, size, Named(l.Surface.Source));
                             if (onEdge.Select(rounded.Contacts).Any(x => tree.Value(x.OnA) > 10 * _tol || tree.Value(x.OnB) > 10 * _tol))
                                 return Fail(invalid, $"radius {size} does not fit between {face} and {l.Surface.Source}");
-                            children.Add(rounded);
+                            if (found.Shell is { } shell && onEdge.Select(rounded.Contacts).Any(x => CutsShell(shell, Middle(x, size))))
+                                return Fail(invalid, $"radius {size} cuts through the shell wall");
+                            children[^1] = rounded;
                         }
                         else
                         {
                             if (onEdge.Select(q => Setback(cap, l, q, size)).Any(x => tree.Value(x.OnA) > 10 * _tol || tree.Value(x.OnB) > 10 * _tol))
                                 return Fail(invalid, $"distance {size} does not fit between {face} and {l.Surface.Source}");
-                            children.Add(l);
                             added.Add(ChamferLeafNamed(feature.Id, l.Surface.Source, cap, l, onEdge[0], size, register));
                         }
                         break;
 
-                    case MinField cut when cut.Children.OfType<NegateField>().FirstOrDefault(n => n.Child is ProfileField pp && Across(pp, cap)) is { Child: ProfileField tool }:
+                    case MinField cut when cut.Children.OfType<NegateField>().Select(n => Across(n.Child, cap)).FirstOrDefault(t => t is not null) is { } tool:
                         // The rim of a cut-out: round the cap against the outside of the tool, and take away only the
                         // corner material that rounding leaves out, so the cut's floor below stays where it is.
                         children.Add(c);
                         var rim = new LoopEdgeField(cap, new NegateField(tool), size, round, FacesOf(tool));
-                        if (Problem(rim, tool) is { } rimProblem)
-                        {
-                            if (rimProblem.Contains("meets no")) break;
-                            return Fail(invalid, rimProblem);
-                        }
-                        added.Add(new NegateField(new MaxField([cap, new NegateField(tool), new NegateField(rim)])));
+                        var (rimSamples, rimProblem) = Check(rim, tool, rim: true, found.Shell);
+                        if (rimProblem is not null) return Fail(invalid, rimProblem);
+                        if (rimSamples is not null) added.Add(new NegateField(new MaxField([cap, new NegateField(tool), new NegateField(rim)])));
+                        break;
+
+                    case MinField cut:
+                        // A block-shaped cut-out: each wall that reaches the cap is one edge, rounded on its own below.
+                        children.Add(c);
+                        walls.AddRange(cut.Children.OfType<LeafField>()
+                            .Where(w => EdgeSamples(cap.Surface, w.Surface, min, max) is { } ws && ws.Any(q => OnPart(q) && Math.Abs(cut.Value(q)) <= 10 * _tol))
+                            .Select(w => w.Surface.Source));
                         break;
 
                     default:
                         children.Add(c);
+                        // Anything else that meets the cap on the part is an edge this loop cannot round: say so.
+                        foreach (var l in FieldAlgebra.Descendants(c).OfType<LeafField>())
+                            if (l.Surface.Source != face && EdgeSamples(cap.Surface, l.Surface, min, max) is { } es && es.Any(q => OnPart(q) && Math.Abs(c.Value(q)) <= 10 * _tol))
+                                unhandled.Add(l.Surface.Source);
                         break;
                 }
             }
-            if (children.SequenceEqual(host.Children) && added.Count == 0) return Fail(invalid, $"{face} has no edges to {(round ? "round" : "chamfer")}");
-            return Replace(tree, host, new MaxField([.. children, .. added]));
+            if (unhandled.Count > 0)
+                return Fail(unsupported, $"the loop round {face} cannot {(round ? "round" : "chamfer")} its edge with {string.Join(", ", unhandled.Distinct())}");
+            if (children.SequenceEqual(host.Children) && added.Count == 0 && walls.Count == 0)
+                return Fail(invalid, $"{face} has no edges to {(round ? "round" : "chamfer")}");
+            tree = Replace(tree, host, new MaxField([.. children, .. added]));
+            foreach (var w in walls)
+            {
+                Feature single = round ? new Fillet(feature.Id, [face, w], size) : new Chamfer(feature.Id, [face, w], size);
+                tree = ApplyEdge(single, tree, register, min, max, diagnostics, $"{feature.Id}/{w}");
+            }
+            return tree;
         }
 
         // The floor of a cut: the tool is a union of complements; rounding its own loop adds material in the pocket.
@@ -679,22 +779,47 @@ public sealed class Compiler(ModelingSettings settings)
         {
             if (union.Children.OfType<LeafField>().FirstOrDefault(l => l.Surface.Source == face) is not { } floor) continue;
             var flipped = new LeafField(floor.Surface, !floor.Complement);
-            if (union.Children.OfType<NegateField>().FirstOrDefault(n => n.Child is ProfileField pp && Across(pp, flipped)) is not { Child: ProfileField tool } wall)
+            var wall = union.Children.OfType<NegateField>().FirstOrDefault(n => Across(n.Child, flipped) is not null);
+            if (wall is null)
             {
                 // A block-shaped cut: its floor meets each wall in one inside edge.
                 if (!round) return Fail(unsupported, $"a chamfer loop round the floor of a cut needs a swept cut");
-                var walls = union.Children.OfType<LeafField>().Where(l => l != floor && Math.Abs(l.Surface.Axis.Dot(floor.Surface.Axis)) < 1e-9).Select(l => l.Surface.Source).ToList();
-                if (walls.Count == 0) return Fail(invalid, $"{face} has no edges to round");
-                foreach (var w in walls)
+                var blockWalls = union.Children.OfType<LeafField>().Where(l => l != floor && Math.Abs(l.Surface.Axis.Dot(floor.Surface.Axis)) < 1e-9).Select(l => l.Surface.Source).ToList();
+                if (blockWalls.Count == 0) return Fail(invalid, $"{face} has no edges to round");
+                foreach (var w in blockWalls)
                     tree = ConcaveFillet(feature.Id, [face, w], size, tree, register, min, max, Fail, $"{feature.Id}/{w}");
                 return tree;
             }
-            var loop = new LoopEdgeField(flipped, tool, size, round, FacesOf(tool));
-            if (Problem(loop, tool) is { } problem) return Fail(invalid, problem);
+            var tool = Across(wall.Child, flipped)!;
+            var loop = new LoopEdgeField(flipped, wall.Child, size, round, FacesOf(tool));
+            var (samples, problem) = Check(loop, tool, rim: false, null);
+            if (problem is not null) return Fail(invalid, problem);
+            if (samples is null) return Fail(invalid, $"{face} meets no swept side there");
             return Replace(tree, union, new MinField([.. union.Children.Where(c => c != floor && c != wall), new NegateField(loop)]));
         }
         return Fail(unsupported, $"{face} is neither a face of one intersection nor the floor of a swept cut");
     }
+
+    /// <summary>The middle of the fillet arc (or chamfer face) over an edge point q whose faces meet at right angles.</summary>
+    static Point3D MidEdge(Point3D q, Vector3D ga, Vector3D gb, double size, bool round)
+    {
+        if (!round) return q - (ga + gb) * (size / 2);
+        var centre = q - (ga + gb) * size;
+        return centre + (ga + gb).Normalized() * size;
+    }
+
+    static Point3D Project(Field f, Point3D q)
+    {
+        for (var i = 0; i < 4; i++)
+        {
+            var s = f.Sample(q);
+            q -= s.Gradient * (s.Value / Math.Max(s.Gradient.LengthSquared, 1e-12));
+        }
+        return q;
+    }
+
+    /// <summary>A point of a new outer surface inside the shell's cavity: the round has cut through the wall.</summary>
+    static bool CutsShell(ShellField shell, Point3D onOuter) => -shell.Child.Value(onOuter) - shell.Thickness > -1e-9;
 
     static LeafField ChamferLeafNamed(string id, string other, LeafField a, LeafField b, Point3D q, double d, Func<Surface, Surface> register) =>
         ChamferLeaf(id, a, b, q, d, s => register(s with { Source = $"{id}/{other}" }));

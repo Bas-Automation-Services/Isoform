@@ -26,6 +26,41 @@ public sealed class AssemblyResult(IReadOnlyList<Instance> instances, IReadOnlyL
     /// <summary>Degrees of freedom the mates leave the ungrounded components (0: fully held).</summary>
     public int FreeDegrees { get; } = freeDegrees;
 
+    /// <summary>
+    /// Clearance between every pair of instances whose boxes come within <paramref name="within"/> mm of each other
+    /// (certified interval, see <see cref="Queries.Clearance(Field, Box3D, Field, Box3D, double, int)"/>); pairs
+    /// that interfere have a negative upper end.
+    /// </summary>
+    public IReadOnlyList<(string A, string B, ClearanceResult Clearance)> Clearances(double within = 0)
+    {
+        var placed = Instances.Where(i => i.Field is not null).Select(i => (i.Id, Field: i.Field!, Box: WorldBox(i))).ToList();
+        var result = new List<(string, string, ClearanceResult)>();
+        for (var a = 0; a < placed.Count; a++)
+        for (var b = a + 1; b < placed.Count; b++)
+        {
+            var (x, y) = (placed[a].Box, placed[b].Box);
+            var gap = Math.Max(0, Math.Max(Math.Max(x.Min.X - y.Max.X, y.Min.X - x.Max.X), Math.Max(Math.Max(x.Min.Y - y.Max.Y, y.Min.Y - x.Max.Y), Math.Max(x.Min.Z - y.Max.Z, y.Min.Z - x.Max.Z))));
+            if (gap > within) continue;
+            result.Add((placed[a].Id, placed[b].Id, Queries.Clearance(placed[a].Field, x, placed[b].Field, y)));
+        }
+        return result;
+    }
+
+    /// <summary>The part's box moved into place, grown a little so the search has room round the solid.</summary>
+    static Box3D WorldBox(Instance i)
+    {
+        var (min, max) = (i.Result.Part.Min, i.Result.Part.Max);
+        var (lo, hi) = (new Point3D(double.MaxValue, double.MaxValue, double.MaxValue), new Point3D(double.MinValue, double.MinValue, double.MinValue));
+        foreach (var x in new[] { min.X - 1, max.X + 1 })
+        foreach (var y in new[] { min.Y - 1, max.Y + 1 })
+        foreach (var z in new[] { min.Z - 1, max.Z + 1 })
+        {
+            var q = i.Placement.ToWorld(new Point3D(x, y, z));
+            (lo, hi) = (new Point3D(Math.Min(lo.X, q.X), Math.Min(lo.Y, q.Y), Math.Min(lo.Z, q.Z)), new Point3D(Math.Max(hi.X, q.X), Math.Max(hi.Y, q.Y), Math.Max(hi.Z, q.Z)));
+        }
+        return new Box3D(lo, hi);
+    }
+
     /// <summary>Every instance's mesh moved into place and laid end to end, with its first quad index.</summary>
     public (Mesh Mesh, IReadOnlyList<int> FirstQuad) WorldMesh()
     {

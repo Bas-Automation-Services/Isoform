@@ -438,9 +438,10 @@ public sealed class ShellField : Field
         var c = Child.Bounds(box);
         var o = Plain ? c : Outer.Bounds(box);
         if (-c.Hi - Thickness <= o.Hi + 1e-9 || Child.Simplify(box) is not LeafField leaf) return null;
-        if (leaf.Surface.Kind == SurfaceKind.Plane) return double.PositiveInfinity;
-        var r = leaf.Complement ? leaf.Surface.Radius + Thickness : leaf.Surface.Radius - Thickness;
-        return r > 0 ? r : null;
+        // The inner surface is the child's offset inwards: ask that surface itself (a torus' tube, a cone's apex).
+        var inner = leaf.Surface.Offset(0, leaf.Surface.Source, leaf.Complement ? Thickness : -Thickness);
+        if (inner.Kind is SurfaceKind.Cylinder or SurfaceKind.Sphere && inner.Radius <= 1e-9 || inner.Kind == SurfaceKind.Torus && inner.Minor <= 1e-9) return null;
+        return new LeafField(inner, leaf.Complement).SinglePatch(box);
     }
 
     // Where the cavity cannot reach, the shell is just its outside.
@@ -530,7 +531,7 @@ public sealed class LoopEdgeField : Field
     public LoopEdgeField(LeafField cap, Field side, double size, bool round, IReadOnlyDictionary<int, Surface> faceOf)
     {
         (Cap, Side, Size, Round, _faceOf) = (cap, side, size, round, faceOf);
-        _sideOf = faceOf.ToDictionary(kv => kv.Value.Id, kv => kv.Key);
+        _sideOf = faceOf.GroupBy(kv => kv.Value.Id).ToDictionary(g => g.Key, g => g.First().Key);
         _fallback = faceOf.Values.First().Id;
     }
 

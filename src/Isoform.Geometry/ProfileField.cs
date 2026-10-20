@@ -182,8 +182,10 @@ public sealed class ProfileField : Field
         var corners = new LeafField?[_edges.Length];
         for (var k = 0; k < _edges.Length; k++)
         {
-            if (_corners[k] is { } existing) corners[k] = offsetLeaf(existing);
-            else if (Math.Abs(total) > 1e-9 && _vertexSign[k] == Math.Sign(total))
+            // A round corner lasts while the offset keeps its sign; a corner on the revolve axis is no corner at all.
+            var round = Math.Abs(total) > 1e-9 && _vertexSign[k] == Math.Sign(total) && !OnAxis(k);
+            if (_corners[k] is { } existing) corners[k] = round ? offsetLeaf(existing) : null;
+            else if (round)
             {
                 var (u, v) = (_edges[k].U1, _edges[k].V1);
                 var next = _leaves[(k + 1) % _edges.Length];
@@ -261,11 +263,18 @@ public sealed class ProfileField : Field
     /// reflex corners alike. The trimmed edges keep their faces; <paramref name="newLeaf"/> makes the new edge's face.
     /// Null when an edge is an arc or too short for the corner.
     /// </summary>
-    public ProfileField? WithCorner(int k, double size, bool round, Func<ProfileEdge2D, LeafField?> newLeaf)
+    /// <remarks>
+    /// After an offset d the corner is rounded in the profile's own terms: an arc of radius r − d (convex) or r + d
+    /// (reflex), grown by d, is the round of radius r on the grown profile. <paramref name="newLeaf"/> gets the
+    /// offset its face must be moved by. A chamfer does not carry over that way and needs an unoffset profile.
+    /// </remarks>
+    public ProfileField? WithCorner(int k, double size, bool round, Func<ProfileEdge2D, double, LeafField?> newLeaf)
     {
         var n = _edges.Length;
         var (e1, e2) = (_edges[k], _edges[(k + 1) % n]);
-        if (e1.IsArc || e2.IsArc || _vertexSign[k] == 0) return null;
+        if (e1.IsArc || e2.IsArc || _vertexSign[k] == 0 || OnAxis(k) || !round && _offset != 0) return null;
+        size -= _vertexSign[k] * _offset;
+        if (size <= 1e-9) return null;
         var (d1, d2) = (e1.EndTangent, e2.StartTangent);
         var turn = Math.Abs(Math.Atan2(d1.U * d2.V - d1.V * d2.U, d1.U * d2.U + d1.V * d2.V));
         var t = round ? size * Math.Tan(turn / 2) : size;
@@ -282,7 +291,9 @@ public sealed class ProfileField : Field
         edges[k] = new ProfileEdge2D(e1.U0, e1.V0, t1u, t1v, 0);
         edges[(k + 1) % n] = new ProfileEdge2D(t2u, t2v, e2.U1, e2.V1, 0);
         edges.Insert(k + 1, corner);
-        leaves.Insert(k + 1, newLeaf(corner));
+        leaves.Insert(k + 1, newLeaf(corner, _offset));
+        // The corner is now two tangent junctions: no round corner face at either.
+        corners[k] = null;
         corners.Insert(k + 1, null);
         return new(edges, leaves, _frame, _revolve, _offset, corners);
     }
@@ -295,6 +306,26 @@ public sealed class ProfileField : Field
         var n = _edges.Length;
         if (_vertexSign[(i - 1 + n) % n] != 0 && _leaves[(i - 1 + n) % n] is { } before) yield return before;
         if (_vertexSign[i] != 0 && _leaves[(i + 1) % n] is { } after) yield return after;
+    }
+
+    /// <summary>
+    /// Points on the middle line of a leaf's face: along the extrude within <paramref name="reach"/> of the sketch
+    /// plane, or the one meridian point of a revolve. They lie on the unoffset face.
+    /// </summary>
+    public IEnumerable<Point3D> MiddleOf(LeafField leaf, double reach)
+    {
+        var i = Array.IndexOf(_leaves, leaf);
+        if (i < 0) yield break;
+        var e = _edges[i];
+        var (u, v) = e.IsArc
+            ? (e.Cu + e.R * Math.Cos(e.A0 + e.Sweep / 2), e.Cv + e.R * Math.Sin(e.A0 + e.Sweep / 2))
+            : ((e.U0 + e.U1) / 2, (e.V0 + e.V1) / 2);
+        if (_revolve)
+        {
+            yield return _frame.ToWorld(new Point3D(u, v, 0));
+            yield break;
+        }
+        for (var w = -reach; w <= reach; w += reach / 50) yield return _frame.ToWorld(new Point3D(u, v, w));
     }
 
     public bool Supports(LeafField leaf)
@@ -430,5 +461,15 @@ public sealed class ProfileField : Field
     /// Nearest to a tangent junction, which only rounding can make happen: both edges share the normal there, so the
     /// edge's own surface gives the value, and a true normal instead of the direction of a vanishing vector.
     /// </summary>
-    bool Tangent(int i, int where) => _vertexSign[where == 1 ? i : (i - 1 + _edges.Length) % _edges.Length] == 0;
+    bool Tangent(int i, int where)
+    {
+        var k = where == 1 ? i : (i - 1 + _edges.Length) % _edges.Length;
+        return _vertexSign[k] == 0 || OnAxis(k);
+    }
+
+    /// <summary>
+    /// The corner at the end of edge k touches an edge on the revolve axis. Its corner region lies across the axis,
+    /// where no point is, so a point there (on the axis itself) takes its value from the edge's own surface.
+    /// </summary>
+    bool OnAxis(int k) => _revolve && (_leaves[k] is null || _leaves[(k + 1) % _edges.Length] is null);
 }
