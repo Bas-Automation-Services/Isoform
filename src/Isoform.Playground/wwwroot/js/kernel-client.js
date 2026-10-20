@@ -76,7 +76,8 @@ export function createClient(workers) {
 
 /**
  * The page's model of a regeneration: result v2 as the kernel wrote it (src/Isoform.Interactive/README.md), plus
- * the worker's round trip in ms, the mesh buffers, and the body of each face. Faces are indexed as in
+ * the cell size it was made at (cell, set by the worker), the worker's round trip in ms, the mesh buffers, and the body
+ * of each face. A preview result (J2) also has preview: true. Faces are indexed as in
  * mesh.faceOfTriangle; a face is its list of source names, the first being the name a document refers to it by.
  * A failure is {error, failedEdit?, ms}, with error set.
  */

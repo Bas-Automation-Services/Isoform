@@ -13,7 +13,7 @@ node tests/playground/run.mjs path/to/wwwroot      # or any other published wwwr
 The parts on their own:
 
 ```sh
-node --test tests/playground/{kernel-client,store,diff,history}.test.mjs   # front end only, no publish
+node --test tests/playground/{kernel-client,store,diagnose,diff,history}.test.mjs   # front end only, no publish
 node --test tests/playground/kernel.test.mjs       # kernel only; ISOFORM_PLAYGROUND=<wwwroot> to point elsewhere
 node tests/playground/e2e.mjs [wwwroot]            # browser only
 node tests/playground/serve.mjs [wwwroot] [port]   # serve the page to look at it yourself (default port 8137)
@@ -33,6 +33,12 @@ helpers to the primary; `adaptResult` keeps result v2 as written and adds the me
 **`store.test.mjs`**: the selection is face names, so it follows a face that is renumbered and drops one that is gone;
 a document that does not read keeps the last result; history gets one entry per changed document; the status line has
 the form `e2e.mjs` reads.
+
+**`diagnose.test.mjs`** (`wwwroot/js/lib/diagnose.js`): diagnostics grouped by code with readable titles, errors
+first; the face names a message mentions (whole names only), else for a feature that left no faces the ones its
+definition names (a fillet's edge); a thin spot's thinnest point; the cell that resolves a below-resolution report
+(size / 2, at least half the current cell, on a round value: a 0.6 mm wall at 0.5 mm cells gives 0.25 mm); preview
+results grey out their below-resolution reports; the valid / N problems verdict.
 
 **`diff.test.mjs`**: the line diff (`wwwroot/js/lib/diff.js`) accounts for both texts in order, is shortest (a moved
 line costs two), numbers lines in their own text; `hunks` keeps context around changes, `changedLines` gives the lines
@@ -59,9 +65,14 @@ stats line under the editor (`#stats`) to show a result. An example passes when 
 does not start with `Error:` or say the document does not parse, and the page logged no uncaught exception or console
 error. Per example it prints the kernel time from the stats line and the page time (navigation to result, including
 loading the runtime). Then it clicks a face of example 0, regenerates at another cell size and checks that the same
-face names are still selected. Last, on example 0: `applyEdits` commits one entry (agent view shows its hash and edit,
-the editor flashes), an edit that does not apply leaves the hash alone, undo returns the original hash and redo the
-edited one; `history.png` is the screenshot.
+face names are still selected. Last, diagnostics: example 0 with its hole moved to leave a 0.6 mm wall reports a
+below-resolution thin spot between `plate/y+` and `hole/wall`; clicking it in the list lights both faces in two colours
+and flies the camera there (`out/screenshots/diagnostics.png`); "Resolve at 0.25 mm" regenerates the same document at
+0.25 mm cells with the report gone and the verdict Valid; "back to 0.5 mm" brings it back; a fillet radius of 12 mm gives
+`fillet-invalid`, lights the edge it names and keeps the rest of the part.
+Then the history on example 0: `applyEdits` commits one entry (agent view shows its hash and edit, the editor
+flashes), an edit that does not apply leaves the hash alone, undo returns the original hash and redo the edited one
+(`out/screenshots/history.png`).
 
 ## Screenshots
 
@@ -83,8 +94,11 @@ mesh, stray triangles, and red diagnostics under the stats line.
 
 Coordinates are CSS pixels in the viewport. The page exposes `window.isoform`: `ready` (a result is shown),
 `document()`, `hash()`, `selection()` (face names), `faces()` (each face's names), `select(names)` and `edit(text)`
-(resolves once that text has regenerated); `applyEdits(edits, label, origin)`, `undo()`, `redo()` (each resolves
-to `{hash}`, `{error, failedEdit?}` or null) and `history()` (`{at, entries: [{hash, edits, label, origin}]}`). Later tasks add to it, for example handles:
+(resolves once that text has regenerated); for diagnostics `diagnostics()` (as listed), `focusDiagnostic(index)`,
+`marked()` (the faces lit for the one in focus, with their colours), `cell()` (the cell the result was made at),
+`target()` (where the camera looks) and `resolve(cell)`; for commits `applyEdits(edits, label, origin)`, `undo()`, `redo()` (each
+resolves to `{hash}`, `{error, failedEdit?}` or null) and `history()` (`{at, entries: [{hash, edits, label, origin}]}`).
+Later tasks add to it, for example handles:
 
 ```js
 const page = await browser.newPage();
