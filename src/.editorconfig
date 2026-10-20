@@ -1,0 +1,5 @@
+[*.cs]
+# Numbers are formatted and parsed culture-invariantly: hosts run in any culture (an add-in in nl-NL) and must see the
+# same diagnostics, documents and hashes. CA1305 does not see a plain $"..." string: one with a number in it goes
+# through FormattableString.Invariant (tests/Isoform.Tests/CultureTests.cs runs regeneration in nl-NL).
+dotnet_diagnostic.CA1305.severity = error

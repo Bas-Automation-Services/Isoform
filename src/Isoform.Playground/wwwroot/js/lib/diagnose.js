@@ -68,9 +68,9 @@ export function referencedNames(text, feature, names) {
 /** The size a below-resolution diagnostic is about, in mm: a thin spot's thickness, else the one in its message. */
 export function sizeOf(message, spot) {
   if (spot) return spot.thickness;
-  // The kernel formats numbers in the current culture: "0,601 mm apart" as well as "0.601 mm apart".
-  const m = message.match(/\((\d[\d.,]*) mm\)|(\d[\d.,]*) mm (?:apart|thick)/);
-  return m ? +(m[1] ?? m[2]).replace(',', '.') : null;
+  // The kernel formats numbers culture-invariantly: "0.601 mm apart" on every machine.
+  const m = message.match(/\((\d[\d.]*) mm\)|(\d[\d.]*) mm (?:apart|thick)/);
+  return m ? +(m[1] ?? m[2]) : null;
 }
 
 /** The largest of 1, 2, 2.5, 5 × 10^k not above x. */

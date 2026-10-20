@@ -213,11 +213,11 @@ public static partial class DocumentEdits
         var keys = path.Split('.');
         JsonNode node = features.First(f => (string?)f!["id"] == keys[0])!;
         for (var i = 1; i < keys.Length - 1; i++) node = Child(node, keys[i]);
-        if (node is JsonArray array) array[int.Parse(keys[^1])] = value;
+        if (node is JsonArray array) array[int.Parse(keys[^1], CultureInfo.InvariantCulture)] = value;
         else node[keys[^1]] = value;
     }
 
-    static JsonNode Child(JsonNode node, string key) => node is JsonArray a ? a[int.Parse(key)]! : node[key]!;
+    static JsonNode Child(JsonNode node, string key) => node is JsonArray a ? a[int.Parse(key, CultureInfo.InvariantCulture)]! : node[key]!;
 }
 
 /// <summary>An edit that cannot be applied; the message says which and why.</summary>

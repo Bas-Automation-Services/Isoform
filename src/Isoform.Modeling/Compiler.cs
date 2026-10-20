@@ -1,6 +1,7 @@
 using BasAutomation.Geometry;
 using Isoform.Document;
 using Isoform.Geometry;
+using static System.FormattableString;
 
 namespace Isoform.Modeling;
 
@@ -248,9 +249,9 @@ public sealed class Compiler(ModelingSettings settings)
         }
         if (queue.Count == 0) return null;
         // Out of budget nothing is settled; the doubt is reported rather than dropped.
-        var size = best < cavity ? $"a cavity about {2 * (-best - sh.Thickness):G3} mm thick" : "a cavity too thin to measure, if any";
+        var size = best < cavity ? Invariant($"a cavity about {2 * (-best - sh.Thickness):G3} mm thick") : "a cavity too thin to measure, if any";
         return new Diagnostic(Diagnostic.BelowResolution, sh.Id,
-            $"{sh.Id} leaves {size}, below the resolved size of {2 * settings.CellSize:G4} mm; use a smaller CellSize or a thinner shell");
+            Invariant($"{sh.Id} leaves {size}, below the resolved size of {2 * settings.CellSize:G4} mm; use a smaller CellSize or a thinner shell"));
     }
 
     /// <summary>
@@ -539,14 +540,14 @@ public sealed class Compiler(ModelingSettings settings)
                 return leaf is null || offset == 0 ? leaf : new LeafField(register(leaf.Surface.Offset(0, leaf.Surface.Source, leaf.Complement ? -offset : offset)), leaf.Complement);
             });
             if (rebuilt is null)
-                return Fail(invalid, $"{(fillet ? "radius" : "distance")} {size} does not fit on the straight profile edges next to the corner");
+                return Fail(invalid, Invariant($"{(fillet ? "radius" : "distance")} {size} does not fit on the straight profile edges next to the corner"));
             var next = Replace(tree, p, rebuilt);
             // In a shell, the new face must stay clear of the cavity: probe its middle line on the new outside.
             // Project onto the new outside alone: where the wall is cut through, the shelled field is not zero there.
             var around = Intersections(next, null).FirstOrDefault(x => x.Shell is not null && FieldAlgebra.Descendants(x.Host).Contains(rebuilt)).Shell;
             if (around is not null && rebuilt.Leaves.Except(p.Leaves).SelectMany(l => rebuilt.MiddleOf(l, (max - min).Length))
                 .Select(q => Project(around.Outer, q)).Any(q => Math.Abs(around.Outer.Value(q)) <= 1e-6 && Math.Abs(next.Value(q)) > 1e-9 || CutsShell(around, q) && Math.Abs(around.Outer.Value(q)) <= 1e-6))
-                return Fail(invalid, $"radius {size} cuts through the shell wall");
+                return Fail(invalid, Invariant($"radius {size} cuts through the shell wall"));
             return next;
         }
 
@@ -584,16 +585,16 @@ public sealed class Compiler(ModelingSettings settings)
                 .Where(r => new[] { r.A, r.B }.All(l => l.Surface.Source != a.Surface.Source && l.Surface.Source != b.Surface.Source))
                 .Aggregate(tree, (t, r) => Replace(t, r, new MaxField([r.A, r.B])));
             if (onEdge.Select(rounded.Contacts).Any(c => mitred.Value(c.OnA) > 10 * _tol || mitred.Value(c.OnB) > 10 * _tol))
-                return Fail(invalid, $"radius {size} does not fit between the faces next to the edge");
+                return Fail(invalid, Invariant($"radius {size} does not fit between the faces next to the edge"));
             // The arc's middle must stay outside the cavity, or the round cuts through the wall.
             if (shell is not null && onEdge.Select(rounded.Contacts).Any(c => -shell.Child.Value(Middle(c, size)) - shell.Thickness > -10 * _tol))
-                return Fail(invalid, $"radius {size} cuts through the shell wall");
+                return Fail(invalid, Invariant($"radius {size} cuts through the shell wall"));
             addition = rounded;
         }
         else
         {
             if (onEdge.Select(q => Setback(a, b, q, size)).Any(c => tree.Value(c.OnA) > 10 * _tol || tree.Value(c.OnB) > 10 * _tol))
-                return Fail(invalid, $"distance {size} does not fit between the faces next to the edge");
+                return Fail(invalid, Invariant($"distance {size} does not fit between the faces next to the edge"));
             addition = ChamferLeaf(feature.Id, a, b, onEdge[0], size, s => register(s with { Source = name0 }));
         }
 
@@ -630,7 +631,7 @@ public sealed class Compiler(ModelingSettings settings)
             var onEdge = samples.Where(q => Math.Abs(tree.Value(q)) <= 10 * _tol && onBoth(q)).ToList();
             if (onEdge.Count == 0) return $"edge {name} does not exist on the part";
             return onEdge.Select(rounded.Contacts).Any(c => Math.Abs(tree.Value(c.OnA)) > 10 * _tol || Math.Abs(tree.Value(c.OnB)) > 10 * _tol)
-                ? $"radius {r} does not fit between the faces next to the edge" : null;
+                ? Invariant($"radius {r} does not fit between the faces next to the edge") : null;
         }
 
         var unions = Unions(tree).ToList();
@@ -726,9 +727,9 @@ public sealed class Compiler(ModelingSettings settings)
             {
                 var (ga, gb) = (loop.Cap.Sample(q).Gradient, loop.Side.Sample(q).Gradient);
                 if (!OnPart(q - gb * size) || !OnPart(q - ga * size))
-                    return (onEdge, $"{(round ? "radius" : "distance")} {size} does not fit round {face}");
+                    return (onEdge, Invariant($"{(round ? "radius" : "distance")} {size} does not fit round {face}"));
                 if (shell is not null && CutsShell(shell, MidEdge(q, ga, gb, size, round)))
-                    return (onEdge, $"{(round ? "radius" : "distance")} {size} cuts through the shell wall");
+                    return (onEdge, Invariant($"{(round ? "radius" : "distance")} {size} cuts through the shell wall"));
             }
             return (onEdge, null);
         }
@@ -761,15 +762,15 @@ public sealed class Compiler(ModelingSettings settings)
                         {
                             var rounded = new RoundedEdgeField(cap, l, size, Named(l.Surface.Source));
                             if (onEdge.Select(rounded.Contacts).Any(x => tree.Value(x.OnA) > 10 * _tol || tree.Value(x.OnB) > 10 * _tol))
-                                return Fail(invalid, $"radius {size} does not fit between {face} and {l.Surface.Source}");
+                                return Fail(invalid, Invariant($"radius {size} does not fit between {face} and {l.Surface.Source}"));
                             if (found.Shell is { } shell && onEdge.Select(rounded.Contacts).Any(x => CutsShell(shell, Middle(x, size))))
-                                return Fail(invalid, $"radius {size} cuts through the shell wall");
+                                return Fail(invalid, Invariant($"radius {size} cuts through the shell wall"));
                             children[^1] = rounded;
                         }
                         else
                         {
                             if (onEdge.Select(q => Setback(cap, l, q, size)).Any(x => tree.Value(x.OnA) > 10 * _tol || tree.Value(x.OnB) > 10 * _tol))
-                                return Fail(invalid, $"distance {size} does not fit between {face} and {l.Surface.Source}");
+                                return Fail(invalid, Invariant($"distance {size} does not fit between {face} and {l.Surface.Source}"));
                             added.Add(ChamferLeafNamed(feature.Id, l.Surface.Source, cap, l, onEdge[0], size, register));
                         }
                         break;

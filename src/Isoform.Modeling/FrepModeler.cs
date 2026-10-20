@@ -2,6 +2,7 @@ using BasAutomation.Geometry;
 using Isoform.Document;
 using Isoform.Geometry;
 using Isoform.Meshing;
+using static System.FormattableString;
 
 namespace Isoform.Modeling;
 
@@ -96,7 +97,7 @@ public sealed class FrepModeler(ModelingSettings settings, RegionCache? cache = 
         {
             var (id, r) = g.MaxBy(x => x.Value.Margin);
             diagnostics.Add(new Diagnostic(Diagnostic.BelowResolution, g.Key,
-                $"{part.Surfaces[id].Source} bounds the part over a patch {2 * r.Margin:G3} mm across near ({r.At.X:F2}, {r.At.Y:F2}, {r.At.Z:F2}) that the cells lose, below the resolved size of {smallest:G4} mm"));
+                Invariant($"{part.Surfaces[id].Source} bounds the part over a patch {2 * r.Margin:G3} mm across near ({r.At.X:F2}, {r.At.Y:F2}, {r.At.Z:F2}) that the cells lose, below the resolved size of {smallest:G4} mm")));
         }
         unresolved = diagnostics.Select(d => d.FeatureId).ToHashSet();
 
@@ -109,7 +110,7 @@ public sealed class FrepModeler(ModelingSettings settings, RegionCache? cache = 
             // Nothing of it in the mesh: no effect only where the search proved it changes the part by less than the tolerance.
             diagnostics.Add(own.All(s => lost.GetValueOrDefault(s.Id).Verdict == LostFaces.Verdict.None)
                 ? new Diagnostic(Diagnostic.NoEffect, feature.Id, $"{feature.Id} does not touch the part")
-                : new Diagnostic(Diagnostic.BelowResolution, feature.Id, $"{feature.Id} has no face the cells resolve, and its effect could not be shown to be below the tolerance; below the resolved size of {smallest:G4} mm"));
+                : new Diagnostic(Diagnostic.BelowResolution, feature.Id, Invariant($"{feature.Id} has no face the cells resolve, and its effect could not be shown to be below the tolerance; below the resolved size of {smallest:G4} mm")));
         }
 
         return new FrepResult(diagnostics, topology, part, mesh, faceOfQuad, bodies);
@@ -160,11 +161,11 @@ public sealed class FrepModeler(ModelingSettings settings, RegionCache? cache = 
                 _ => double.PositiveInfinity,
             };
             if (size < smallest)
-                yield return new Diagnostic(Diagnostic.BelowResolution, feature.Id, $"{feature.Id} ({size:G4} mm) is below the resolved size of {smallest:G4} mm; use a smaller CellSize");
+                yield return new Diagnostic(Diagnostic.BelowResolution, feature.Id, Invariant($"{feature.Id} ({size:G4} mm) is below the resolved size of {smallest:G4} mm; use a smaller CellSize"));
             // A profile edge sweeps a face as wide as the edge is long.
             var profile = feature switch { Extrude e => e.Profile, Revolve r => r.Profile, _ => null };
             if (profile is not null && Profiles.CounterClockwise(profile).FirstOrDefault(x => Width(x.Edge) < smallest) is { Id: { } edge } narrow)
-                yield return new Diagnostic(Diagnostic.BelowResolution, feature.Id, $"{feature.Id}/{edge} ({Width(narrow.Edge):G4} mm) is below the resolved size of {smallest:G4} mm; use a smaller CellSize");
+                yield return new Diagnostic(Diagnostic.BelowResolution, feature.Id, Invariant($"{feature.Id}/{edge} ({Width(narrow.Edge):G4} mm) is below the resolved size of {smallest:G4} mm; use a smaller CellSize"));
         }
 
         static double Width(ProfileEdge2D e) => e.IsArc
@@ -180,7 +181,7 @@ public sealed class FrepModeler(ModelingSettings settings, RegionCache? cache = 
             var thinnest = pair.MinBy(s => s.Thickness);
             var p = thinnest.Location;
             yield return new Diagnostic(Diagnostic.BelowResolution, b,
-                $"{part.Surfaces[pair.Key.OwnerA].Source} and {part.Surfaces[pair.Key.OwnerB].Source} are {thinnest.Thickness:G3} mm apart near ({p.X:F2}, {p.Y:F2}, {p.Z:F2}), below the resolved size of {smallest:G4} mm");
+                Invariant($"{part.Surfaces[pair.Key.OwnerA].Source} and {part.Surfaces[pair.Key.OwnerB].Source} are {thinnest.Thickness:G3} mm apart near ({p.X:F2}, {p.Y:F2}, {p.Z:F2}), below the resolved size of {smallest:G4} mm"));
         }
     }
 }
