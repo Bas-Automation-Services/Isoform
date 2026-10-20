@@ -193,6 +193,22 @@ public class StepExportTests(ITestOutputHelper output)
         build.Should().Throw<NotSupportedException>().WithMessage("*boss/blend (Blend)*");
     }
 
+    [Fact]
+    public void A_loop_round_a_reflex_corner_is_named()
+    {
+        // At a reflex corner of the profile the ball sweeps round the corner line: part of one loop face lies on a
+        // torus no profile edge names, which the face's mesh shows.
+        var boss = Loop([20, 10], ("a", 60, 10, 0), ("b", 60, 20, 0), ("c", 30, 20, 0), ("d", 30, 40, 0), ("e", 20, 40, 0), ("f", 20, 10, 0));
+        var doc = new PartDocument([Plate, new Extrude("boss", BooleanOp.Join, Top, boss, 0, 8), new Fillet("round", [], 1, Loop: "boss/end")]);
+        var settings = new ModelingSettings { CellSize = 0.5 };
+        var frep = new FrepModeler(settings).Regenerate(doc);
+        frep.Diagnostics.Should().BeEmpty();
+
+        var build = () => ExactBrep.Build(frep, settings);
+
+        build.Should().Throw<NotSupportedException>().WithMessage("faces that are not one analytic surface: round/boss/c (off its cylinder by *");
+    }
+
     /// <summary>
     /// The playground's assembly (two brackets and a pin) as STEP product structure: OCCT's XCAF reader finds one
     /// product per distinct part, every occurrence under its component id, placed where the assembly put it.
