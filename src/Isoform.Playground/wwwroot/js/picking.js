@@ -23,9 +23,9 @@ export function createPicking(viewer, store, tooltip) {
       relight();
     }
     if (face < 0) { tooltip.hidden = true; return; }
-    const { faces, bodies } = store.state.result;
+    const { faces, bodies, bodyOfFace } = store.state.result;
     const r = tooltip.parentElement.getBoundingClientRect();
-    tooltip.textContent = (bodies.length > 1 ? `${faces[face].body}: ` : '') + faces[face].names.join(' · ');
+    tooltip.textContent = (bodies.length > 1 ? `${bodyOfFace[face]}: ` : '') + faces[face].join(' · ');
     tooltip.style.left = `${event.clientX - r.left + 14}px`;
     tooltip.style.top = `${event.clientY - r.top + 12}px`;
     tooltip.hidden = false;

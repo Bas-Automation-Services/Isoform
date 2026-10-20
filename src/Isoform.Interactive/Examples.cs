@@ -1,6 +1,6 @@
 using Isoform.Document;
 
-namespace Isoform.Playground;
+namespace Isoform.Interactive;
 
 /// <summary>Starting points for the playground, one per kind of feature.</summary>
 public static class Examples

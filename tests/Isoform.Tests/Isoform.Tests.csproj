@@ -15,6 +15,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\Isoform.Document\Isoform.Document.csproj" />
     <ProjectReference Include="..\..\src\Isoform.Geometry\Isoform.Geometry.csproj" />
+    <ProjectReference Include="..\..\src\Isoform.Interactive\Isoform.Interactive.csproj" />
     <ProjectReference Include="..\..\src\Isoform.Meshing\Isoform.Meshing.csproj" />
     <ProjectReference Include="..\..\src\Isoform.Modeling\Isoform.Modeling.csproj" />
     <ProjectReference Include="..\..\src\Isoform.Step\Isoform.Step.csproj" />
@@ -24,8 +25,6 @@
     <Using Include="Xunit" />
     <Using Include="FluentAssertions" />
     <None Include="Cases\**\*.json" CopyToOutputDirectory="PreserveNewest" />
-    <!-- The playground runs in the browser; its example parts are plain documents and are tested here. -->
-    <Compile Include="..\..\src\Isoform.Playground\Examples.cs" Link="Playground\Examples.cs" />
   </ItemGroup>
 
 </Project>

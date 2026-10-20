@@ -40,7 +40,7 @@ async function regenerate({ fit: refit = false } = {}) {
   const text = store.state.text;
   store.set({ regenerating: true });
   const reply = await client.latest('regenerate', 'regenerate', { document: text, cell: +$('cell').value, chord: +$('chord').value });
-  if (reply) store.committed(text, adaptResult(reply.result, reply.ms));
+  if (reply) store.committed(adaptResult(reply.result, reply.ms));
 }
 
 const editor = createEditor(store, { editor: $('editor'), parse: $('parse'), examplesBox: $('examples'), regenerate });
@@ -53,7 +53,7 @@ window.isoform = {
   document: () => store.state.text,
   hash: () => store.state.hash,
   selection: () => store.state.selection,
-  faces: () => store.state.result?.faces.map(f => f.names) ?? [],
+  faces: () => store.state.result?.faces ?? [],
   select: names => store.set({ selection: names }),
   edit(text) {
     store.set({ text });

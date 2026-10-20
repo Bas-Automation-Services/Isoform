@@ -75,24 +75,14 @@ export function createClient(workers) {
 }
 
 /**
- * The one place that knows the kernel's result shape (Playground.Regenerate plus the mesh buffers): everything else
- * reads the model this returns. Faces are indexed as in mesh.faceOfTriangle; a face's names are its sources, the
- * first being the name a document refers to it by. text and hash stay null until the kernel returns them.
+ * The page's model of a regeneration: result v2 as the kernel wrote it (src/Isoform.Interactive/README.md), plus
+ * the worker's round trip in ms, the mesh buffers, and the body of each face. Faces are indexed as in
+ * mesh.faceOfTriangle; a face is its list of source names, the first being the name a document refers to it by.
+ * A failure is {error, failedEdit?, ms}, with error set.
  */
-export function adaptResult({ info, positions, faces, sharp, smooth }, ms) {
-  if (info.error) return { error: info.error, ms };
+export function adaptResult({ info, positions, faces, sharp, smooth, sharpEdges, smoothEdges }, ms) {
+  if (info.error) return { ...info, ms };
   const bodyOfFace = [];
   info.bodies.forEach(b => b.faces.forEach(f => { bodyOfFace[f] = b.name; }));
-  return {
-    error: null,
-    ms,
-    text: null,
-    hash: null,
-    faces: info.faces.map((names, i) => ({ names, body: bodyOfFace[i] })),
-    bodies: info.bodies,
-    diagnostics: info.diagnostics,
-    thinSpots: info.thinSpots,
-    counts: { meshed: info.meshed, reused: info.reused, triangles: info.triangles, edges: info.edges, vertices: info.vertices },
-    mesh: { positions, faceOfTriangle: faces, sharp, smooth },
-  };
+  return { ...info, error: null, ms, bodyOfFace, mesh: { positions, faceOfTriangle: faces, sharp, smooth, sharpEdges, smoothEdges } };
 }

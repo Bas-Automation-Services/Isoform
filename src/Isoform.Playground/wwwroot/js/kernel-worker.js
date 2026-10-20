@@ -38,8 +38,9 @@ function gathered() {
   done();
 }
 
-function regenerate({ document, cell, chord }) {
-  const info = JSON.parse(kernel.Regenerate(document, cell, chord));
+// Result v2 (src/Isoform.Interactive/README.md) and the mesh buffers; edits is an edit, an array of them, or [].
+function regenerate({ document, edits = [], cell, chord, slot = 'main' }) {
+  const info = JSON.parse(kernel.Regenerate(document, JSON.stringify(edits), cell, chord, slot));
   if (info.error) return { info };
   return {
     info,
@@ -47,11 +48,18 @@ function regenerate({ document, cell, chord }) {
     faces: take(kernel.Faces(), Int32Array),
     sharp: new Float32Array(take(kernel.Lines(), Float64Array)),
     smooth: new Float32Array(take(kernel.SmoothLines(), Float64Array)),
+    // Per segment, its face pair in info.lineFaces.
+    sharpEdges: take(kernel.LineEdges(), Int32Array),
+    smoothEdges: take(kernel.SmoothLineEdges(), Int32Array),
   };
 }
 
+const share = ({ document, edits = [], cell, chord }) => kernel.Share(document, JSON.stringify(edits), cell, chord, index, count);
+
 const ops = {
   examples: () => JSON.parse(kernel.Examples()),
+  apply: ({ document, edits }) => JSON.parse(kernel.Apply(document, JSON.stringify(edits))),
+  diff: ({ before, after }) => JSON.parse(kernel.Diff(before, after)),
 
   pool(args) {
     ({ index, count } = args);
@@ -63,12 +71,12 @@ const ops = {
   async regenerate(args, id) {
     if (count === 1) return regenerate(args);
     if (index > 0) {
-      const regions = take(kernel.Share(args.document, args.cell, args.chord, index, count), Uint8Array);
+      const regions = take(share(args), Uint8Array);
       kernel.Sweep();
       primary.postMessage({ id, regions }, [regions.buffer]);
       return null;
     }
-    kernel.Share(args.document, args.cell, args.chord, 0, count).dispose();
+    share(args).dispose();
     await new Promise(done => { waiting = { id, done }; gathered(); });
     return regenerate(args);
   },

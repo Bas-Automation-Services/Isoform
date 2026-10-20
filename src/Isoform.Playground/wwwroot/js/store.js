@@ -1,17 +1,17 @@
 // The single app state. Pure, so it is tested in Node. Panels and the viewer subscribe; nothing else keeps state that
 // outlives a regeneration.
 //
-//   text       the document as edited
-//   result     the last good regeneration (the model from adaptResult), or null
-//   hash       the hash of the text the result came from (null until the kernel returns one)
-//   problem    why the last regeneration failed (the document does not read), or null
+//   text       the document as edited (the result carries its canonical text)
+//   result     the last good regeneration (result v2 from adaptResult), or null
+//   hash       the hash of the result's canonical text
+//   problem    why the last regeneration failed (the document does not read, or an edit did not apply), or null
 //   regenerating  a regeneration has been asked for and not come back yet
 //   failure    an error of the page or a worker, shown until the next regeneration comes back
 //   selection  face names, not mesh indices: names stay stable across regenerations, indices do not
 //   history    {text, hash, origin} per committed document, oldest first: the hook for undo/redo
 
 /** The name a document refers to a face by: its first source. */
-export const faceName = face => face.names[0];
+export const faceName = face => face[0];
 
 /** The mesh indices of the faces with these names; a name split into several faces gives them all. */
 export function facesNamed(result, names) {
@@ -52,17 +52,16 @@ export function createStore(initial = {}) {
     },
 
     /**
-     * A regeneration of text came back. A failure keeps the last good result and selection; a success keeps the
-     * selected names that still exist and adds a history entry when the document changed.
+     * A regeneration came back. A failure keeps the last good result and selection; a success keeps the selected
+     * names that still exist and adds a history entry (its canonical text) when the document changed.
      */
-    committed(text, result, origin = 'editor') {
+    committed(result, origin = 'editor') {
       if (result.error) {
         set({ problem: result.error, regenerating: false, failure: null });
         return;
       }
-      const hash = result.hash;
-      const last = state.history.at(-1);
-      const history = last?.text === (result.text ?? text) ? state.history : [...state.history, { text: result.text ?? text, hash, origin }];
+      const { text, hash } = result;
+      const history = state.history.at(-1)?.hash === hash ? state.history : [...state.history, { text, hash, origin }];
       set({ result, hash, problem: null, regenerating: false, failure: null, selection: surviving(state.selection, result), history });
     },
   };

@@ -93,7 +93,7 @@ export function createViewer(host) {
       group.add(mesh,
         new THREE.LineSegments(geometryOf(sharp), sharpMaterial),
         new THREE.LineSegments(geometryOf(smooth), smoothMaterial),
-        new THREE.Points(geometryOf(new Float32Array(result.thinSpots.flat())), spotMaterial));
+        new THREE.Points(geometryOf(new Float32Array(result.thinSpots.flatMap(s => s.at))), spotMaterial));
       scene.add(group);
 
       model = { group, mesh, faceOfTriangle, trianglesOfFace };

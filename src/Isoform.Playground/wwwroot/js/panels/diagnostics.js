@@ -6,10 +6,10 @@ export function statusLine(s, workers) {
   if (s.regenerating) return 'Regenerating…';
   if (s.problem) return 'The document does not parse.';
   if (!s.result) return 'Loading the kernel…';
-  const { ms, counts: c, faces, bodies } = s.result;
+  const { ms, meshed, reused, triangles, faces, edges, vertices, bodies } = s.result;
   return `${ms.toFixed(0)} ms · ${workers} worker${workers > 1 ? 's' : ''}, `
-    + `${c.meshed} of ${c.meshed + c.reused} regions meshed · ${c.triangles.toLocaleString()} triangles · `
-    + `${faces.length} faces, ${c.edges} edges, ${c.vertices} vertices · `
+    + `${meshed} of ${meshed + reused} regions meshed · ${triangles.toLocaleString()} triangles · `
+    + `${faces.length} faces, ${edges} edges, ${vertices} vertices · `
     + (bodies.length === 1 ? '1 body' : `${bodies.length} bodies: ${bodies.map(b => b.name).join(', ')}`);
 }
 

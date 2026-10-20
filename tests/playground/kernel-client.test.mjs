@@ -102,18 +102,24 @@ test('start links each helper to the primary with a port and waits for every wor
   for (const w of [p, h1, h2]) for (const port of w.sent[0].args.ports) port.close();
 });
 
-test('adaptResult: faces with their names and body, or the error alone', () => {
-  const positions = new Float32Array(9), faces = new Int32Array([1]);
-  const r = adaptResult({
-    info: {
-      meshed: 2, reused: 1, triangles: 1, edges: 3, vertices: 2, faces: [['a/x+'], ['a/y+', 'b/z-']],
-      bodies: [{ name: 'a', faces: [0] }, { name: 'b', faces: [1] }], diagnostics: [], thinSpots: [],
-    },
-    positions, faces, sharp: new Float32Array(), smooth: new Float32Array(),
-  }, 12);
-  assert.deepEqual(r.faces, [{ names: ['a/x+'], body: 'a' }, { names: ['a/y+', 'b/z-'], body: 'b' }]);
-  assert.equal(r.mesh.faceOfTriangle, faces);
-  assert.deepEqual(r.counts, { meshed: 2, reused: 1, triangles: 1, edges: 3, vertices: 2 });
-  assert.equal(r.ms, 12);
-  assert.deepEqual(adaptResult({ info: { error: 'bad json' } }, 3), { error: 'bad json', ms: 3 });
+test('adaptResult: result v2 as written, plus the mesh, the round trip and each face\'s body', () => {
+  const positions = new Float32Array(9), faces = new Int32Array([1]), sharpEdges = new Int32Array([0]);
+  const info = {
+    version: 2, slot: 'main', format: 'isoform/0', hash: 'ab', text: '{}', meshed: 2, reused: 1, triangles: 1, edges: 3,
+    vertices: 2, faces: [['a/x+'], ['a/y+', 'b/z-']], bodies: [{ name: 'a', faces: [0] }, { name: 'b', faces: [1] }],
+    diagnostics: [], thinSpots: [{ at: [1, 2, 3], faces: ['a/x+', 'a/y+'], thickness: 0.2 }], lineFaces: [[0, 1]], instances: [],
+  };
+  const r = adaptResult({ info, positions, faces, sharp: new Float32Array(6), smooth: new Float32Array(), sharpEdges, smoothEdges: new Int32Array() }, 12);
+  const { error, ms, bodyOfFace, mesh, ...v2 } = r;
+  assert.deepEqual(v2, info);
+  assert.equal(error, null);
+  assert.equal(ms, 12);
+  assert.deepEqual(bodyOfFace, ['a', 'b']);
+  assert.equal(mesh.faceOfTriangle, faces);
+  assert.equal(mesh.sharpEdges, sharpEdges);
+
+  const failed = adaptResult({ info: { version: 2, slot: 'main', error: 'no such path', failedEdit: 0, timing: {} } }, 3);
+  assert.equal(failed.error, 'no such path');
+  assert.equal(failed.failedEdit, 0);
+  assert.equal(failed.ms, 3);
 });

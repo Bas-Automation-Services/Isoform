@@ -1,8 +1,8 @@
 # Playground tests
 
 Checks the playground: the front end's pure modules and the published WebAssembly kernel in Node, and the page in
-headless Edge or Chrome. Needs Node 22
-or later (built-ins only, no `npm install`) and, for the browser run, Edge or Chrome.
+headless Edge or Chrome. Needs Node 22 or later (built-ins only, no `npm install`) and, for the browser run, Edge or
+Chrome.
 
 ```sh
 node tests/playground/run.mjs --publish            # publish to out/playground, then test it (publish takes ~2 min)
@@ -28,7 +28,7 @@ nothing needs a network connection.
 **`kernel-client.test.mjs`** drives `wwwroot/js/kernel-client.js` with fake workers: requests `{id, op, args}` and
 replies `{id, ok, result|error, ms}`; `latest(channel, …)` keeps one request in flight, lets the newest waiting one win
 and drops stale replies; `regenerate` fans out to the pool and only the primary's reply counts; `start` links the
-helpers to the primary; `adaptResult` is the one place that reads the kernel's result shape.
+helpers to the primary; `adaptResult` keeps result v2 as written and adds the mesh buffers.
 
 **`store.test.mjs`**: the selection is face names, so it follows a face that is renumbered and drops one that is gone;
 a document that does not read keeps the last result; history gets one entry per changed document; the status line has
@@ -37,11 +37,13 @@ the form `e2e.mjs` reads.
 **`kernel.test.mjs`** loads `_framework/dotnet.js` from the published folder in Node and calls the same exports the
 page's worker calls. For every example from `Examples()`, at the page's default settings (0.5 mm cells, 0.05 mm chord):
 
-- `Regenerate` returns no `error`, at least one face and triangle, and no `invalid-parameter` diagnostic;
-- `Positions()` and `Faces()` hold three corners and one face index per triangle.
+- `Regenerate` returns result v2 (`src/Isoform.Interactive/README.md`) with no `error`, the example's own canonical
+  text and a hash, at least one face and triangle, and no `invalid-parameter` diagnostic;
+- `Positions()` and `Faces()` hold three corners and one face index per triangle, the line buffers two end points and
+  one `lineFaces` index per segment.
 
 It prints the kernel time, triangles, faces and diagnostics per example. A broken document must come back as
-`{error}`, not as an exception.
+`{error}`, not as an exception, and a bad edit as `{error, failedEdit}`. `Apply(old, Diff(old, new))` must give `new`.
 
 **`e2e.mjs`** serves the folder with `serve.mjs`, opens `?example=N` for every example and waits (in real time) for the
 stats line under the editor (`#stats`) to show a result. An example passes when that line names one or more faces,
