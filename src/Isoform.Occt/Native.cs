@@ -23,6 +23,15 @@ internal sealed class OpHandle() : SafeHandleZeroOrMinusOneIsInvalid(true)
     }
 }
 
+internal sealed class AssemblyHandle() : SafeHandleZeroOrMinusOneIsInvalid(true)
+{
+    protected override bool ReleaseHandle()
+    {
+        Native.iso_assembly_free(handle);
+        return true;
+    }
+}
+
 /// <summary>Bindings to native/Isoform.Occt (isoform_occt.dll plus the OCCT DLLs next to it).</summary>
 internal static partial class Native
 {
@@ -51,9 +60,17 @@ internal static partial class Native
     [LibraryImport(Lib)] public static partial int iso_vertex_faces(ShapeHandle shape, int vertex, [Out] int[] faces, int capacity, out int count);
     [LibraryImport(Lib)] public static partial int iso_solid_count(ShapeHandle shape, out int count);
     [LibraryImport(Lib)] public static partial int iso_is_valid(ShapeHandle shape, out int valid);
+    [LibraryImport(Lib)] public static partial int iso_check_report(ShapeHandle shape, [Out] byte[] buffer, int capacity);
     [LibraryImport(Lib)] public static partial int iso_volume(ShapeHandle shape, out double volume);
     [LibraryImport(Lib, StringMarshalling = StringMarshalling.Utf8)] public static partial int iso_write_step(ShapeHandle shape, string path);
     [LibraryImport(Lib, StringMarshalling = StringMarshalling.Utf8)] public static partial int iso_read_step(string path, out ShapeHandle shape);
+    [LibraryImport(Lib, StringMarshalling = StringMarshalling.Utf8)] public static partial int iso_read_step_unhealed(string path, out ShapeHandle shape);
+    [LibraryImport(Lib, StringMarshalling = StringMarshalling.Utf8)] public static partial int iso_read_step_assembly(string path, out AssemblyHandle assembly);
+    [LibraryImport(Lib)] public static partial void iso_assembly_free(nint assembly);
+    [LibraryImport(Lib)] public static partial int iso_assembly_count(AssemblyHandle assembly, out int count);
+    [LibraryImport(Lib)] public static partial int iso_assembly_names(AssemblyHandle assembly, int occurrence, [Out] byte[] path, [Out] byte[] product, int capacity);
+    [LibraryImport(Lib)] public static partial int iso_assembly_placement(AssemblyHandle assembly, int occurrence, [Out] double[] matrix, out int part);
+    [LibraryImport(Lib)] public static partial int iso_assembly_shape(AssemblyHandle assembly, int occurrence, out ShapeHandle shape);
     [LibraryImport(Lib)] public static partial int iso_vertex_point(ShapeHandle shape, int vertex, [Out] double[] xyz);
     [LibraryImport(Lib)] public static partial int iso_edge_point(ShapeHandle shape, int edge, double s, [Out] double[] xyz);
     [LibraryImport(Lib)] public static partial int iso_edge_distance(ShapeHandle shape, int edge, double x, double y, double z, out double distance);

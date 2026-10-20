@@ -258,6 +258,24 @@ public sealed class ProfileField : Field
     }
 
     /// <summary>
+    /// Where the edges of two leaves meet tangentially (a line running into an arc, two arcs; a circle of two arcs
+    /// at both its joints), on the sketch plane and moved out by the offset with the faces.
+    /// </summary>
+    public IEnumerable<Point3D> TangentJunctions(LeafField a, LeafField b)
+    {
+        var (i, j) = (Array.IndexOf(_leaves, a), Array.IndexOf(_leaves, b));
+        if (i < 0 || j < 0) yield break;
+        var n = _edges.Length;
+        foreach (var (k, next) in new[] { (i, j), (j, i) })
+        {
+            if ((k + 1) % n != next || _vertexSign[k] != 0) continue;
+            var (tu, tv) = _edges[k].EndTangent;
+            // The outward normal is right of travel round the counter-clockwise profile.
+            yield return _frame.ToWorld(new Point3D(_edges[k].U1 + tv * _offset, _edges[k].V1 - tu * _offset, 0));
+        }
+    }
+
+    /// <summary>
     /// The profile with corner k (between two straight edges) rounded by a tangent arc of radius
     /// <paramref name="size"/>, or cut by a straight chamfer at that distance along both edges. Works on convex and
     /// reflex corners alike. The trimmed edges keep their faces; <paramref name="newLeaf"/> makes the new edge's face.
