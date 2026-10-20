@@ -37,6 +37,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Isoform.Step", "src\Isoform
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Isoform.Mcp", "src\Isoform.Mcp\Isoform.Mcp.csproj", "{4C7823F7-A3B1-4822-9731-571F74E399F4}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Isoform.Mcp.Tests", "tests\Isoform.Mcp.Tests\Isoform.Mcp.Tests.csproj", "{77DE175C-D380-4F9F-B9EE-F0D8B94F2D1F}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -179,6 +181,18 @@ Global
 		{4C7823F7-A3B1-4822-9731-571F74E399F4}.Release|x64.Build.0 = Release|Any CPU
 		{4C7823F7-A3B1-4822-9731-571F74E399F4}.Release|x86.ActiveCfg = Release|Any CPU
 		{4C7823F7-A3B1-4822-9731-571F74E399F4}.Release|x86.Build.0 = Release|Any CPU
+		{77DE175C-D380-4F9F-B9EE-F0D8B94F2D1F}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{77DE175C-D380-4F9F-B9EE-F0D8B94F2D1F}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{77DE175C-D380-4F9F-B9EE-F0D8B94F2D1F}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{77DE175C-D380-4F9F-B9EE-F0D8B94F2D1F}.Debug|x64.Build.0 = Debug|Any CPU
+		{77DE175C-D380-4F9F-B9EE-F0D8B94F2D1F}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{77DE175C-D380-4F9F-B9EE-F0D8B94F2D1F}.Debug|x86.Build.0 = Debug|Any CPU
+		{77DE175C-D380-4F9F-B9EE-F0D8B94F2D1F}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{77DE175C-D380-4F9F-B9EE-F0D8B94F2D1F}.Release|Any CPU.Build.0 = Release|Any CPU
+		{77DE175C-D380-4F9F-B9EE-F0D8B94F2D1F}.Release|x64.ActiveCfg = Release|Any CPU
+		{77DE175C-D380-4F9F-B9EE-F0D8B94F2D1F}.Release|x64.Build.0 = Release|Any CPU
+		{77DE175C-D380-4F9F-B9EE-F0D8B94F2D1F}.Release|x86.ActiveCfg = Release|Any CPU
+		{77DE175C-D380-4F9F-B9EE-F0D8B94F2D1F}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -186,5 +200,6 @@ Global
 	GlobalSection(NestedProjects) = preSolution
 		{E3B5315B-38C8-4D09-9A7E-D8440110DAA1} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
 		{3D55D300-B398-4870-B846-B87466FC1FAB} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
+		{77DE175C-D380-4F9F-B9EE-F0D8B94F2D1F} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
 	EndGlobalSection
 EndGlobal
