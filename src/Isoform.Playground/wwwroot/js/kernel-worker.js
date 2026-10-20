@@ -61,6 +61,7 @@ const ops = {
   examples: () => JSON.parse(kernel.Examples()),
   apply: ({ document, edits }) => JSON.parse(kernel.Apply(document, JSON.stringify(edits))),
   diff: ({ before, after }) => JSON.parse(kernel.Diff(before, after)),
+  handles: ({ slot = 'main' } = {}) => JSON.parse(kernel.Handles(slot)),
   // Pinned references against a slot's last good result (panels/references.js).
   resolve: ({ refs, slot = 'main' }) => JSON.parse(kernel.Resolve(JSON.stringify(refs), slot)),
 

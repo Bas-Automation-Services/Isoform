@@ -1,6 +1,6 @@
 // Opens every example in headless Edge or Chrome, waits for the part to regenerate, checks the stats line and
 // saves a screenshot to tests/playground/out/screenshots; then picks a face, resolves a thin spot from the
-// diagnostics and pins a face. Exits non-zero if anything fails.
+// diagnostics, pins a face, and commits, undoes and redoes an edit. Exits non-zero if anything fails.
 // node tests/playground/e2e.mjs [published wwwroot]      (env: ISOFORM_BROWSER, ISOFORM_TIMEOUT in ms)
 import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -21,7 +21,7 @@ const settled = `(s => /\\d ms ·|Error:|does not parse/.test(s) && s)(document.
 
 const site = await serve(root);
 const browser = await launch();
-let failures = 0, picking = false, diagnosing = false, pinning = false, inspector = false;
+let failures = 0, picking = false, diagnosing = false, pinning = false, committing = false, inspector = false;
 try {
   const page = await browser.newPage();
   for (const [i, name] of names.entries()) {
@@ -77,14 +77,15 @@ try {
 
   diagnosing = await diagnostics(page);
   pinning = await pins(page);
+  committing = await commits(page);
   inspector = await inspecting(page);
 } finally {
   await browser.close();
   await site.close();
 }
 console.log(`\n${names.length - failures}/${names.length} examples passed, picking ${picking ? 'passed' : 'FAILED'}, `
-  + `diagnostics ${diagnosing ? 'passed' : 'FAILED'}, pins ${pinning ? 'passed' : 'FAILED'}, inspector ${inspector ? 'passed' : 'FAILED'}; screenshots in ${relative(repo, shots)}`);
-process.exitCode = failures || !picking || !diagnosing || !pinning || !inspector ? 1 : 0;
+  + `diagnostics ${diagnosing ? 'passed' : 'FAILED'}, pins ${pinning ? 'passed' : 'FAILED'}, history ${committing ? 'passed' : 'FAILED'}, inspector ${inspector ? 'passed' : 'FAILED'}; screenshots in ${relative(repo, shots)}`);
+process.exitCode = failures || !picking || !diagnosing || !pinning || !committing || !inspector ? 1 : 0;
 
 /**
  * Diagnostics in place: example 0 with its hole moved to leave a 0.6 mm wall gives a below-resolution thin spot at
@@ -184,6 +185,40 @@ async function pins(page) {
   console.log(`${problems.length ? 'FAIL' : 'pass'}  pins: plate/z+ pinned, split by a slot across it`);
   for (const p of problems) console.log(`        ${p}`);
   return !problems.length;
+}
+
+/**
+ * Undo is document history: an edit list commits one entry (agent view and editor flash), one that does not apply
+ * commits nothing, undo gives back the identical hash and redo the edited one.
+ */
+async function commits(page) {
+  const steps = [];
+  try {
+    await page.open(`${site.url}?example=0`);
+    await page.waitFor(settled, { timeout });
+    const original = await page.evaluate('window.isoform.hash()');
+    const edited = await page.evaluate(`window.isoform.applyEdits([{ set: 'plate.size.0', value: 120 }], 'e2e', 'test')`);
+    if (!edited?.hash || edited.hash === original) throw new Error(`applyEdits gave ${JSON.stringify(edited)}`);
+    const shown = await page.evaluate(`[document.getElementById('agent').dataset.hash, document.getElementById('agent').textContent,
+      document.querySelectorAll('.editor-flash.on div').length]`);
+    if (shown[0] !== edited.hash || !shown[1].includes('plate.size.0') || !shown[1].includes('→')) steps.push(`agent view: ${shown[1].slice(0, 200)}`);
+    if (!shown[2]) steps.push('no lines flashed in the editor');
+    const rejected = await page.evaluate(`window.isoform.applyEdits([{ remove: 'slot' }], 'e2e', 'test')`);
+    if (!rejected?.error || await page.evaluate('window.isoform.hash()') !== edited.hash) steps.push(`a bad edit gave ${JSON.stringify(rejected)}`);
+    const undone = await page.evaluate('window.isoform.undo()');
+    if (undone?.hash !== original) steps.push(`undo gave ${undone?.hash}, not the original ${original}`);
+    const { at, entries } = await page.evaluate('window.isoform.history()');
+    if (at !== 0 || entries.length !== 2 || entries[1].label !== 'e2e') steps.push(`history ${JSON.stringify({ at, entries })}`);
+    const redone = await page.evaluate('window.isoform.redo()');
+    if (redone?.hash !== edited.hash) steps.push(`redo gave ${redone?.hash}, not ${edited.hash}`);
+    await page.screenshot(join(shots, 'history.png'));
+  } catch (e) {
+    steps.push(e.message);
+  }
+  steps.push(...page.errors);
+  console.log(`${steps.length ? 'FAIL' : 'pass'}  history: apply, reject, undo to the original hash, redo`);
+  for (const p of steps) console.log(`        ${p}`);
+  return !steps.length;
 }
 
 /**

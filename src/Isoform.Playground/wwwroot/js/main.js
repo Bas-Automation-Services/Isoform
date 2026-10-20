@@ -7,7 +7,10 @@ import { createEditor } from './panels/editor.js';
 import { createDiagnostics } from './panels/diagnostics.js';
 import { createSelection } from './panels/selection.js';
 import { createReferences } from './panels/references.js';
-import { pretty } from './panels/editor.js';
+import { createCommits } from './lib/commit.js';
+import { createAgent } from './panels/agent.js';
+import { createHistory } from './panels/history.js';
+import { createFlash } from './panels/flash.js';
 import { createTree } from './panels/tree.js';
 import { createInspector } from './panels/inspector.js';
 
@@ -44,29 +47,20 @@ const diagnostics = createDiagnostics(store, {
 });
 const references = createReferences(store, { box: $('references'), viewer, resolve: refs => client.call('resolve', { refs }).then(r => r.result) });
 
-/** Regenerates the document in the store; latest wins, so edits made meanwhile fold into one next run. */
-async function regenerate({ fit: refit = false } = {}) {
+/**
+ * Regenerates the document in the store; latest wins, so edits made meanwhile fold into one next run. The rest is
+ * the commit's intent for the history (store.committed). Resolves to the result, or null when overtaken.
+ */
+async function regenerate({ fit: refit = false, ...intent } = {}) {
   if (refit) fit = true;
   const text = store.state.text;
   store.set({ regenerating: true });
   const reply = await client.latest('regenerate', 'regenerate', { document: text, cell: +$('cell').value, chord: +$('chord').value });
-  if (reply) store.committed(adaptResult(reply.result, reply.ms));
-}
-
-// --- Feature tree and inspector (J4) ---
-// Every inspector change is an edit list and goes through commit, the one place to swap for J3's
-// applyEdits(edits, label, origin): the kernel applies the edits, regenerates, and returns the edited canonical text.
-async function commit(edits, label) {
-  store.set({ regenerating: true });
-  const reply = await client.latest('regenerate', 'regenerate', { document: store.state.text, edits, cell: +$('cell').value, chord: +$('chord').value });
-  if (!reply) return;
+  if (!reply) return null;
   const result = adaptResult(reply.result, reply.ms);
-  if (!result.error) store.set({ text: pretty(JSON.parse(result.text)) });
-  store.committed(result, 'inspector');
+  store.committed(result, intent);
+  return result;
 }
-createTree(store, viewer, $('tree'));
-createInspector(store, $('inspector'), commit);
-// --- end J4 ---
 
 const editor = createEditor(store, { editor: $('editor'), parse: $('parse'), examplesBox: $('examples'), regenerate });
 $('cell').addEventListener('change', () => regenerate());
@@ -81,6 +75,15 @@ function useCell(cell) {
 }
 $('chord').addEventListener('change', () => regenerate());
 
+// Commits, history and the agent view (lib/commit.js): applyEdits is how panels change the document.
+const commits = createCommits(store, { call: client.call, regenerate, flash: createFlash($('editor')) });
+createAgent(store, $('agent'), commits);
+createHistory(store, $('history'), commits);
+
+// Feature tree and inspector (J4): every inspector change is an edit list, committed as one history entry.
+createTree(store, viewer, $('tree'));
+createInspector(store, $('inspector'), (edits, label) => commits.applyEdits(edits, label, 'inspector'));
+
 // For the browser tests and the console: plain data out, a promise per regeneration.
 window.isoform = {
   get ready() { return !!store.state.result; },
@@ -94,6 +97,16 @@ window.isoform = {
     return regenerate();
   },
 };
+
+// Commits for the tests and the console: each resolves, once regenerated, to {hash} or {error, failedEdit?}, or
+// null (nothing to undo, or overtaken).
+const outcome = r => r && (r.error ? { error: r.error, failedEdit: r.failedEdit } : { hash: r.hash });
+Object.assign(window.isoform, {
+  applyEdits: (edits, label, origin) => commits.applyEdits(edits, label, origin).then(outcome),
+  undo: () => commits.undo().then(outcome),
+  redo: () => commits.redo().then(outcome),
+  history: () => ({ at: store.state.historyAt, entries: store.state.history.map(({ hash, edits, label, origin }) => ({ hash, edits, label, origin })) }),
+});
 
 // Diagnostics (J5) for the browser tests: the list as shown, the faces lit for the one in focus, the cell in use.
 Object.assign(window.isoform, {
