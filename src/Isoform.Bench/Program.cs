@@ -48,31 +48,61 @@ foreach (var (name, doc) in parts)
                     part.Min.Y - 5 + rng.NextDouble() * (part.Max.Y - part.Min.Y + 10),
                     part.Min.Z - 5 + rng.NextDouble() * (part.Max.Z - part.Min.Z + 10))).ToArray();
 
-    Measure("Value, 1 thread", points.Length, () => { var s = 0.0; foreach (var p in points) s += field.Value(p); return s; });
-    Measure("Value, all threads", points.Length, () =>
+    // The tree and its compiled tape side by side: identical results, so only the time differs.
+    var tape = TapeField.Compile(field);
+    Console.WriteLine($"  tape: {tape.Tape.Length} instructions, {tape.Tape.Calls} calls ({tape.Tape})");
+    foreach (var (kind, f) in new[] { ("tree", field), ("tape", (Field)tape) })
     {
-        var s = new double[points.Length];
-        Parallel.For(0, points.Length, i => s[i] = field.Value(points[i]));
-        return s[0];
+        Measure($"{kind} Value, 1 thread", points.Length, () => { var s = 0.0; foreach (var p in points) s += f.Value(p); return s; });
+        Measure($"{kind} Value, all threads", points.Length, () =>
+        {
+            var s = new double[points.Length];
+            Parallel.For(0, points.Length, i => s[i] = f.Value(points[i]));
+            return s[0];
+        });
+        Measure($"{kind} Bounds (box 1 mm), 1 thread", points.Length / 10, () =>
+        {
+            var s = 0.0;
+            for (var i = 0; i < points.Length / 10; i++) s += f.Bounds(new Box3D(points[i], points[i] + new Vector3D(1, 1, 1))).Hi;
+            return s;
+        });
+    }
+    var (xs, ys, zs) = (points.Select(p => p.X).ToArray(), points.Select(p => p.Y).ToArray(), points.Select(p => p.Z).ToArray());
+    var values = new double[points.Length];
+    Measure($"tape batched Value ({System.Numerics.Vector<double>.Count} lanes), 1 thread", points.Length, () =>
+    {
+        tape.Values(xs, ys, zs, values);
+        return values[0];
     });
-    Measure("Bounds (box 1 mm), 1 thread", points.Length / 10, () =>
+    Measure("tape batched Value, all threads", points.Length, () =>
     {
-        var s = 0.0;
-        for (var i = 0; i < points.Length / 10; i++) s += field.Bounds(new Box3D(points[i], points[i] + new Vector3D(1, 1, 1))).Hi;
-        return s;
+        const int chunk = 4096;
+        Parallel.For(0, (points.Length + chunk - 1) / chunk, c =>
+        {
+            var (start, n) = (c * chunk, Math.Min(chunk, points.Length - c * chunk));
+            tape.Values(xs.AsSpan(start, n), ys.AsSpan(start, n), zs.AsSpan(start, n), values.AsSpan(start, n));
+        });
+        return values[0];
     });
 
     // Chord tolerances match the OCCT deflections below.
     foreach (var (h, chord) in new[] { (0.5, 0.02), (0.25, 0.0054), (0.1, 0.0013) })
+    foreach (var (kind, f) in new[] { ("tree", field), ("tape", (Field)tape) })
     {
-        GC.Collect();
-        var total = Stopwatch.StartNew();
-        var stages = new List<string>();
-        var mesh = DualContouring.Build(field, part.Min, part.Max, h, chord, (stage, t) => stages.Add($"{stage}: {t.TotalMilliseconds:N0} ms"));
-        var meshMs = total.Elapsed.TotalMilliseconds;
+        // Best of 3, with the stages of the best run.
+        var (meshMs, stages, mesh) = (double.MaxValue, new List<string>(), (Mesh?)null);
+        for (var run = 0; run < 3; run++)
+        {
+            GC.Collect();
+            var runStages = new List<string>();
+            var sw = Stopwatch.StartNew();
+            mesh = DualContouring.Build(f, part.Min, part.Max, h, chord, (stage, t) => runStages.Add($"{stage}: {t.TotalMilliseconds:N0} ms"));
+            if (sw.Elapsed.TotalMilliseconds < meshMs) (meshMs, stages) = (sw.Elapsed.TotalMilliseconds, runStages);
+        }
         var memory = System.Diagnostics.Process.GetCurrentProcess().PeakWorkingSet64;
-        TopologyBuilder.Build(mesh, part.Surfaces, settings.Tolerance);
-        Console.WriteLine($"  mesh h={h} chord={chord}: {meshMs:N0} ms + topology {total.Elapsed.TotalMilliseconds - meshMs:N0} ms, {mesh.Triangles().Count():N0} triangles, {memory / 1e6:N0} MB peak working set, {mesh.ThinSpots.Count} thin spots");
+        var topology = Stopwatch.StartNew();
+        TopologyBuilder.Build(mesh!, part.Surfaces, settings.Tolerance);
+        Console.WriteLine($"  {kind} mesh h={h} chord={chord}: {meshMs:N0} ms + topology {topology.Elapsed.TotalMilliseconds:N0} ms, {mesh!.Triangles().Count():N0} triangles, {memory / 1e6:N0} MB peak working set, {mesh.ThinSpots.Count} thin spots");
         foreach (var s in stages) Console.WriteLine($"      {s}");
     }
 }
