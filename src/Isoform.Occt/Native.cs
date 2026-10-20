@@ -53,6 +53,11 @@ internal static partial class Native
     [LibraryImport(Lib)] public static partial int iso_is_valid(ShapeHandle shape, out int valid);
     [LibraryImport(Lib)] public static partial int iso_volume(ShapeHandle shape, out double volume);
     [LibraryImport(Lib, StringMarshalling = StringMarshalling.Utf8)] public static partial int iso_write_step(ShapeHandle shape, string path);
+    [LibraryImport(Lib, StringMarshalling = StringMarshalling.Utf8)] public static partial int iso_read_step(string path, out ShapeHandle shape);
+    [LibraryImport(Lib)] public static partial int iso_vertex_point(ShapeHandle shape, int vertex, [Out] double[] xyz);
+    [LibraryImport(Lib)] public static partial int iso_edge_point(ShapeHandle shape, int edge, double s, [Out] double[] xyz);
+    [LibraryImport(Lib)] public static partial int iso_edge_distance(ShapeHandle shape, int edge, double x, double y, double z, out double distance);
+    [LibraryImport(Lib)] public static partial int iso_max_tolerance(ShapeHandle shape, out double tolerance);
 
     [LibraryImport(Lib)] public static partial int iso_tessellate(ShapeHandle shape, double deflection, double angle, out int triangles);
     [LibraryImport(Lib)] public static partial int iso_boolean(int kind, ShapeHandle a, ShapeHandle b, int simplify, out OpHandle op);

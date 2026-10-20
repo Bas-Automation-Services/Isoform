@@ -75,6 +75,44 @@ public sealed class OcctShape
 
     public void WriteStep(string path) => Check(iso_write_step(Handle, path));
 
+    /// <summary>Reads a STEP file into one shape.</summary>
+    public static OcctShape ReadStep(string path)
+    {
+        Check(iso_read_step(path, out var h));
+        return new(h);
+    }
+
+    public double[] VertexPoint(int vertex)
+    {
+        var xyz = new double[3];
+        Check(iso_vertex_point(Handle, vertex, xyz));
+        return xyz;
+    }
+
+    /// <summary>Point at fraction <paramref name="s"/> of the edge's parameter range.</summary>
+    public double[] EdgePoint(int edge, double s)
+    {
+        var xyz = new double[3];
+        Check(iso_edge_point(Handle, edge, s, xyz));
+        return xyz;
+    }
+
+    /// <summary>The largest edge or vertex tolerance in the shape.</summary>
+    public double MaxTolerance
+    {
+        get
+        {
+            Check(iso_max_tolerance(Handle, out var t));
+            return t;
+        }
+    }
+
+    public double EdgeDistance(int edge, double x, double y, double z)
+    {
+        Check(iso_edge_distance(Handle, edge, x, y, z, out var d));
+        return d;
+    }
+
     /// <summary>Tessellates for display; returns the number of triangles.</summary>
     public int Tessellate(double deflection, double angle = 0.5)
     {

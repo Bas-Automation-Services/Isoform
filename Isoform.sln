@@ -33,6 +33,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Isoform.Bench", "src\Isofor
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Isoform.Playground", "src\Isoform.Playground\Isoform.Playground.csproj", "{2E00EDAD-2D16-4E9A-8E6D-890A2399EA60}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Isoform.Step", "src\Isoform.Step\Isoform.Step.csproj", "{0D2F09FB-FE7D-47D6-A0BF-62AA156EC9B7}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -151,6 +153,18 @@ Global
 		{2E00EDAD-2D16-4E9A-8E6D-890A2399EA60}.Release|x64.Build.0 = Release|Any CPU
 		{2E00EDAD-2D16-4E9A-8E6D-890A2399EA60}.Release|x86.ActiveCfg = Release|Any CPU
 		{2E00EDAD-2D16-4E9A-8E6D-890A2399EA60}.Release|x86.Build.0 = Release|Any CPU
+		{0D2F09FB-FE7D-47D6-A0BF-62AA156EC9B7}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{0D2F09FB-FE7D-47D6-A0BF-62AA156EC9B7}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{0D2F09FB-FE7D-47D6-A0BF-62AA156EC9B7}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{0D2F09FB-FE7D-47D6-A0BF-62AA156EC9B7}.Debug|x64.Build.0 = Debug|Any CPU
+		{0D2F09FB-FE7D-47D6-A0BF-62AA156EC9B7}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{0D2F09FB-FE7D-47D6-A0BF-62AA156EC9B7}.Debug|x86.Build.0 = Debug|Any CPU
+		{0D2F09FB-FE7D-47D6-A0BF-62AA156EC9B7}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{0D2F09FB-FE7D-47D6-A0BF-62AA156EC9B7}.Release|Any CPU.Build.0 = Release|Any CPU
+		{0D2F09FB-FE7D-47D6-A0BF-62AA156EC9B7}.Release|x64.ActiveCfg = Release|Any CPU
+		{0D2F09FB-FE7D-47D6-A0BF-62AA156EC9B7}.Release|x64.Build.0 = Release|Any CPU
+		{0D2F09FB-FE7D-47D6-A0BF-62AA156EC9B7}.Release|x86.ActiveCfg = Release|Any CPU
+		{0D2F09FB-FE7D-47D6-A0BF-62AA156EC9B7}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

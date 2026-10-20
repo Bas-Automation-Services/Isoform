@@ -16,13 +16,16 @@
 #include <BRepTools_History.hxx>
 #include <BRep_Tool.hxx>
 #include <GProp_GProps.hxx>
+#include <STEPControl_Reader.hxx>
 #include <STEPControl_Writer.hxx>
+#include <BRepAdaptor_Curve.hxx>
 #include <Standard_Failure.hxx>
 #include <TopExp.hxx>
 #include <TopoDS.hxx>
 #include <TopTools_IndexedDataMapOfShapeListOfShape.hxx>
 #include <TopTools_IndexedMapOfShape.hxx>
 
+#include <algorithm>
 #include <memory>
 #include <set>
 #include <string>
@@ -266,6 +269,54 @@ int iso_write_step(IsoShape* s, const char* path)
         if (writer.Write(path) != IFSelect_RetDone) return fail("STEP write failed");
         return 0;
     });
+}
+
+int iso_read_step(const char* path, IsoShape** out)
+{
+    return guard([&] {
+        STEPControl_Reader reader;
+        if (reader.ReadFile(path) != IFSelect_RetDone) return fail("STEP read failed");
+        if (reader.TransferRoots() == 0) return fail("STEP file has no transferable roots");
+        return put(out, reader.OneShape());
+    });
+}
+
+int iso_vertex_point(IsoShape* s, int vertex, double* xyz)
+{
+    return guard([&] {
+        const gp_Pnt p = BRep_Tool::Pnt(TopoDS::Vertex(s->vertices(vertex + 1)));
+        xyz[0] = p.X(); xyz[1] = p.Y(); xyz[2] = p.Z();
+        return 0;
+    });
+}
+
+int iso_edge_point(IsoShape* s, int edge, double t, double* xyz)
+{
+    return guard([&] {
+        const BRepAdaptor_Curve curve(TopoDS::Edge(s->edges(edge + 1)));
+        const gp_Pnt p = curve.Value(curve.FirstParameter() + t * (curve.LastParameter() - curve.FirstParameter()));
+        xyz[0] = p.X(); xyz[1] = p.Y(); xyz[2] = p.Z();
+        return 0;
+    });
+}
+
+int iso_edge_distance(IsoShape* s, int edge, double x, double y, double z, double* distance)
+{
+    return guard([&] {
+        BRepExtrema_DistShapeShape dist(BRepBuilderAPI_MakeVertex(gp_Pnt(x, y, z)).Vertex(), s->edges(edge + 1));
+        if (!dist.IsDone()) return fail("distance computation failed");
+        *distance = dist.Value();
+        return 0;
+    });
+}
+
+int iso_max_tolerance(IsoShape* s, double* tolerance)
+{
+    double t = 0;
+    for (int i = 1; i <= s->edges.Extent(); ++i) t = std::max(t, BRep_Tool::Tolerance(TopoDS::Edge(s->edges(i))));
+    for (int i = 1; i <= s->vertices.Extent(); ++i) t = std::max(t, BRep_Tool::Tolerance(TopoDS::Vertex(s->vertices(i))));
+    *tolerance = t;
+    return 0;
 }
 
 int iso_tessellate(IsoShape* s, double deflection, double angle, int* triangles)

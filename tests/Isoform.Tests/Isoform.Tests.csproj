@@ -17,6 +17,7 @@
     <ProjectReference Include="..\..\src\Isoform.Geometry\Isoform.Geometry.csproj" />
     <ProjectReference Include="..\..\src\Isoform.Meshing\Isoform.Meshing.csproj" />
     <ProjectReference Include="..\..\src\Isoform.Modeling\Isoform.Modeling.csproj" />
+    <ProjectReference Include="..\..\src\Isoform.Step\Isoform.Step.csproj" />
   </ItemGroup>
 
   <ItemGroup>

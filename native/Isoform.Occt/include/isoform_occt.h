@@ -41,6 +41,14 @@ ISO_API int iso_solid_count(IsoShape* shape, int* count);
 ISO_API int iso_is_valid(IsoShape* shape, int* valid);
 ISO_API int iso_volume(IsoShape* shape, double* volume);
 ISO_API int iso_write_step(IsoShape* shape, const char* utf8_path);
+// Reads a STEP file and transfers every root into one shape (with the reader's default shape healing).
+ISO_API int iso_read_step(const char* utf8_path, IsoShape** out);
+ISO_API int iso_vertex_point(IsoShape* shape, int vertex, double* xyz);
+// Point on an edge at fraction s of its parameter range (0 = first, 1 = last).
+ISO_API int iso_edge_point(IsoShape* shape, int edge, double s, double* xyz);
+ISO_API int iso_edge_distance(IsoShape* shape, int edge, double x, double y, double z, double* distance);
+// Largest tolerance of any edge or vertex: how far OCCT had to loosen the shape to make it consistent.
+ISO_API int iso_max_tolerance(IsoShape* shape, double* tolerance);
 // Tessellates every face (chordal deflection in mm, angular in radians); returns the total triangle count.
 ISO_API int iso_tessellate(IsoShape* shape, double deflection, double angle, int* triangles);
 
