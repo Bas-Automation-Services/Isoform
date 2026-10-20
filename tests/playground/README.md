@@ -14,6 +14,7 @@ The parts on their own:
 
 ```sh
 node --test tests/playground/kernel-client.test.mjs tests/playground/store.test.mjs tests/playground/diagnose.test.mjs \
+  tests/playground/references.test.mjs \
   tests/playground/features.test.mjs   # front end only
 node --test tests/playground/kernel.test.mjs       # kernel only; ISOFORM_PLAYGROUND=<wwwroot> to point elsewhere
 node tests/playground/e2e.mjs [wwwroot]            # browser only
@@ -41,6 +42,9 @@ definition names (a fillet's edge); a thin spot's thinnest point; the cell that 
 (size / 2, at least half the current cell, on a round value: a 0.6 mm wall at 0.5 mm cells gives 0.25 mm); preview
 results grey out their below-resolution reports; the valid / N problems verdict.
 
+**`references.test.mjs`**: what a selection pins (an edge, a face by name, or by index when it is the face
+clicked), and the kernel's replies folded into the pins by id.
+
 **`features.test.mjs`** (`wwwroot/js/lib/features.js`, the tree and inspector model): the tree lists a part's
 features in order, grouped by the body each works on when there are several, and a bundle's components and mates; a
 face belongs to the item its name starts with; the inspector's fields come from the feature JSON, each with the
@@ -57,6 +61,7 @@ page's worker calls. For every example from `Examples()`, at the page's default 
 
 It prints the kernel time, triangles, faces and diagnostics per example. A broken document must come back as
 `{error}`, not as an exception, and a bad edit as `{error, failedEdit}`. `Apply(old, Diff(old, new))` must give `new`.
+`Resolve` pins `plate/z+` by index, returns it by name, and reports it split after a cut across it.
 
 **`e2e.mjs`** serves the folder with `serve.mjs`, opens `?example=N` for every example and waits (in real time) for the
 stats line under the editor (`#stats`) to show a result. An example passes when that line names one or more faces,
@@ -67,7 +72,8 @@ face names are still selected. Last, diagnostics: example 0 with its hole moved 
 below-resolution thin spot between `plate/y+` and `hole/wall`; clicking it in the list lights both faces in two colours
 and flies the camera there (`out/screenshots/diagnostics.png`); "Resolve at 0.25 mm" regenerates the same document at
 0.25 mm cells with the report gone and the verdict Valid; "back to 0.5 mm" brings it back; a fillet radius of 12 mm gives
-`fillet-invalid`, lights the edge it names and keeps the rest of the part. Then the tree and inspector: it selects
+`fillet-invalid`, lights the edge it names and keeps the rest of the part. Then pins: `plate/z+` pinned on example 0
+(`window.isoform.pin`), a slot edited in across it, and the pin shows `split`, lit when clicked (`out/screenshots/pins.png`). Then the tree and inspector: it selects
 `hole` in the tree, types a diameter and scrubs it (each must change the document and its hash, and keep `hole`
 selected), re-picks the fillet's edge, and checks that selecting a face selects its feature in the tree.
 
@@ -93,7 +99,7 @@ Coordinates are CSS pixels in the viewport. The page exposes `window.isoform`: `
 `document()`, `hash()`, `selection()` (face names), `faces()` (each face's names), `select(names)` and `edit(text)`
 (resolves once that text has regenerated); for diagnostics `diagnostics()` (as listed), `focusDiagnostic(index)`,
 `marked()` (the faces lit for the one in focus, with their colours), `cell()` (the cell the result was made at),
-`target()` (where the camera looks) and `resolve(cell)`; for the tree, `feature()` (the selected item's key). Later tasks add to it, for example handles:
+`target()` (where the camera looks) and `resolve(cell)`; for reference pins `pins()` and `pin(name | [a, b])` (resolves to the pin); for the tree, `feature()` (the selected item's key). Later tasks add to it, for example handles:
 
 ```js
 const page = await browser.newPage();

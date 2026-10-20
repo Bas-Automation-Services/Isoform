@@ -11,10 +11,12 @@ export function createPicking(viewer, store, tooltip) {
     if (result !== shown) { hovered = -1; shown = result; } // a new mesh: its indices mean other faces
     const faces = facesNamed(result, selection);
     if (hovered >= 0) faces.push(hovered);
+    // A pin's faces (panels/references.js), while they are faces of the mesh on screen.
+    if (store.state.highlight?.result === result) faces.push(...store.state.highlight.faces);
     viewer.light(faces);
   }
   // Subscribed after the viewer shows a new result, so this lights faces of the mesh on screen.
-  store.subscribe((s, before) => { if (s.result !== before.result || s.selection !== before.selection) relight(); });
+  store.subscribe((s, before) => { if (s.result !== before.result || s.selection !== before.selection || s.highlight !== before.highlight) relight(); });
 
   canvas.addEventListener('pointermove', event => {
     const face = viewer.faceAt(event.clientX, event.clientY);
