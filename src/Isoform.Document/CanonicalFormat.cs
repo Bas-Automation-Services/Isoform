@@ -10,7 +10,7 @@ namespace Isoform.Document;
 /// The one text form of a document: fixed key order, LF newlines, shortest round-trip doubles.
 /// Same document → same bytes → same hash, so it diffs and merges cleanly in git.
 /// </summary>
-public static class CanonicalFormat
+public static partial class CanonicalFormat
 {
     static readonly JsonWriterOptions WriterOptions = new()
     {

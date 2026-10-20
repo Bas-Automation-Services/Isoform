@@ -3,6 +3,7 @@ using System.Runtime.InteropServices.JavaScript;
 using System.Runtime.Versioning;
 using System.Text.Json;
 using Isoform.Document;
+using Isoform.Meshing;
 using Isoform.Modeling;
 
 namespace Isoform.Playground;
@@ -23,54 +24,56 @@ public static partial class Playground
     // Faces meeting at less than this angle are tangent: drawn faintly, like the tangent edges in a CAD view.
     static readonly double SharpCos = Math.Cos(20 * Math.PI / 180);
 
+    /// <summary>What the page shows: one mesh, a face index per quad, every face's names, and groups (bodies or instances).</summary>
+    sealed record View(Mesh? Mesh, IReadOnlyList<int> FaceOfQuad, IReadOnlyList<IReadOnlyList<string>> Faces, IReadOnlyList<(string Name, IReadOnlyList<int> Faces)> Groups,
+        IReadOnlyList<Diagnostic> Diagnostics, int Edges, int Vertices, IEnumerable<BasAutomation.Geometry.Point3D> ThinSpots);
+
+    /// <summary>A part document, or a bundle of an assembly and its documents.</summary>
     [JSExport]
     public static string Regenerate(string document, double cellSize, double chordTolerance)
     {
-        PartDocument doc;
+        var settings = new ModelingSettings { CellSize = cellSize, ChordTolerance = chordTolerance };
+        var clock = Stopwatch.StartNew();
+        View view;
         try
         {
-            doc = CanonicalFormat.Read(document);
+            view = CanonicalFormat.FormatOf(document) == Bundle.FormatVersion ? Assembly(CanonicalFormat.ReadBundle(document), settings) : Part(CanonicalFormat.Read(document), settings);
         }
         catch (Exception e) when (e is JsonException or FormatException or InvalidOperationException or NullReferenceException or KeyNotFoundException or InvalidCastException)
         {
             (_positions, _faces, _lines, _smooth) = ([], [], [], []);
             return Json(w => w.WriteString("error", e.Message));
         }
-
-        var clock = Stopwatch.StartNew();
-        var result = new FrepModeler(new ModelingSettings { CellSize = cellSize, ChordTolerance = chordTolerance }).Regenerate(doc);
         var ms = clock.Elapsed.TotalMilliseconds;
-        Flatten(result);
+        Flatten(view.Mesh, view.FaceOfQuad);
 
-        var t = result.Topology;
         return Json(w =>
         {
             w.WriteNumber("ms", ms);
             w.WriteNumber("triangles", _faces.Length);
-            w.WriteNumber("bodies", t?.BodyCount ?? 0);
-            w.WriteNumber("edges", t?.Edges.Count ?? 0);
-            w.WriteNumber("vertices", t?.Vertices.Count ?? 0);
+            w.WriteNumber("edges", view.Edges);
+            w.WriteNumber("vertices", view.Vertices);
             w.WriteStartArray("faces");
-            foreach (var f in t?.Faces ?? [])
+            foreach (var f in view.Faces)
             {
                 w.WriteStartArray();
-                foreach (var source in f.Sources) w.WriteStringValue(source);
+                foreach (var source in f) w.WriteStringValue(source);
                 w.WriteEndArray();
             }
             w.WriteEndArray();
             w.WriteStartArray("bodies");
-            foreach (var b in result.Bodies)
+            foreach (var (name, faces) in view.Groups)
             {
                 w.WriteStartObject();
-                w.WriteString("name", b.Name);
+                w.WriteString("name", name);
                 w.WriteStartArray("faces");
-                foreach (var f in b.Faces) w.WriteNumberValue(f);
+                foreach (var f in faces) w.WriteNumberValue(f);
                 w.WriteEndArray();
                 w.WriteEndObject();
             }
             w.WriteEndArray();
             w.WriteStartArray("diagnostics");
-            foreach (var d in result.Diagnostics)
+            foreach (var d in view.Diagnostics)
             {
                 w.WriteStartObject();
                 w.WriteString("code", d.Code);
@@ -80,16 +83,44 @@ public static partial class Playground
             }
             w.WriteEndArray();
             w.WriteStartArray("thinSpots");
-            foreach (var spot in result.Mesh?.ThinSpots ?? [])
+            foreach (var spot in view.ThinSpots)
             {
                 w.WriteStartArray();
-                w.WriteNumberValue(spot.Location.X);
-                w.WriteNumberValue(spot.Location.Y);
-                w.WriteNumberValue(spot.Location.Z);
+                w.WriteNumberValue(spot.X);
+                w.WriteNumberValue(spot.Y);
+                w.WriteNumberValue(spot.Z);
                 w.WriteEndArray();
             }
             w.WriteEndArray();
         });
+    }
+
+    static View Part(PartDocument doc, ModelingSettings settings)
+    {
+        var r = new FrepModeler(settings).Regenerate(doc);
+        var t = r.Topology;
+        return new View(r.Mesh, r.FaceOfQuad, t?.Faces.Select(f => f.Sources).ToList() ?? [], r.Bodies.Select(b => (b.Name, b.Faces)).ToList(),
+            r.Diagnostics, t?.Edges.Count ?? 0, t?.Vertices.Count ?? 0, r.Mesh?.ThinSpots.Select(s => s.Location) ?? []);
+    }
+
+    /// <summary>Every instance in place, its faces named by occurrence (<c>left/plate/z+</c>), one group per instance.</summary>
+    static View Assembly(Bundle bundle, ModelingSettings settings)
+    {
+        var r = new AssemblyModeler(settings).Regenerate(bundle.Assembly, path => bundle.Documents.GetValueOrDefault(path));
+        var (mesh, _) = r.WorldMesh();
+        var (faceOfQuad, faces, groups) = (new List<int>(), new List<IReadOnlyList<string>>(), new List<(string, IReadOnlyList<int>)>());
+        var (edges, vertices) = (0, 0);
+        foreach (var i in r.Instances)
+        {
+            var f0 = faces.Count;
+            var t = i.Result.Topology;
+            faceOfQuad.AddRange(i.Result.FaceOfQuad.Select(f => f + f0));
+            faces.AddRange(t?.Faces.Select(f => (IReadOnlyList<string>)f.Sources.Select(i.Name).ToList()) ?? []);
+            groups.Add((i.Id, Enumerable.Range(f0, faces.Count - f0).ToList()));
+            (edges, vertices) = (edges + (t?.Edges.Count ?? 0), vertices + (t?.Vertices.Count ?? 0));
+        }
+        var spots = r.Instances.SelectMany(i => i.Result.Mesh?.ThinSpots.Select(s => i.Placement.ToWorld(s.Location)) ?? []);
+        return new View(mesh, faceOfQuad, faces, groups, r.Diagnostics, edges, vertices, spots);
     }
 
     // Written by hand: reflection-based serialization would not survive trimming of the published app.
@@ -126,17 +157,17 @@ public static partial class Playground
     public static string Examples() => Json(w =>
     {
         foreach (var (name, doc) in Isoform.Playground.Examples.All) w.WriteString(name, CanonicalFormat.Write(doc));
+        foreach (var (name, bundle) in Isoform.Playground.Examples.Bundles) w.WriteString(name, CanonicalFormat.Write(bundle));
     });
 
-    static void Flatten(FrepResult result)
+    static void Flatten(Mesh? mesh, IReadOnlyList<int> faceOf)
     {
-        if (result.Mesh is not { } mesh)
+        if (mesh is null)
         {
             (_positions, _faces, _lines, _smooth) = ([], [], [], []);
             return;
         }
         var v = mesh.Vertices;
-        var faceOf = result.FaceOfQuad;
         var positions = new List<double>(mesh.Quads.Count * 18);
         var faces = new List<int>(mesh.Quads.Count * 2);
         void Add(int a, int b, int c, int face)

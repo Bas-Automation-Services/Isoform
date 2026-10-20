@@ -30,6 +30,8 @@ public sealed record Diagnostic(string Code, string? FeatureId, string Message)
     public const string UnsupportedChamfer = "unsupported-chamfer";
     public const string BelowResolution = "below-resolution";
     public const string BackendFailed = "backend-failed";
+    public const string PartMissing = "part-missing";
+    public const string PartChanged = "part-changed";
 }
 
 /// <summary>A connected face that exists after regeneration, with every source surface it came from.</summary>

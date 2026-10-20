@@ -112,6 +112,15 @@ public readonly record struct Frame(Point3D Origin, Vector3D X, Vector3D Y, Vect
     public Point3D ToWorld(Point3D p) => Origin + X * p.X + Y * p.Y + Z * p.Z;
     public Vector3D ToWorld(Vector3D v) => X * v.X + Y * v.Y + Z * v.Z;
 
+    /// <summary>World to frame coordinates: the axes are orthonormal, so the inverse is the transpose.</summary>
+    public Point3D ToLocal(Point3D p)
+    {
+        var d = p - Origin;
+        return new Point3D(d.Dot(X), d.Dot(Y), d.Dot(Z));
+    }
+
+    public Vector3D ToLocal(Vector3D v) => new(v.Dot(X), v.Dot(Y), v.Dot(Z));
+
     /// <summary>This frame placed by <paramref name="by"/>: its axes and origin expressed in <paramref name="by"/>'s world.</summary>
     public Frame Then(Frame by) => new(by.ToWorld(Origin), by.ToWorld(X), by.ToWorld(Y), by.ToWorld(Z));
 }

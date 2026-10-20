@@ -12,6 +12,30 @@ public static class Examples
 
     static Profile Circle(double cx, double cy, double r) => new([cx - r, cy], [new ProfileEdge("a", [cx + r, cy], 1), new ProfileEdge("b", [cx - r, cy], 1)]);
 
+    static readonly PartDocument Bracket = new(
+    [
+        new Block("plate", BooleanOp.New, [0, 0, 0], [40, 20, 5]),
+        new Hole("bore", [10, 10], 6),
+        new Fillet("round", [], 1, Loop: "plate/z+"),
+    ]);
+
+    static readonly PartDocument Pin = new([new Revolve("pin", BooleanOp.New, Xz, new Profile([0, 0],
+    [
+        new ProfileEdge("tip", [2.9, 0]), new ProfileEdge("shank", [2.9, 24]), new ProfileEdge("head", [5, 24]),
+        new ProfileEdge("collar", [5, 27]), new ProfileEdge("cap", [0, 27]), new ProfileEdge("axis", [0, 0]),
+    ])), new Chamfer("lead", ["pin/tip", "pin/shank"], 1)]);
+
+    /// <summary>Assemblies with their documents, as one bundle each.</summary>
+    public static IReadOnlyList<(string Name, Bundle Bundle)> Bundles { get; } =
+    [
+        ("Assembly: two brackets and a pin", new Bundle(new AssemblyDocument(
+        [
+            new Component("lower", "bracket.json", Placement.Identity),
+            new Component("upper", "bracket.json", new Placement([0, 20, 15], [1, 0, 0], [0, 0, -1])),
+            new Component("pin", "pin.json", new Placement([10, 10, -9], [1, 0, 0], [0, 0, 1])),
+        ]), new Dictionary<string, string> { ["bracket.json"] = CanonicalFormat.Write(Bracket), ["pin.json"] = CanonicalFormat.Write(Pin) })),
+    ];
+
     public static IReadOnlyList<(string Name, PartDocument Doc)> All { get; } =
     [
         ("Plate with hole and fillet", new(

@@ -20,4 +20,19 @@ public class PlaygroundExampleTests
         result.Topology!.BodyCount.Should().Be(result.Bodies.Count);
         result.Mesh!.IsWatertight().Should().BeTrue();
     }
+
+    public static IEnumerable<object[]> BundleNames => Examples.Bundles.Select(e => new object[] { e.Name });
+
+    [Theory]
+    [MemberData(nameof(BundleNames))]
+    public void Assembly_example_regenerates_cleanly(string name)
+    {
+        var bundle = Examples.Bundles.Single(e => e.Name == name).Bundle;
+
+        var result = new AssemblyModeler(new ModelingSettings()).Regenerate(bundle.Assembly, path => bundle.Documents.GetValueOrDefault(path));
+
+        result.Diagnostics.Should().BeEmpty();
+        result.Instances.Should().HaveCount(bundle.Assembly.Components.Count);
+        result.WorldMesh().Mesh.IsWatertight().Should().BeTrue();
+    }
 }
