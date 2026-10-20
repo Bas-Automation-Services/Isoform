@@ -4,7 +4,7 @@ project(IsoformOcct LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-set(OCCT_LIBS TKernel TKMath TKG3d TKGeomBase TKBRep TKTopAlgo TKPrim TKBO TKBool TKFillet TKShHealing TKMesh TKXSBase TKDESTEP)
+set(OCCT_LIBS TKernel TKMath TKG2d TKG3d TKGeomBase TKBRep TKTopAlgo TKPrim TKBO TKBool TKFillet TKShHealing TKMesh TKXSBase TKDESTEP TKCDF TKLCAF TKCAF TKXCAF)
 
 add_library(isoform_occt SHARED src/isoform_occt.cpp)
 target_include_directories(isoform_occt PRIVATE include)

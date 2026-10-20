@@ -39,10 +39,27 @@ ISO_API int iso_vertex_count(IsoShape* shape, int* count);
 ISO_API int iso_vertex_faces(IsoShape* shape, int vertex, int* faces, int capacity, int* count);
 ISO_API int iso_solid_count(IsoShape* shape, int* count);
 ISO_API int iso_is_valid(IsoShape* shape, int* valid);
+// What BRepCheck finds wrong, one line per problem ("edge 3 on face 1: InvalidCurveOnSurface"), as UTF-8.
+ISO_API int iso_check_report(IsoShape* shape, char* buffer, int capacity);
 ISO_API int iso_volume(IsoShape* shape, double* volume);
 ISO_API int iso_write_step(IsoShape* shape, const char* utf8_path);
 // Reads a STEP file and transfers every root into one shape (with the reader's default shape healing).
 ISO_API int iso_read_step(const char* utf8_path, IsoShape** out);
+// The same without shape healing: the shape as the file itself describes it.
+ISO_API int iso_read_step_unhealed(const char* utf8_path, IsoShape** out);
+
+// A STEP file read with its product structure (XCAF): every part occurrence, sub-assemblies flattened.
+typedef struct IsoAssembly IsoAssembly;
+ISO_API int iso_read_step_assembly(const char* utf8_path, IsoAssembly** out);
+ISO_API void iso_assembly_free(IsoAssembly* assembly);
+ISO_API int iso_assembly_count(IsoAssembly* assembly, int* count);
+// UTF-8 names: occurrence -1 gives the root product in `path`; otherwise the occurrence's component names
+// joined by '/' in `path` and its part's product name in `product`.
+ISO_API int iso_assembly_names(IsoAssembly* assembly, int occurrence, char* path, char* product, int capacity);
+// World placement of an occurrence as a row-major 3x4 matrix [R | t], and the index of its distinct part.
+ISO_API int iso_assembly_placement(IsoAssembly* assembly, int occurrence, double* matrix, int* part);
+// The occurrence's shape, placed.
+ISO_API int iso_assembly_shape(IsoAssembly* assembly, int occurrence, IsoShape** out);
 ISO_API int iso_vertex_point(IsoShape* shape, int vertex, double* xyz);
 // Point on an edge at fraction s of its parameter range (0 = first, 1 = last).
 ISO_API int iso_edge_point(IsoShape* shape, int edge, double s, double* xyz);

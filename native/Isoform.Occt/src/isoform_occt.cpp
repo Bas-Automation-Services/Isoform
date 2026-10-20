@@ -5,7 +5,11 @@
 #include <BRepAlgoAPI_Cut.hxx>
 #include <BRepAlgoAPI_Fuse.hxx>
 #include <BRepBuilderAPI_MakeVertex.hxx>
+#include <BRepCheck.hxx>
 #include <BRepCheck_Analyzer.hxx>
+#include <BRepCheck_Result.hxx>
+#include <TopExp_Explorer.hxx>
+#include <sstream>
 #include <BRepExtrema_DistShapeShape.hxx>
 #include <BRepFilletAPI_MakeFillet.hxx>
 #include <BRepGProp.hxx>
@@ -15,8 +19,18 @@
 #include <BRepPrimAPI_MakeCylinder.hxx>
 #include <BRepTools_History.hxx>
 #include <BRep_Tool.hxx>
+#include <Geom2d_Curve.hxx>
+#include <TopoDS_Iterator.hxx>
 #include <GProp_GProps.hxx>
+#include <STEPCAFControl_Reader.hxx>
 #include <STEPControl_Reader.hxx>
+#include <ShapeProcess.hxx>
+#include <TDataStd_Name.hxx>
+#include <TDF_LabelSequence.hxx>
+#include <TDocStd_Document.hxx>
+#include <XCAFApp_Application.hxx>
+#include <XCAFDoc_DocumentTool.hxx>
+#include <XCAFDoc_ShapeTool.hxx>
 #include <STEPControl_Writer.hxx>
 #include <BRepAdaptor_Curve.hxx>
 #include <Standard_Failure.hxx>
@@ -251,6 +265,70 @@ int iso_is_valid(IsoShape* s, int* valid)
     });
 }
 
+int iso_check_report(IsoShape* s, char* buffer, int capacity)
+{
+    return guard([&] {
+        const BRepCheck_Analyzer analyzer(s->shape);
+        std::ostringstream out;
+        TopTools_IndexedMapOfShape all, wires, shells;
+        TopExp::MapShapes(s->shape, TopAbs_WIRE, wires);
+        TopExp::MapShapes(s->shape, TopAbs_SHELL, shells);
+        auto label = [&](const TopoDS_Shape& x) {
+            switch (x.ShapeType())
+            {
+            case TopAbs_FACE: return "face " + std::to_string(s->faces.FindIndex(x) - 1);
+            case TopAbs_EDGE: return "edge " + std::to_string(s->edges.FindIndex(x) - 1);
+            case TopAbs_VERTEX: return "vertex " + std::to_string(s->vertices.FindIndex(x) - 1);
+            case TopAbs_WIRE: return "wire " + std::to_string(wires.FindIndex(x) - 1);
+            case TopAbs_SHELL: return "shell " + std::to_string(shells.FindIndex(x) - 1);
+            default: return std::string("shape");
+            }
+        };
+        auto print = [&](const BRepCheck_ListOfStatus& list, const std::string& where) {
+            for (const BRepCheck_Status st : list)
+                if (st != BRepCheck_NoError)
+                {
+                    std::ostringstream name;
+                    BRepCheck::Print(st, name);
+                    std::string text = name.str();
+                    text.erase(std::remove(text.begin(), text.end(), '\n'), text.end());
+                    out << where << ": " << text << '\n';
+                }
+        };
+        for (const TopAbs_ShapeEnum type : {TopAbs_VERTEX, TopAbs_EDGE, TopAbs_WIRE, TopAbs_FACE, TopAbs_SHELL, TopAbs_SOLID})
+            for (TopExp_Explorer x(s->shape, type); x.More(); x.Next())
+            {
+                const Handle(BRepCheck_Result) result = analyzer.Result(x.Current());
+                if (result.IsNull()) continue;
+                print(result->Status(), label(x.Current()));
+                for (result->InitContextIterator(); result->MoreShapeInContext(); result->NextShapeInContext())
+                {
+                    print(result->StatusOnShape(), label(x.Current()) + " on " + label(result->ContextualShape()));
+                    // A wire not closed on its face: where each edge's p-curve starts and ends there.
+                    if (x.Current().ShapeType() != TopAbs_WIRE || result->ContextualShape().ShapeType() != TopAbs_FACE) continue;
+                    if (std::find(result->StatusOnShape().begin(), result->StatusOnShape().end(), BRepCheck_NotClosed) == result->StatusOnShape().end()) continue;
+                    const TopoDS_Face& face = TopoDS::Face(result->ContextualShape());
+                    for (TopoDS_Iterator e(x.Current()); e.More(); e.Next())
+                    {
+                        const TopoDS_Edge& edge = TopoDS::Edge(e.Value());
+                        double f, l;
+                        const Handle(Geom2d_Curve) c = BRep_Tool::CurveOnSurface(edge, face, f, l);
+                        if (c.IsNull()) { out << "  " << label(edge) << ": no p-curve\n"; continue; }
+                        gp_Pnt2d a = c->Value(f), b = c->Value(l);
+                        if (edge.Orientation() == TopAbs_REVERSED) std::swap(a, b);
+                        out << "  " << label(edge) << (edge.Orientation() == TopAbs_REVERSED ? " R" : " F") << " [" << f << ", " << l << "] ("
+                            << a.X() << ", " << a.Y() << ") -> (" << b.X() << ", " << b.Y() << ")\n";
+                    }
+                }
+            }
+        const std::string text = out.str();
+        const size_t n = std::min(text.size(), static_cast<size_t>(capacity - 1));
+        std::copy_n(text.data(), n, buffer);
+        buffer[n] = 0;
+        return 0;
+    });
+}
+
 int iso_volume(IsoShape* s, double* volume)
 {
     return guard([&] {
@@ -279,6 +357,138 @@ int iso_read_step(const char* path, IsoShape** out)
         if (reader.TransferRoots() == 0) return fail("STEP file has no transferable roots");
         return put(out, reader.OneShape());
     });
+}
+
+int iso_read_step_unhealed(const char* path, IsoShape** out)
+{
+    return guard([&] {
+        STEPControl_Reader reader;
+        if (reader.ReadFile(path) != IFSelect_RetDone) return fail("STEP read failed");
+        reader.SetShapeProcessFlags(ShapeProcess::OperationsFlags()); // no healing operations at all
+        if (reader.TransferRoots() == 0) return fail("STEP file has no transferable roots");
+        return put(out, reader.OneShape());
+    });
+}
+
+struct IsoAssembly
+{
+    struct Occurrence
+    {
+        std::string path, product;
+        TopLoc_Location location;
+        int part;
+        TopoDS_Shape shape;
+    };
+    std::string root;
+    std::vector<Occurrence> occurrences;
+};
+
+namespace
+{
+std::string nameOf(const TDF_Label& label)
+{
+    Handle(TDataStd_Name) name;
+    if (!label.FindAttribute(TDataStd_Name::GetID(), name)) return "";
+    const TCollection_AsciiString text(name->Get(), '?');
+    return text.ToCString();
+}
+
+// Walks an assembly label: every component, nested sub-assemblies composed, until the simple shapes.
+void collect(const Handle(XCAFDoc_ShapeTool)& tool, const TDF_Label& assembly, const std::string& prefix, const TopLoc_Location& outer,
+             std::vector<TDF_Label>& parts, IsoAssembly& out)
+{
+    TDF_LabelSequence components;
+    XCAFDoc_ShapeTool::GetComponents(assembly, components, Standard_False);
+    for (const TDF_Label& component : components)
+    {
+        TDF_Label referred;
+        if (!XCAFDoc_ShapeTool::GetReferredShape(component, referred)) continue;
+        const std::string path = prefix + nameOf(component);
+        const TopLoc_Location location = outer * XCAFDoc_ShapeTool::GetLocation(component);
+        if (XCAFDoc_ShapeTool::IsAssembly(referred))
+        {
+            collect(tool, referred, path + "/", location, parts, out);
+            continue;
+        }
+        auto known = std::find_if(parts.begin(), parts.end(), [&](const TDF_Label& l) { return l.IsEqual(referred); });
+        const int part = static_cast<int>(known - parts.begin());
+        if (known == parts.end()) parts.push_back(referred);
+        out.occurrences.push_back({path, nameOf(referred), location, part, XCAFDoc_ShapeTool::GetShape(referred).Moved(location)});
+    }
+}
+
+void copyText(const std::string& text, char* buffer, int capacity)
+{
+    if (capacity <= 0) return;
+    const size_t n = std::min(text.size(), static_cast<size_t>(capacity - 1));
+    std::copy_n(text.data(), n, buffer);
+    buffer[n] = 0;
+}
+} // namespace
+
+int iso_read_step_assembly(const char* path, IsoAssembly** out)
+{
+    return guard([&] {
+        Handle(TDocStd_Document) doc;
+        XCAFApp_Application::GetApplication()->NewDocument("MDTV-XCAF", doc);
+        STEPCAFControl_Reader reader;
+        reader.SetNameMode(Standard_True);
+        if (reader.ReadFile(path) != IFSelect_RetDone) return fail("STEP read failed");
+        if (!reader.Transfer(doc)) return fail("STEP transfer failed");
+        const Handle(XCAFDoc_ShapeTool) tool = XCAFDoc_DocumentTool::ShapeTool(doc->Main());
+        TDF_LabelSequence roots;
+        tool->GetFreeShapes(roots);
+        if (roots.Length() != 1) return fail("expected one root product, found " + std::to_string(roots.Length()));
+        auto assembly = std::make_unique<IsoAssembly>();
+        assembly->root = nameOf(roots.First());
+        std::vector<TDF_Label> parts;
+        if (XCAFDoc_ShapeTool::IsAssembly(roots.First())) collect(tool, roots.First(), "", TopLoc_Location(), parts, *assembly);
+        else assembly->occurrences.push_back({"", assembly->root, TopLoc_Location(), 0, XCAFDoc_ShapeTool::GetShape(roots.First())});
+        doc->Close();
+        *out = assembly.release();
+        return 0;
+    });
+}
+
+void iso_assembly_free(IsoAssembly* a) { delete a; }
+
+int iso_assembly_count(IsoAssembly* a, int* count)
+{
+    *count = static_cast<int>(a->occurrences.size());
+    return 0;
+}
+
+int iso_assembly_names(IsoAssembly* a, int occurrence, char* path, char* product, int capacity)
+{
+    return guard([&] {
+        if (occurrence < 0)
+        {
+            copyText(a->root, path, capacity);
+            copyText("", product, capacity);
+            return 0;
+        }
+        const auto& o = a->occurrences.at(occurrence);
+        copyText(o.path, path, capacity);
+        copyText(o.product, product, capacity);
+        return 0;
+    });
+}
+
+int iso_assembly_placement(IsoAssembly* a, int occurrence, double* m, int* part)
+{
+    return guard([&] {
+        const auto& o = a->occurrences.at(occurrence);
+        const gp_Trsf t = o.location.Transformation();
+        for (int r = 0; r < 3; ++r)
+            for (int c = 0; c < 4; ++c) m[r * 4 + c] = t.Value(r + 1, c + 1);
+        *part = o.part;
+        return 0;
+    });
+}
+
+int iso_assembly_shape(IsoAssembly* a, int occurrence, IsoShape** out)
+{
+    return guard([&] { return put(out, a->occurrences.at(occurrence).shape); });
 }
 
 int iso_vertex_point(IsoShape* s, int vertex, double* xyz)
