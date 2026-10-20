@@ -26,6 +26,7 @@ spike on top. That layer is designed to survive either outcome.
 | Fillets | True constant-radius fillets are core |
 | Approach | Verify the idea first; B-rep comparison is the stop/go test |
 | Stack | C# / .NET 10 |
+| Licence | MPL-2.0, open source |
 | Units | mm |
 | Modeling tolerance | `1e-7` mm (matches OCCT `Precision::Confusion`), configurable |
 | Mesh tolerance | Separate chord tolerance, configurable; tested for convergence, not held to the modeling tolerance |
@@ -123,7 +124,8 @@ Sketch solver, UI, performance beyond basic timings, patterns, assemblies, serve
 
 ## 8b. Open source
 
-Isoform will be open source. Consequences for the spike:
+Isoform will be open source under **MPL-2.0** (`LICENSE`): changes to Isoform's own files stay open,
+and closed-source applications can still be built on top. Consequences for the spike:
 
 - No machine paths, private repo names or copied in-house code in the repo.
 - Dependencies must be licence-compatible: OCCT (LGPL-2.1 + exception, dynamically linked),

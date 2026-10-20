@@ -9,5 +9,7 @@
     <Company>Bas Automation Services</Company>
     <Authors>Bas Nederveen</Authors>
     <Product>Isoform</Product>
+    <PackageLicenseExpression>MPL-2.0</PackageLicenseExpression>
+    <Copyright>Copyright (c) 2026 Bas Nederveen</Copyright>
   </PropertyGroup>
 </Project>
