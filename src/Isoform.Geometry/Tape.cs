@@ -4,12 +4,12 @@ using BasAutomation.Geometry;
 namespace Isoform.Geometry;
 
 /// <summary>Instruction codes of a <see cref="Tape"/>. The five leaf kinds come first.</summary>
-enum TapeOp : byte { Plane, Cylinder, Sphere, Cone, Torus, Max, Min, Negate, Rounded, Shell, Blend, Loop, Call }
+enum TapeOp : byte { Plane, Cylinder, Sphere, Cone, Torus, Max, Min, Negate, Rounded, Shell, Blend, Loop, Profile, Call }
 
 /// <summary>
 /// One instruction; its result is the register with the instruction's own index. A and B are operand registers,
 /// except for Max and Min, whose B operands start at A in the argument list. Data indexes the table of the
-/// instruction's kind: leaves, rounded edges, shells, blends, loops or called objects.
+/// instruction's kind: leaves, rounded edges, shells, blends, loops, profiles or called objects.
 /// </summary>
 readonly record struct TapeInstr(TapeOp Op, int A, int B, int Data)
 {
@@ -56,8 +56,8 @@ sealed record LoopData(double Size, bool Round, IReadOnlyDictionary<int, Surface
 /// virtual calls or allocation. Nodes shared in the tree are evaluated once. Every result is bit-identical to the
 /// tree's: each instruction performs the same floating-point operations in the same order as its node.
 /// <para>
-/// Leaves, intersections, unions, complements, rounded edges, shells, blends and loop edges are native; other
-/// fields (profiles) are kept as calls to the object. Simplifying for a box gives a shorter tape that makes the same
+/// Leaves, intersections, unions, complements, rounded edges, shells, blends, loop edges and profiles are native;
+/// other fields are kept as calls to the object. Simplifying for a box gives a shorter tape that makes the same
 /// decisions as <see cref="Field.Simplify"/>, so bounds, patches and meshes come out exactly as from the tree.
 /// </para>
 /// </summary>
@@ -75,6 +75,7 @@ public sealed partial class Tape
     readonly ShellData[] _shells;
     readonly BlendData[] _blends;
     readonly LoopData[] _loops;
+    readonly ProfileData[] _profiles;
     readonly Dictionary<Field, int> _leafOf;
 
     // Instructions a loop edge needs with owner and gradient even when only the value is asked: it has no value
@@ -85,23 +86,26 @@ public sealed partial class Tape
     readonly bool _settled;
 
     Tape(TapeInstr[] code, int[] args, Field[] objects, LeafData[] leaves, RoundData[] rounds, ShellData[] shells,
-        BlendData[] blends, LoopData[] loops, Dictionary<Field, int> leafOf)
+        BlendData[] blends, LoopData[] loops, ProfileData[] profiles, Dictionary<Field, int> leafOf)
     {
         (_code, _args, _objects) = (code, args, objects);
-        (_leaves, _rounds, _shells, _blends, _loops, _leafOf) = (leaves, rounds, shells, blends, loops, leafOf);
+        (_leaves, _rounds, _shells, _blends, _loops, _profiles, _leafOf) = (leaves, rounds, shells, blends, loops, profiles, leafOf);
         _sampled = Sampled(code, args);
         _settled = true;
         foreach (var i in code) _settled &= i.IsLeaf || i.Op == TapeOp.Negate;
     }
 
     Tape(Tape from, TapeInstr[] code, int[] args, Field[] objects)
-        : this(code, args, objects, from._leaves, from._rounds, from._shells, from._blends, from._loops, from._leafOf) { }
+        : this(code, args, objects, from._leaves, from._rounds, from._shells, from._blends, from._loops, from._profiles, from._leafOf) { }
 
     /// <summary>Number of instructions.</summary>
     public int Length => _code.Length;
 
-    /// <summary>The tree's own field when the tape is one leaf or one called object: alone, it is quicker as itself.</summary>
-    public Field? Single => _code is not [var only] ? null : only.IsLeaf ? _leaves[only.Data].Field : only.Op == TapeOp.Call ? _objects[only.Data] : null;
+    /// <summary>The tree's own field when the tape is one leaf, profile or called object: alone, it is quicker as itself.</summary>
+    public Field? Single => _code is not [var only] ? null
+        : only.IsLeaf ? _leaves[only.Data].Field
+        : only.Op == TapeOp.Profile ? _profiles[only.Data].Field
+        : only.Op == TapeOp.Call ? _objects[only.Data] : null;
 
     /// <summary>Instructions that call a field object instead of being evaluated natively.</summary>
     public int Calls => _code.Count(i => i.Op == TapeOp.Call);
@@ -115,7 +119,7 @@ public sealed partial class Tape
     {
         var b = new Builder();
         b.Emit(root);
-        return new([.. b.Code], [.. b.Args], [.. b.Objects], [.. b.Leaves], [.. b.Rounds], [.. b.Shells], [.. b.Blends], [.. b.Loops], b.LeafOf);
+        return new([.. b.Code], [.. b.Args], [.. b.Objects], [.. b.Leaves], [.. b.Rounds], [.. b.Shells], [.. b.Blends], [.. b.Loops], [.. b.Profiles], b.LeafOf);
     }
 
     sealed class Builder
@@ -129,6 +133,7 @@ public sealed partial class Tape
         public readonly List<ShellData> Shells = [];
         public readonly List<BlendData> Blends = [];
         public readonly List<LoopData> Loops = [];
+        public readonly List<ProfileData> Profiles = [];
         public readonly Dictionary<Field, int> LeafOf = new(ReferenceEqualityComparer.Instance);
 
         public int Emit(Field f)
@@ -148,7 +153,8 @@ public sealed partial class Tape
                 BlendField b => new(TapeOp.Blend, Emit(b.A), Emit(b.B), Add(Blends, new BlendData(b.K, b.Blend.Id, b.Union))),
                 LoopEdgeField l => new(TapeOp.Loop, Emit(l.Cap), Emit(l.Side), Add(Loops,
                     new LoopData(l.Size, l.Round, l.FaceOf, l.FaceOf.Values.First().Id, l.FaceOf.ToDictionary(kv => kv.Value.Id, kv => kv.Key)))),
-                _ => Call(f),
+                ProfileField p => new(TapeOp.Profile, 0, 0, Add(Profiles, new ProfileData(p, Leaf))),
+                _ => new(TapeOp.Call, 0, 0, Add(Objects, f)),
             };
             Code.Add(ins);
             return _register[f] = Code.Count - 1;
@@ -160,14 +166,6 @@ public sealed partial class Tape
             var regs = children.Select(Emit).ToArray();
             Args.AddRange(regs);
             return new(op, Args.Count - regs.Length, regs.Length, 0);
-        }
-
-        TapeInstr Call(Field f)
-        {
-            // A profile simplifies to one of its leaves: have them ready, so that result is native again.
-            if (f is ProfileField p)
-                foreach (var l in p.Leaves) Leaf(l);
-            return new(TapeOp.Call, 0, 0, Add(Objects, f));
         }
 
         int Leaf(LeafField l)
@@ -183,7 +181,7 @@ public sealed partial class Tape
         }
     }
 
-    static TapeOp LeafOp(LeafField l) => l.Surface.Kind switch
+    internal static TapeOp LeafOp(LeafField l) => l.Surface.Kind switch
     {
         SurfaceKind.Plane => TapeOp.Plane,
         SurfaceKind.Cylinder => TapeOp.Cylinder,
@@ -201,7 +199,7 @@ public sealed partial class Tape
         {
             var ins = code[i];
             if (ins.Op == TapeOp.Loop) (s ??= new bool[code.Length])[ins.A] = s[ins.B] = true;
-            if (s is null || !s[i] || ins.IsLeaf || ins.Op == TapeOp.Call) continue;
+            if (s is null || !s[i] || ins.IsLeaf || ins.Op is TapeOp.Profile or TapeOp.Call) continue;
             if (ins.Op is TapeOp.Max or TapeOp.Min)
                 for (var k = 0; k < ins.B; k++) s[args[ins.A + k]] = true;
             else
@@ -282,6 +280,9 @@ public sealed partial class Tape
                 case TapeOp.Negate:
                     v[i] = -v[ins.A];
                     break;
+                case TapeOp.Profile:
+                    v[i] = ProfileValue(_profiles[ins.Data], p);
+                    break;
                 default:
                     v[i] = Composite(ins, v, s, p);
                     break;
@@ -344,6 +345,8 @@ public sealed partial class Tape
                 return BlendSample(_blends[ins.Data], s[ins.A], s[ins.B]);
             case TapeOp.Loop:
                 return LoopSample(_loops[ins.Data], s[ins.A], s[ins.B]);
+            case TapeOp.Profile:
+                return ProfileSample(_profiles[ins.Data], p);
             case TapeOp.Call:
                 return _objects[ins.Data].Sample(p);
             default:
@@ -386,54 +389,56 @@ public sealed partial class Tape
         return l.Complement ? -d : d;
     }
 
-    static FieldSample LeafSample(in LeafData l, TapeOp op, Point3D p)
+    // One method per kind: all in one, the vector operations run past the JIT's inlining budget and stay calls.
+    static FieldSample LeafSample(in LeafData l, TapeOp op, Point3D p) => op switch
+    {
+        TapeOp.Plane => new(Plane(in l, p.X, p.Y, p.Z), l.Id, l.Complement ? -l.Axis : l.Axis),
+        TapeOp.Sphere => SphereSample(in l, p),
+        _ => RadialSample(in l, op, p),
+    };
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    static FieldSample SphereSample(in LeafData l, Point3D p)
+    {
+        var v = p - l.Origin;
+        var len = v.Length;
+        var d = len - l.R;
+        var g = len > 0 ? v / len : l.Axis;
+        return l.Complement ? new(-d, l.Id, -g) : new(d, l.Id, g);
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    static FieldSample RadialSample(in LeafData l, TapeOp op, Point3D p)
     {
         double d;
         Vector3D g;
-        if (op == TapeOp.Plane)
-        {
-            d = Plane(in l, p.X, p.Y, p.Z);
-            return new(d, l.Id, l.Complement ? -l.Axis : l.Axis);
-        }
         var v = p - l.Origin;
-        if (op == TapeOp.Sphere)
-        {
-            var len = v.Length;
-            d = len - l.R;
-            g = len > 0 ? v / len : l.Axis;
-        }
+        var axial = v.Dot(l.Axis);
+        var r = v - l.Axis * axial;
+        var len = r.Length;
+        var (rho, tube) = (len - l.R, 0.0);
+        if (op == TapeOp.Cylinder) d = rho;
+        else if (op == TapeOp.Cone) d = len * l.Cos - axial * l.Sin;
+        else d = (tube = Math.Sqrt(rho * rho + axial * axial)) - l.Minor;
+        if (!(len > 0)) g = l.Surface.Gradient(p); // on the axis: the surface picks a direction
         else
         {
-            var axial = v.Dot(l.Axis);
-            var r = v - l.Axis * axial;
-            var len = r.Length;
-            var (rho, tube) = (len - l.R, 0.0);
-            if (op == TapeOp.Cylinder) d = rho;
-            else if (op == TapeOp.Cone) d = len * l.Cos - axial * l.Sin;
-            else d = (tube = Math.Sqrt(rho * rho + axial * axial)) - l.Minor;
-            if (!(len > 0)) g = l.Surface.Gradient(p); // on the axis: the surface picks a direction
-            else
-            {
-                var u = r / len;
-                g = op == TapeOp.Cylinder ? u
-                    : op == TapeOp.Cone ? u * l.Cos - l.Axis * l.Sin
-                    : tube > 0 ? (u * rho + l.Axis * axial) / tube : l.Axis;
-            }
+            var u = r / len;
+            g = op == TapeOp.Cylinder ? u
+                : op == TapeOp.Cone ? u * l.Cos - l.Axis * l.Sin
+                : tube > 0 ? (u * rho + l.Axis * axial) / tube : l.Axis;
         }
         return l.Complement ? new(-d, l.Id, -g) : new(d, l.Id, g);
     }
 
-    double LeafValue(int register, Point3D p)
+    double LeafValue(int register, Point3D p) => LeafValue(in _leaves[_code[register].Data], _code[register].Op, p);
+
+    static double LeafValue(in LeafData l, TapeOp op, Point3D p) => op switch
     {
-        var ins = _code[register];
-        ref readonly var l = ref _leaves[ins.Data];
-        return ins.Op switch
-        {
-            TapeOp.Plane => Plane(in l, p.X, p.Y, p.Z),
-            TapeOp.Sphere => Sphere(in l, p.X, p.Y, p.Z),
-            _ => Radial(in l, ins.Op, p.X, p.Y, p.Z),
-        };
-    }
+        TapeOp.Plane => Plane(in l, p.X, p.Y, p.Z),
+        TapeOp.Sphere => Sphere(in l, p.X, p.Y, p.Z),
+        _ => Radial(in l, op, p.X, p.Y, p.Z),
+    };
 
     Vector3D LeafGradient(int register, Point3D p)
     {

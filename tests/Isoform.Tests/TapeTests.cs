@@ -47,6 +47,9 @@ public class TapeTests
                 new Hole("through-base", [10, 25], 6) { Body = "plate" }, new CombineBodies("weld", "post", BooleanOp.Join) { Body = "plate" }]),
         };
         foreach (var p in SketchFeatureTests.Parts()) parts[$"sketch/{p.Name}"] = p.Doc;
+        // Offset profiles: a shrunk reflex corner and grown revolve corners turn round, with faces of their own.
+        foreach (var (p, d) in new[] { ("L bracket", -1.0), ("stepped shaft", 1.0), ("cone with a dome", -1.0) })
+            parts[$"sketch/{p} offset {d}"] = new([.. parts[$"sketch/{p}"].Features, new Offset("grow", d)]);
         foreach (var (name, doc) in Examples.All) parts[$"playground/{name}"] = doc;
         foreach (var t in new[] { typeof(EdgeFeatureTests), typeof(ConcaveFilletTests), typeof(LoopFilletTests), typeof(BlendOffsetTests) })
         {
@@ -92,6 +95,13 @@ public class TapeTests
             points.Add(p);
             var s = tree.Sample(p);
             points.Add(p - s.Gradient * s.Value);
+        }
+        // Points on each revolve axis, where the distance from the axis is exactly zero and has no direction.
+        foreach (var pf in FieldAlgebra.Descendants(tree).OfType<ProfileField>().Where(pf => pf.Revolved))
+        {
+            var (o, y) = (pf.Frame.Origin, pf.Frame.Y);
+            var reach = (hi - lo).Length;
+            for (var t = -reach; t <= reach; t += reach / 200) points.Add(o + y * t);
         }
         foreach (var p in points) Same(tree.Sample(p), tape.Sample(p), tree.Value(p), tape.Value(p), p);
         SameBatch(tree, tape.Tape, points);
