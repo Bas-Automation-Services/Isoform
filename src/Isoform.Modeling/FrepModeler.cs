@@ -58,11 +58,14 @@ public sealed class FrepModeler(ModelingSettings settings, RegionCache? cache = 
         var (faces, edges, corners) = (new List<TopoFace>(), new List<TopoEdge>(), new List<TopoVertex>());
         var faceOfQuad = new List<int>();
         var bodies = new List<BodyResult>();
+        var carried = new List<(HashSet<int> Owners, IReadOnlyList<Surface> Oriented)>();
         var pieces = 0;
         foreach (var (body, plan) in part.Bodies.Zip(plans))
         {
             var bodyMesh = plan.Build(Cache);
-            var built = TopologyBuilder.Build(bodyMesh, part.Surfaces, Settings.Tolerance);
+            var oriented = TopologyBuilder.Oriented(part.Surfaces, body.Field);
+            carried.Add((bodyMesh.Quads.Select(q => q.Owner).ToHashSet(), oriented));
+            var built = TopologyBuilder.Build(bodyMesh, oriented, Settings.Tolerance, body.Field);
             var t = built.Topology;
             if (t.BodyCount > 1)
                 diagnostics.Add(new Diagnostic(Diagnostic.MultipleBodies, part.Bodies.Count == 1 ? null : body.Name,
@@ -83,15 +86,56 @@ public sealed class FrepModeler(ModelingSettings settings, RegionCache? cache = 
 
         diagnostics.AddRange(Resolution(document, part, mesh, diagnostics));
 
-        var present = topology.Faces.SelectMany(f => f.Sources).ToHashSet();
         // A feature that already has a diagnostic (below resolution, rejected, unsupported) says enough.
         var unresolved = diagnostics.Select(d => d.FeatureId).ToHashSet();
+        var lost = Lost(part, carried, unresolved);
+        var smallest = 2 * Settings.CellSize;
+        static string FeatureOf(Surface s) => s.Source.Split('/')[0];
+        // A face the mesh lost is the later feature's doing: the surface's own, or the one that hems it in.
+        foreach (var g in lost.Where(x => x.Value.Verdict == LostFaces.Verdict.Face).GroupBy(x => FeatureOf(part.Surfaces[Math.Max(x.Key, x.Value.By)])))
+        {
+            var (id, r) = g.MaxBy(x => x.Value.Margin);
+            diagnostics.Add(new Diagnostic(Diagnostic.BelowResolution, g.Key,
+                $"{part.Surfaces[id].Source} bounds the part over a patch {2 * r.Margin:G3} mm across near ({r.At.X:F2}, {r.At.Y:F2}, {r.At.Z:F2}) that the cells lose, below the resolved size of {smallest:G4} mm"));
+        }
+        unresolved = diagnostics.Select(d => d.FeatureId).ToHashSet();
+
+        var present = topology.Faces.SelectMany(f => f.Sources).ToHashSet();
         // An offset or a combine moves or merges faces that keep their names; it has none of its own to look for.
         foreach (var feature in document.Features.Where(f => f is not (Fillet or Offset or CombineBodies) && !unresolved.Contains(f.Id)))
-            if (!part.Surfaces.Any(s => s.Source.StartsWith(feature.Id + "/") && present.Contains(s.Source)))
-                diagnostics.Add(new Diagnostic(Diagnostic.NoEffect, feature.Id, $"{feature.Id} does not touch the part"));
+        {
+            var own = part.Surfaces.Where(s => s.Source.StartsWith(feature.Id + "/")).ToList();
+            if (own.Any(s => present.Contains(s.Source))) continue;
+            // Nothing of it in the mesh: no effect only where the search proved it changes the part by less than the tolerance.
+            diagnostics.Add(own.All(s => lost.GetValueOrDefault(s.Id).Verdict == LostFaces.Verdict.None)
+                ? new Diagnostic(Diagnostic.NoEffect, feature.Id, $"{feature.Id} does not touch the part")
+                : new Diagnostic(Diagnostic.BelowResolution, feature.Id, $"{feature.Id} has no face the cells resolve, and its effect could not be shown to be below the tolerance; below the resolved size of {smallest:G4} mm"));
+        }
 
         return new FrepResult(diagnostics, topology, part, mesh, faceOfQuad, bodies);
+    }
+
+    /// <summary>
+    /// The search of <see cref="LostFaces"/> for every surface of a body that no polygon carries, nor any coincident
+    /// surface, by surface id; features that already have a diagnostic are left out.
+    /// </summary>
+    Dictionary<int, LostFaces.Result> Lost(CompiledPart part, List<(HashSet<int> Owners, IReadOnlyList<Surface> Oriented)> carried, HashSet<string?> settled)
+    {
+        var result = new Dictionary<int, LostFaces.Result>();
+        var pad = new Vector3D(1, 1, 1) * (10 * Settings.Tolerance);
+        foreach (var (body, (owners, oriented)) in part.Bodies.Zip(carried))
+        {
+            var box = new Box3D(body.Min - pad, body.Max + pad);
+            foreach (var s in part.Surfaces)
+            {
+                if (owners.Contains(s.Id) || s.Kind is SurfaceKind.Fillet or SurfaceKind.Blend || settled.Contains(s.Source.Split('/')[0])) continue;
+                if (LostFaces.Find(body.Field, s.Id) is not { } path || owners.Any(o => oriented[o].SameGeometry(oriented[s.Id], Settings.Tolerance))) continue;
+                var r = LostFaces.Search(path, s, box, Settings.Tolerance);
+                // In several bodies: a face anywhere is a face, a doubt anywhere a doubt.
+                if (!result.TryGetValue(s.Id, out var known) || r.Verdict == LostFaces.Verdict.Face || known.Verdict == LostFaces.Verdict.None) result[s.Id] = r;
+            }
+        }
+        return result;
     }
 
     /// <summary>
