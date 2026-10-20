@@ -18,6 +18,7 @@ public sealed class OcctModeler(ModelingSettings settings) : IModeler
     {
         if (DocumentRules.FirstProblem(document, settings.Tolerance) is { } invalid)
             return new OcctResult([invalid], null, null);
+        document = Parametric.Resolve(document);
         if (document.Features.Count(DocumentRules.StartsBody) > 1 || document.Features.Any(f => f is CombineBodies || f.Body is not null))
             return new OcctResult([new Diagnostic(Diagnostic.BackendFailed, null, "multi-body parts are not supported by the OCCT baseline")], null, null);
 
