@@ -23,9 +23,10 @@ public class RobustnessReproTests
     /// A plane cut leaving a 25° wedge along the bottom edge: the topology is right but the mesh loses about 0.2 mm² of
     /// section per mm of edge (1% here), with nothing reported. Every wedge from about 14° to 25° does this at 0.5 mm cells;
     /// 30° and up are exact, 10° is reported. The thin-spot test in DualContouring.FindThin skips surfaces that meet
-    /// within four cells, assuming the cell vertices then reproduce the edge; below ~30° they do not.
+    /// within four cells, assuming the cell vertices then reproduce the edge; below ~30° they did not, as a vertex could
+    /// stray only half a cell. A vertex on a real edge may now go up to those four cells.
     /// </summary>
-    [Fact(Skip = Open)]
+    [Fact]
     public void Acute_wedge_keeps_its_volume()
     {
         var a = 25 * Math.PI / 180;
@@ -35,6 +36,34 @@ public class RobustnessReproTests
             new PlaneCut("cut", [0, 10, 0], [0, Math.Sin(a), Math.Cos(a)]),
         ]));
         var exact = 10 * 4 * (10 - 2 / Math.Tan(a));
+
+        var volume = MassProperties.Of(r.Part.Field!, r.Mesh!).Volume;
+
+        (Reported(r) || Math.Abs(volume - exact) < 1e-6 * exact).Should().BeTrue($"volume {volume} vs {exact}");
+    }
+
+    /// <summary>
+    /// The same along an edge oblique to the grid: the wedge's tip runs along the plate's diagonal into two corners. Up
+    /// to 40° this lost up to 5% silently; the tip now meets the side faces in corners, and a side face too thin for one
+    /// vertex is reported.
+    /// </summary>
+    [Theory]
+    [InlineData(10)]
+    [InlineData(14)]
+    [InlineData(20)]
+    [InlineData(30)]
+    [InlineData(40)]
+    public void Oblique_acute_wedge_keeps_its_volume(double degrees)
+    {
+        var a = degrees * Math.PI / 180;
+        var r = new FrepModeler(Settings).Regenerate(new PartDocument(
+        [
+            new Block("plate", BooleanOp.New, [0, 0, 0], [20, 20, 1]),
+            new PlaneCut("cut", [10, 10, 0], [Math.Sqrt(0.5) * Math.Sin(a), -Math.Sqrt(0.5) * Math.Sin(a), Math.Cos(a)]),
+        ]));
+        // Kept: z ≤ d·tan a over the half of the square at distance d from the diagonal, where chords are 20√2 − 2d long.
+        var d0 = 1 / Math.Tan(a);
+        var exact = 200 - 10 * Math.Sqrt(2) * d0 + d0 * d0 / 3;
 
         var volume = MassProperties.Of(r.Part.Field!, r.Mesh!).Volume;
 
@@ -61,10 +90,10 @@ public class RobustnessReproTests
 
     /// <summary>
     /// An oblique plane cut through a hole wall meets it in a thin wedge: the mesh gets non-manifold edges (four quads
-    /// on one edge) near (19.4, 10.5, 1) at every cell size, while the topology is right. One vertex per cell cannot
-    /// separate the two sheets of the wedge (DualContouring vertex placement).
+    /// on one edge) near (19.4, 10.5, 1) at every cell size, while the topology is right. One vertex per cell could not
+    /// separate the two sheets of the wedge; a cell cut into several pieces now gets a vertex per piece.
     /// </summary>
-    [Fact(Skip = Open)]
+    [Fact]
     public void Oblique_cut_through_a_hole_meshes_watertight()
     {
         var r = Regenerate("""
@@ -263,8 +292,8 @@ public class RobustnessReproTests
         r.Diagnostics.Should().NotContain(d => d.Code == Diagnostic.NoEffect);
     }
 
-    /// <summary>F-rep only: a half revolve with a D-shaped boss joined on its top meshes with open edges.</summary>
-    [Fact(Skip = Open)]
+    /// <summary>F-rep only: a half revolve with a D-shaped boss joined on its top: cells on the axis hold two sheets, which shared edges.</summary>
+    [Fact]
     public void Boss_on_a_half_revolve_meshes_watertight()
     {
         var r = Regenerate("""
@@ -277,8 +306,8 @@ public class RobustnessReproTests
         (Reported(r) || r.Mesh!.IsWatertight()).Should().BeTrue();
     }
 
-    /// <summary>F-rep only: a blended block joined against the side of a 270° revolve meshes with open edges.</summary>
-    [Fact(Skip = Open)]
+    /// <summary>F-rep only: a blended block joined against the side of a 270° revolve: cells holding two sheets of the blend shared edges.</summary>
+    [Fact]
     public void Blended_block_on_a_partial_revolve_meshes_watertight()
     {
         var r = Regenerate("""
