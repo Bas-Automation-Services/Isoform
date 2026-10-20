@@ -144,7 +144,7 @@ and closed-source applications can still be built on top. Consequences for the s
 
 ## 10. Still open
 
-- Direction after the spike (section 11): build the product on OCCT, or keep F-rep in a supporting role.
+- Own exact B-rep output from the CSG tree (replacing OCCT for STEP): candidate spike 3.
 
 ## 11. Results (2026-10-20)
 
@@ -176,3 +176,31 @@ Default settings: tolerance 1e-7 mm, cell size 0.5 mm. Core: 27 tests, OCCT base
 By section 9, H2 equal means **pivot: build on OCCT B-rep and keep the reference + versioning layer.**
 Everything backend-neutral carries over unchanged: `Isoform.Document` (canonical format, hash, edits),
 the `Isoform.Modeling` API (topology, references, diagnostics), the edit suite, and the comparison harness.
+
+## 12. Direction after spike 1 (agreed 2026-10-20)
+
+Keep the F-rep core, for what B-rep cannot do. The longer-term product shape (brainstormed, not yet planned):
+
+- **Design model (F-rep):** envelope, free-form blends, keep-outs, clearances, fields, and exact interfaces.
+- **Sections with a build method:** machined, ribs / plates, frame / profiles, 3D printed, sheet metal, panels.
+  Methods are modules behind one interface; the user or the AI assigns them per section.
+- **Parts are exact:** plates, beams and machined solids are simple enough to output exactly (B-rep, DXF);
+  printed parts go out as mesh / 3MF.
+- **Verification loop:** the rationalized assembly is rebuilt as F-rep and compared with the design model.
+
+Build methods come **after** a solid kernel. OCCT is only a test oracle from now on, never part of the core.
+
+## 13. Kernel roadmap
+
+| | Component | Measured by |
+|---|---|---|
+| K1 | Guarantees: 1-Lipschitz fields (distance never overestimated) and interval bounds of the field over a box | Property tests over random points and boxes: zero violations |
+| K2 | Fast evaluation: tree compiled to a flat instruction list, batched, multithreaded, interval pruning | Points / second; regeneration time. Targets set after the first measurements |
+| K3 | Adaptive, certified meshing and topology: octree near the surface only; no feature above a set size missed, smaller ones reported | Torture parts with thin walls and small holes |
+| K4 | Breadth: 2D sketches → extrude / revolve, sphere / cone / torus, transforms, patterns, chamfer, smooth blend, shell / offset | Every operation passes the K1 property tests and the edit-suite principle |
+| K5 | Queries: distance, closest point, ray hit, clearance, minimum wall, mass properties | Agreement with analytic answers |
+| K6 | Exact boundary extraction for analytic faces → own B-rep / STEP | OCCT reads it back valid; edges and vertices within 1e-7 of OCCT's |
+| K7 | Robustness torture suite against OCCT | Zero failures; OCCT's failure rate recorded |
+
+Order: K1 → K2 → K3 → K4 → K5 → K6 → K7. The spike-1 reference layer, document format and edit suite stay;
+every new operation must keep the edit suite green.

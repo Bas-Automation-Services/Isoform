@@ -1,3 +1,4 @@
+using BasAutomation.Geometry;
 using Isoform.Geometry;
 using Isoform.Meshing;
 
@@ -40,7 +41,7 @@ public static class TopologyBuilder
                     faces.Union(list[0], list[i]);
             }
 
-        var bodyIndex = Number(quads.Count, bodies);
+        var bodyIndex = Bodies(mesh, bodies, out var bodyCount);
         var faceIndex = Number(quads.Count, faces);
         var faceOfQuad = Enumerable.Range(0, quads.Count).Select(q => faceIndex[faces.Find(q)]).ToArray();
 
@@ -98,7 +99,46 @@ public static class TopologyBuilder
             .Select(g => new TopoVertex(g.Key, g.SelectMany(x => x.Faces).Distinct().Order().ToList()))
             .ToList();
 
-        return new Result(new Topology(topoFaces, topoEdges, topoVertices, bodyIndex.Count), faceOfQuad);
+        return new Result(new Topology(topoFaces, topoEdges, topoVertices, bodyCount), faceOfQuad);
+    }
+
+    /// <summary>
+    /// Surface components with positive enclosed volume are bodies; negative ones are voids (a shell's cavity)
+    /// and belong to the smallest body whose bounds contain them.
+    /// </summary>
+    static Dictionary<int, int> Bodies(Mesh mesh, UnionFind components, out int bodyCount)
+    {
+        var volume = new Dictionary<int, double>();
+        var lo = new Dictionary<int, Point3D>();
+        var hi = new Dictionary<int, Point3D>();
+        var v = mesh.Vertices;
+        for (var q = 0; q < mesh.Quads.Count; q++)
+        {
+            var root = components.Find(q);
+            var quad = mesh.Quads[q];
+            var (a, b, c, d) = (v[quad.A].AsVector(), v[quad.B].AsVector(), v[quad.C].AsVector(), v[quad.D].AsVector());
+            volume[root] = volume.GetValueOrDefault(root) + (a.Dot(b.Cross(c)) + a.Dot(c.Cross(d))) / 6;
+            foreach (var p in new[] { v[quad.A], v[quad.B], v[quad.C], v[quad.D] })
+            {
+                lo[root] = lo.TryGetValue(root, out var l) ? new(Math.Min(l.X, p.X), Math.Min(l.Y, p.Y), Math.Min(l.Z, p.Z)) : p;
+                hi[root] = hi.TryGetValue(root, out var h) ? new(Math.Max(h.X, p.X), Math.Max(h.Y, p.Y), Math.Max(h.Z, p.Z)) : p;
+            }
+        }
+
+        var roots = Number(mesh.Quads.Count, components).OrderBy(kv => kv.Value).Select(kv => kv.Key).ToList();
+        var index = new Dictionary<int, int>();
+        foreach (var r in roots.Where(r => volume[r] > 0)) index[r] = index.Count;
+        bodyCount = index.Count;
+        foreach (var r in roots.Where(r => volume[r] <= 0))
+        {
+            var host = index.Keys
+                .Where(b => lo[b].X <= lo[r].X && lo[b].Y <= lo[r].Y && lo[b].Z <= lo[r].Z && hi[b].X >= hi[r].X && hi[b].Y >= hi[r].Y && hi[b].Z >= hi[r].Z)
+                .OrderBy(b => volume[b])
+                .Cast<int?>()
+                .FirstOrDefault();
+            index[r] = host is { } h ? index[h] : index.Count; // an unenclosed inward surface would be an error upstream
+        }
+        return index;
     }
 
     static IEnumerable<(int, int)> Edges(Quad q)

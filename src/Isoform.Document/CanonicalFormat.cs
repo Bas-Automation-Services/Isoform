@@ -80,6 +80,10 @@ public static class CanonicalFormat
                 w.WriteEndArray();
                 Number(w, "radius", fl.Radius);
                 break;
+            case Shell sh:
+                w.WriteString("type", "shell");
+                Number(w, "thickness", sh.Thickness);
+                break;
             default:
                 throw new NotSupportedException(f.GetType().Name);
         }
@@ -94,6 +98,7 @@ public static class CanonicalFormat
             "block" => new Block(id, Enum.Parse<BooleanOp>((string)n["op"]!, ignoreCase: true), Arr(n["origin"], 3), Arr(n["size"], 3)),
             "hole" => new Hole(id, Arr(n["center"], 2), (double)n["diameter"]!),
             "plane-cut" => new PlaneCut(id, Arr(n["point"], 3), Arr(n["normal"], 3)),
+            "shell" => new Shell(id, (double)n["thickness"]!),
             "fillet" => new Fillet(id, n["edge"]!.AsArray().Select(e => (string)e!).ToArray(), (double)n["radius"]!),
             var t => throw new FormatException($"Unknown feature type '{t}'."),
         };

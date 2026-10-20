@@ -16,6 +16,7 @@ public static class DocumentRules
                 Block b when b.Size.Any(s => s <= tolerance) => $"block size must be positive, got [{string.Join(", ", b.Size)}]",
                 Hole h when h.Diameter <= tolerance => $"hole diameter must be positive, got {h.Diameter}",
                 PlaneCut c when Math.Sqrt(c.Normal.Sum(x => x * x)) <= tolerance => "plane-cut normal must not be zero",
+                Shell sh when sh.Thickness <= tolerance => $"shell thickness must be positive, got {sh.Thickness}",
                 Fillet f when f.Radius <= tolerance => $"fillet radius must be positive, got {f.Radius}",
                 Fillet f when f.Edge.Length != 2 => "a fillet edge names exactly two source faces",
                 _ when i == 0 && feature is not Block { Op: BooleanOp.New } => "the first feature must be a new block",

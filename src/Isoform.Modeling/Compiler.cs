@@ -68,6 +68,10 @@ public sealed class Compiler(ModelingSettings settings)
                     tree = new MaxField([tree!, new LeafField(plane)]);
                     break;
 
+                case Shell sh:
+                    tree = ShellOf(sh, FieldAlgebra.Normalize(tree!), Add);
+                    break;
+
                 case Fillet f:
                     var fillet = Add($"{f.Id}/face", SurfaceKind.Fillet, new Point3D(0, 0, 0), new Vector3D(0, 0, 1), f.Radius);
                     tree = ApplyFillet(f, fillet, FieldAlgebra.Normalize(tree!), surfaces, min, max, diagnostics);
@@ -76,6 +80,33 @@ public sealed class Compiler(ModelingSettings settings)
         }
 
         return new CompiledPart(FieldAlgebra.Normalize(tree!), surfaces, min, max, diagnostics);
+    }
+
+    /// <summary>
+    /// Inner surfaces get real geometry where it exists: an offset plane is a plane, an offset hole wall a larger
+    /// cylinder. So coplanar outer faces give one merged inner face, as on the outside.
+    /// </summary>
+    static ShellField ShellOf(Shell sh, Field tree, Func<string, SurfaceKind, Point3D, Vector3D, double, Surface> add)
+    {
+        var t = sh.Thickness;
+        var innerOf = new Dictionary<int, int>();
+        foreach (var node in FieldAlgebra.Descendants(tree))
+        {
+            if (node is LeafField leaf && !innerOf.ContainsKey(leaf.Surface.Id))
+            {
+                var s = leaf.Surface;
+                var outward = leaf.Complement ? -1.0 : 1.0;
+                var inner = s.Kind == SurfaceKind.Plane
+                    ? add($"{sh.Id}/inner:{s.Source}", SurfaceKind.Plane, s.Origin - s.Axis * (outward * t), s.Axis * -outward, 0)
+                    : add($"{sh.Id}/inner:{s.Source}", SurfaceKind.Cylinder, s.Origin, s.Axis, s.Radius - outward * t);
+                innerOf[s.Id] = inner.Id;
+            }
+            else if (node is RoundedEdgeField r && !innerOf.ContainsKey(r.Fillet.Id))
+            {
+                innerOf[r.Fillet.Id] = add($"{sh.Id}/inner:{r.Fillet.Source}", SurfaceKind.Fillet, r.Fillet.Origin, r.Fillet.Axis, r.Radius - t).Id;
+            }
+        }
+        return new ShellField(tree, t, innerOf);
     }
 
     static Field BlockField(Block b, Func<string, SurfaceKind, Point3D, Vector3D, double, Surface> add)
