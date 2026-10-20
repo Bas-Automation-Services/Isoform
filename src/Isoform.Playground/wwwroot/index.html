@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Isoform Playground</title>
   <link rel="stylesheet" href="playground.css">
+  <link rel="stylesheet" href="agent.css">
   <!-- three r0.160.0, vendored (MIT, vendor/three/LICENSE): pinned, and the page works offline. -->
   <script type="importmap">
     {
@@ -56,6 +57,10 @@
     <div id="selection" class="selection" hidden></div>
     <div id="references" class="references"></div>
     <ul id="diagnostics" class="diagnostics"></ul>
+
+    <!-- Agent view and document history (js/panels/agent.js, history.js; agent.css) -->
+    <section id="agent"></section>
+    <section id="history"></section>
   </aside>
 
   <main id="view">

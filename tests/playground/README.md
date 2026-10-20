@@ -13,8 +13,7 @@ node tests/playground/run.mjs path/to/wwwroot      # or any other published wwwr
 The parts on their own:
 
 ```sh
-node --test tests/playground/kernel-client.test.mjs tests/playground/store.test.mjs tests/playground/diagnose.test.mjs \
-  tests/playground/references.test.mjs   # front end only
+node --test tests/playground/{kernel-client,store,diagnose,references,diff,history}.test.mjs   # front end only, no publish
 node --test tests/playground/kernel.test.mjs       # kernel only; ISOFORM_PLAYGROUND=<wwwroot> to point elsewhere
 node tests/playground/e2e.mjs [wwwroot]            # browser only
 node tests/playground/serve.mjs [wwwroot] [port]   # serve the page to look at it yourself (default port 8137)
@@ -44,6 +43,15 @@ results grey out their below-resolution reports; the valid / N problems verdict.
 **`references.test.mjs`**: what a selection pins (an edge, a face by name, or by index when it is the face
 clicked), and the kernel's replies folded into the pins by id.
 
+**`diff.test.mjs`**: the line diff (`wwwroot/js/lib/diff.js`) accounts for both texts in order, is shortest (a moved
+line costs two), numbers lines in their own text; `hunks` keeps context around changes, `changedLines` gives the lines
+the editor flash lights.
+
+**`history.test.mjs`** drives `lib/history.js` and `lib/commit.js` over the real store and a fake kernel:
+`applyEdits` pushes one entry with its edits, label and origin and flashes the editor; edits that do not apply commit
+nothing and set `problem` and `rejected`; undo back to the start gives the identical hash, repeated undo keeps stepping,
+a commit after undo drops the redo entries; a typed entry gets its edits from the kernel diff.
+
 **`kernel.test.mjs`** loads `_framework/dotnet.js` from the published folder in Node and calls the same exports the
 page's worker calls. For every example from `Examples()`, at the page's default settings (0.5 mm cells, 0.05 mm chord):
 
@@ -67,6 +75,9 @@ and flies the camera there (`out/screenshots/diagnostics.png`); "Resolve at 0.25
 0.25 mm cells with the report gone and the verdict Valid; "back to 0.5 mm" brings it back; a fillet radius of 12 mm gives
 `fillet-invalid`, lights the edge it names and keeps the rest of the part. Then pins: `plate/z+` pinned on example 0
 (`window.isoform.pin`), a slot edited in across it, and the pin shows `split`, lit when clicked (`out/screenshots/pins.png`).
+Then the history on example 0: `applyEdits` commits one entry (agent view shows its hash and edit, the editor
+flashes), an edit that does not apply leaves the hash alone, undo returns the original hash and redo the edited one
+(`out/screenshots/history.png`).
 
 ## Screenshots
 
@@ -90,7 +101,9 @@ Coordinates are CSS pixels in the viewport. The page exposes `window.isoform`: `
 `document()`, `hash()`, `selection()` (face names), `faces()` (each face's names), `select(names)` and `edit(text)`
 (resolves once that text has regenerated); for diagnostics `diagnostics()` (as listed), `focusDiagnostic(index)`,
 `marked()` (the faces lit for the one in focus, with their colours), `cell()` (the cell the result was made at),
-`target()` (where the camera looks) and `resolve(cell)`; for reference pins `pins()` and `pin(name | [a, b])` (resolves to the pin). Later tasks add to it, for example handles:
+`target()` (where the camera looks) and `resolve(cell)`; for reference pins `pins()` and `pin(name | [a, b])` (resolves to the pin); for commits `applyEdits(edits, label, origin)`, `undo()`, `redo()` (each
+resolves to `{hash}`, `{error, failedEdit?}` or null) and `history()` (`{at, entries: [{hash, edits, label, origin}]}`).
+Later tasks add to it, for example handles:
 
 ```js
 const page = await browser.newPage();
