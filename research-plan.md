@@ -224,7 +224,10 @@ to `CellSize`. Polygons are dual to minimal edges, so the mesh has no cracks.
 
 - *Guarantee:* walls, gaps and holes of at least 2 × `CellSize` are always resolved; smaller ones are either right
   or reported as `below-resolution` (holes, shells and fillets by size; thin walls and gaps by the mesher, which
-  looks for opposing surfaces through one finest cell that do not meet within four cells).
+  looks for opposing surfaces through one finest cell that do not meet within four cells). A surface no polygon
+  carries is searched for a patch of the part it still bounds (`LostFaces`: branch-and-bound on the margin by which it
+  decides every ∩/∪ on its path); a patch wider than `Tolerance` is reported, and `no-effect` needs a proof that none
+  exists. Faces coincident within `Tolerance` (cut faces oriented as the part sees them) are one face.
 - *Torture suite* (236 cases at 0.5 mm cells: pocket walls in x/y/z, a hole beside a 30°/45° face, two holes, slot
   gaps, small holes, thin plates; 0.2–3 cells; four grid alignments): all 87 cases ≥ 2 cells exact (faces, edges,
   vertices, one body, watertight) with nothing reported. Below 2 cells: 91 correct, 58 wrong but reported, 0 silent.
