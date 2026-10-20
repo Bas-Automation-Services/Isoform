@@ -49,6 +49,28 @@ public sealed record Extrude(string Id, BooleanOp Op, SketchPlane Plane, Profile
 /// </summary>
 public sealed record Revolve(string Id, BooleanOp Op, SketchPlane Plane, Profile Profile, double Angle = 360) : Feature(Id);
 
+/// <summary>How a pattern places its copies.</summary>
+public abstract record PatternMotion;
+
+/// <summary><paramref name="Count"/> instances in all, <paramref name="Spacing"/> mm apart along <paramref name="Direction"/>.</summary>
+public sealed record LinearMotion(double[] Direction, double Spacing, int Count) : PatternMotion;
+
+/// <summary>
+/// <paramref name="Count"/> instances in all round an axis. A full 360° spreads them evenly; a smaller
+/// <paramref name="Angle"/> puts the last one at that angle.
+/// </summary>
+public sealed record CircularMotion(double[] Origin, double[] Axis, int Count, double Angle = 360) : PatternMotion;
+
+/// <summary>One mirrored copy in the plane through <paramref name="Point"/> with <paramref name="Normal"/>.</summary>
+public sealed record MirrorMotion(double[] Point, double[] Normal) : PatternMotion;
+
+/// <summary>
+/// Copies of earlier features (blocks, holes, plane cuts, extrudes, revolves), applied at the pattern's place in the
+/// history. Copy k of source <c>hole/wall</c> is named <c>id/k:hole/wall</c>, so copies keep their names when the
+/// count grows.
+/// </summary>
+public sealed record Pattern(string Id, string[] Features, PatternMotion Motion) : Feature(Id);
+
 /// <summary>The stored model: the only thing that is versioned. Geometry is always regenerated from it.</summary>
 public sealed record PartDocument(IReadOnlyList<Feature> Features)
 {

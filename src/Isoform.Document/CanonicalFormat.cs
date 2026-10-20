@@ -92,6 +92,34 @@ public static class CanonicalFormat
                 Number(w, "start", e.Start);
                 Number(w, "end", e.End);
                 break;
+            case Pattern p:
+                w.WriteString("type", "pattern");
+                w.WriteStartArray("features");
+                foreach (var id in p.Features) w.WriteStringValue(id);
+                w.WriteEndArray();
+                switch (p.Motion)
+                {
+                    case LinearMotion l:
+                        w.WriteStartObject("linear");
+                        Numbers(w, "direction", l.Direction);
+                        Number(w, "spacing", l.Spacing);
+                        w.WriteNumber("count", l.Count);
+                        break;
+                    case CircularMotion c:
+                        w.WriteStartObject("circular");
+                        Numbers(w, "origin", c.Origin);
+                        Numbers(w, "axis", c.Axis);
+                        w.WriteNumber("count", c.Count);
+                        Number(w, "angle", c.Angle);
+                        break;
+                    case MirrorMotion m:
+                        w.WriteStartObject("mirror");
+                        Numbers(w, "point", m.Point);
+                        Numbers(w, "normal", m.Normal);
+                        break;
+                }
+                w.WriteEndObject();
+                break;
             case Revolve r:
                 w.WriteString("type", "revolve");
                 w.WriteString("op", r.Op.ToString().ToLowerInvariant());
@@ -117,9 +145,16 @@ public static class CanonicalFormat
             "fillet" => new Fillet(id, n["edge"]!.AsArray().Select(e => (string)e!).ToArray(), (double)n["radius"]!),
             "extrude" => new Extrude(id, Op(n), ReadPlane(n["plane"]!), ReadProfile(n["profile"]!), (double)n["start"]!, (double)n["end"]!),
             "revolve" => new Revolve(id, Op(n), ReadPlane(n["plane"]!), ReadProfile(n["profile"]!), (double)n["angle"]!),
+            "pattern" => new Pattern(id, n["features"]!.AsArray().Select(f => (string)f!).ToArray(), ReadMotion(n)),
             var t => throw new FormatException($"Unknown feature type '{t}'."),
         };
     }
+
+    static PatternMotion ReadMotion(JsonNode n) =>
+        n["linear"] is { } l ? new LinearMotion(Arr(l["direction"], 3), (double)l["spacing"]!, (int)l["count"]!)
+        : n["circular"] is { } c ? new CircularMotion(Arr(c["origin"], 3), Arr(c["axis"], 3), (int)c["count"]!, (double)c["angle"]!)
+        : n["mirror"] is { } m ? new MirrorMotion(Arr(m["point"], 3), Arr(m["normal"], 3))
+        : throw new FormatException("A pattern needs a linear, circular or mirror motion.");
 
     static BooleanOp Op(JsonNode n) => Enum.Parse<BooleanOp>((string)n["op"]!, ignoreCase: true);
 

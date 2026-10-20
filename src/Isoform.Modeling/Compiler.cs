@@ -57,37 +57,57 @@ public sealed class Compiler(ModelingSettings settings)
         if (DocumentRules.FirstProblem(doc, _tol) is { } invalid)
             return new CompiledPart(null, surfaces, min, max, [invalid]);
 
-        foreach (var feature in doc.Features)
+        // A solid-making feature placed by a rigid motion. Pattern copies rename their surfaces, join where the
+        // original starts the body, and report as the pattern.
+        void Place(Feature feature, Frame m, Func<string, string> name, string reportAs)
         {
+            Surface Named(Surface s) => Register(s with { Source = name(s.Source) });
+            BooleanOp Op(BooleanOp op) => op == BooleanOp.New && tree is not null ? BooleanOp.Join : op;
             switch (feature)
             {
                 case Block b:
-                    var block = BlockField(b, Add);
-                    if (b.Op != BooleanOp.Cut) Grow([P(b.Origin), new Point3D(b.Origin[0] + b.Size[0], b.Origin[1] + b.Size[1], b.Origin[2] + b.Size[2])]);
-                    tree = Combine(b.Op, block);
+                    var (block, blockBox) = BlockField(b, m, Named);
+                    if (b.Op != BooleanOp.Cut) Grow(blockBox);
+                    tree = Combine(Op(b.Op), block);
                     break;
 
                 case Extrude e:
-                    var (extruded, extrudedBox) = ExtrudeField(e, Register);
+                    var (extruded, extrudedBox) = ExtrudeField(e, m, Named);
                     if (e.Op != BooleanOp.Cut) Grow(extrudedBox);
-                    tree = Combine(e.Op, extruded);
+                    tree = Combine(Op(e.Op), extruded);
                     break;
 
                 case Revolve r:
-                    var (revolved, revolvedBox) = RevolveField(r, Register);
+                    var (revolved, revolvedBox) = RevolveField(r, m, Named);
                     if (r.Op != BooleanOp.Cut) Grow(revolvedBox);
-                    tree = Combine(r.Op, revolved);
+                    tree = Combine(Op(r.Op), revolved);
                     break;
 
                 case Hole h:
-                    var wall = Add($"{h.Id}/wall", SurfaceKind.Cylinder, new Point3D(h.Center[0], h.Center[1], 0), new Vector3D(0, 0, 1), h.Diameter / 2);
-                    diagnostics.AddRange(TangentContacts(h.Id, wall, tree!, surfaces, min, max));
+                    var wall = Named(new Surface(0, $"{h.Id}/wall", SurfaceKind.Cylinder, m.ToWorld(new Point3D(h.Center[0], h.Center[1], 0)), m.ToWorld(new Vector3D(0, 0, 1)), h.Diameter / 2));
+                    diagnostics.AddRange(TangentContacts(reportAs, wall, tree!, surfaces, min, max));
                     tree = new MaxField([tree!, new LeafField(wall, complement: true)]);
                     break;
 
                 case PlaneCut c:
-                    var plane = Add($"{c.Id}/face", SurfaceKind.Plane, P(c.Point), V(c.Normal).Normalized());
+                    var plane = Named(new Surface(0, $"{c.Id}/face", SurfaceKind.Plane, m.ToWorld(P(c.Point)), m.ToWorld(V(c.Normal).Normalized())));
                     tree = new MaxField([tree!, new LeafField(plane)]);
+                    break;
+            }
+        }
+
+        foreach (var feature in doc.Features)
+        {
+            switch (feature)
+            {
+                case Pattern p:
+                    var copies = p.Motion is MirrorMotion ? 1 : p.Motion switch { LinearMotion l => l.Count, CircularMotion c => c.Count, _ => 1 } - 1;
+                    for (var k = 1; k <= copies; k++)
+                    {
+                        var motion = Motion(p.Motion, k);
+                        var copy = k;
+                        foreach (var id in p.Features) Place(doc[id], motion, s => $"{p.Id}/{copy}:{s}", p.Id);
+                    }
                     break;
 
                 case Shell sh:
@@ -97,6 +117,10 @@ public sealed class Compiler(ModelingSettings settings)
                 case Fillet f:
                     var fillet = Add($"{f.Id}/face", SurfaceKind.Fillet, new Point3D(0, 0, 0), new Vector3D(0, 0, 1), f.Radius);
                     tree = ApplyFillet(f, fillet, FieldAlgebra.Normalize(tree!), surfaces, min, max, diagnostics);
+                    break;
+
+                default:
+                    Place(feature, Frame.Identity, s => s, feature.Id);
                     break;
             }
         }
@@ -130,10 +154,35 @@ public sealed class Compiler(ModelingSettings settings)
         return new ShellField(tree, t, innerOf);
     }
 
-    /// <summary>The profile swept between two caps, and the corners of a box round it.</summary>
-    static (Field, Point3D[]) ExtrudeField(Extrude e, Func<Surface, Surface> register)
+    /// <summary>Copy k of a pattern: the motion applied k times.</summary>
+    static Frame Motion(PatternMotion motion, int k)
     {
-        var frame = Profiles.FrameOf(e.Plane);
+        switch (motion)
+        {
+            case LinearMotion l:
+                var step = V(l.Direction).Normalized() * (l.Spacing * k);
+                return Frame.Identity with { Origin = new Point3D(step.X, step.Y, step.Z) };
+            case CircularMotion c:
+                var angle = (c.Angle >= 360 ? c.Angle / c.Count : c.Angle / (c.Count - 1)) * k * Math.PI / 180;
+                var (o, axis) = (P(c.Origin), V(c.Axis).Normalized());
+                Vector3D Turn(Vector3D v) => v * Math.Cos(angle) + axis.Cross(v) * Math.Sin(angle) + axis * (axis.Dot(v) * (1 - Math.Cos(angle)));
+                // p ↦ o + R(p − o), written as a frame: origin o − R·o, axes R·e.
+                return new Frame(o - Turn(o.AsVector()), Turn(new(1, 0, 0)), Turn(new(0, 1, 0)), Turn(new(0, 0, 1)));
+            case MirrorMotion mirror:
+                var n = V(mirror.Normal).Normalized();
+                var d = n.Dot(P(mirror.Point).AsVector());
+                Vector3D Reflect(Vector3D v) => v - n * (2 * n.Dot(v));
+                var shift = n * (2 * d);
+                return new Frame(new Point3D(shift.X, shift.Y, shift.Z), Reflect(new(1, 0, 0)), Reflect(new(0, 1, 0)), Reflect(new(0, 0, 1)));
+            default:
+                throw new NotSupportedException(motion.GetType().Name);
+        }
+    }
+
+    /// <summary>The profile swept between two caps, and the corners of a box round it.</summary>
+    static (Field, Point3D[]) ExtrudeField(Extrude e, Frame placement, Func<Surface, Surface> register)
+    {
+        var frame = Profiles.FrameOf(e.Plane).Then(placement);
         var edges = Profiles.CounterClockwise(e.Profile);
         var leaves = edges.Select(x => ProfileField.EdgeLeaf(x.Edge, frame, revolve: false,
             (k, o, a, r, m, ang) => register(new Surface(0, $"{e.Id}/{x.Id}", k, o, a, r, m, ang)))).ToList();
@@ -148,17 +197,18 @@ public sealed class Compiler(ModelingSettings settings)
     }
 
     /// <summary>The profile revolved round the sketch's y axis, cut to the swept angle by two half-planes below 360°.</summary>
-    static (Field, Point3D[]) RevolveField(Revolve r, Func<Surface, Surface> register)
+    static (Field, Point3D[]) RevolveField(Revolve r, Frame placement, Func<Surface, Surface> register)
     {
-        var frame = Profiles.FrameOf(r.Plane);
+        var frame = Profiles.FrameOf(r.Plane).Then(placement);
         var edges = Profiles.CounterClockwise(r.Profile);
         var leaves = edges.Select(x => ProfileField.EdgeLeaf(x.Edge, frame, revolve: true,
             (k, o, a, rad, m, ang) => register(new Surface(0, $"{r.Id}/{x.Id}", k, o, a, rad, m, ang)))).ToList();
         Field field = new ProfileField(edges.Select(x => x.Edge).ToList(), leaves, frame, revolve: true);
         if (r.Angle < 360)
         {
-            // θ runs from the sketch's x (U) towards W = axis × U.
-            var (u, w) = (frame.X, frame.Y.Cross(frame.X));
+            // θ runs from the sketch's x (U) towards W = axis × U, which is −Z for a sketch frame. Taken from the frame
+            // itself, it stays right under a mirror, where a cross product would flip.
+            var (u, w) = (frame.X, -frame.Z);
             var phi = r.Angle * Math.PI / 180;
             var start = new LeafField(register(new Surface(0, $"{r.Id}/start", SurfaceKind.Plane, frame.Origin, -w)));
             var end = new LeafField(register(new Surface(0, $"{r.Id}/end", SurfaceKind.Plane, frame.Origin, u * -Math.Sin(phi) + w * Math.Cos(phi))));
@@ -174,19 +224,24 @@ public sealed class Compiler(ModelingSettings settings)
         return (field, ends.SelectMany(c => new[] { c - extent, c + extent }).ToArray());
     }
 
-    static Field BlockField(Block b, Func<string, SurfaceKind, Point3D, Vector3D, double, Surface> add)
+    static (Field, Point3D[]) BlockField(Block b, Frame m, Func<Surface, Surface> register)
     {
         var lo = P(b.Origin);
         var hi = new Point3D(lo.X + b.Size[0], lo.Y + b.Size[1], lo.Z + b.Size[2]);
-        return new MaxField(
+        LeafField Face(string name, Point3D at, Vector3D normal) =>
+            new(register(new Surface(0, $"{b.Id}/{name}", SurfaceKind.Plane, m.ToWorld(at), m.ToWorld(normal))));
+        var field = new MaxField(
         [
-            new LeafField(add($"{b.Id}/x-", SurfaceKind.Plane, lo, new Vector3D(-1, 0, 0), 0)),
-            new LeafField(add($"{b.Id}/x+", SurfaceKind.Plane, hi, new Vector3D(1, 0, 0), 0)),
-            new LeafField(add($"{b.Id}/y-", SurfaceKind.Plane, lo, new Vector3D(0, -1, 0), 0)),
-            new LeafField(add($"{b.Id}/y+", SurfaceKind.Plane, hi, new Vector3D(0, 1, 0), 0)),
-            new LeafField(add($"{b.Id}/z-", SurfaceKind.Plane, lo, new Vector3D(0, 0, -1), 0)),
-            new LeafField(add($"{b.Id}/z+", SurfaceKind.Plane, hi, new Vector3D(0, 0, 1), 0)),
+            Face("x-", lo, new Vector3D(-1, 0, 0)),
+            Face("x+", hi, new Vector3D(1, 0, 0)),
+            Face("y-", lo, new Vector3D(0, -1, 0)),
+            Face("y+", hi, new Vector3D(0, 1, 0)),
+            Face("z-", lo, new Vector3D(0, 0, -1)),
+            Face("z+", hi, new Vector3D(0, 0, 1)),
         ]);
+        var corners = from x in new[] { lo.X, hi.X } from y in new[] { lo.Y, hi.Y } from z in new[] { lo.Z, hi.Z }
+                      select m.ToWorld(new Point3D(x, y, z));
+        return (field, corners.ToArray());
     }
 
     /// <summary>A hole wall tangent to an existing planar face along a line the part actually touches.</summary>
