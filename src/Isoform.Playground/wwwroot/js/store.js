@@ -1,5 +1,6 @@
 // The single app state. Pure, so it is tested in Node. Panels and the viewer subscribe; nothing else keeps state that
 // outlives a regeneration.
+import { recorded } from './lib/history.js';
 //
 //   text       the document as edited (the result carries its canonical text)
 //   result     the last good regeneration (result v2 from adaptResult), or null
@@ -8,7 +9,9 @@
 //   regenerating  a regeneration has been asked for and not come back yet
 //   failure    an error of the page or a worker, shown until the next regeneration comes back
 //   selection  face names, not mesh indices: names stay stable across regenerations, indices do not
-//   history    {text, hash, origin} per committed document, oldest first: the hook for undo/redo
+//   history    {text, hash, edits, label, origin} per committed document, oldest first (lib/history.js)
+//   historyAt  the index in history of the document shown; undo/redo move it (lib/commit.js)
+//   rejected   the last edit list that did not apply: {edits, label, origin, problem, failedEdit?}, or null
 
 /** The name a document refers to a face by: its first source. */
 export const faceName = face => face[0];
@@ -31,7 +34,7 @@ export function pick(selection, name, extend = false) {
 export const surviving = (selection, result) => selection.filter(name => result.faces.some(face => faceName(face) === name));
 
 export function createStore(initial = {}) {
-  let state = { text: '', result: null, hash: null, problem: null, regenerating: false, failure: null, selection: [], history: [], ...initial };
+  let state = { text: '', result: null, hash: null, problem: null, regenerating: false, failure: null, selection: [], history: [], historyAt: -1, rejected: null, ...initial };
   const listeners = new Set();
 
   /** Replaces the given fields and tells every listener (state, previous state). */
@@ -53,16 +56,21 @@ export function createStore(initial = {}) {
 
     /**
      * A regeneration came back. A failure keeps the last good result and selection; a success keeps the selected
-     * names that still exist and adds a history entry (its canonical text) when the document changed.
+     * names that still exist and adds a history entry (its canonical text) when the document changed. intent says
+     * what was committed: {origin, edits, label}, or {restore: index} for undo/redo (lib/commit.js); a string is
+     * the origin.
      */
-    committed(result, origin = 'editor') {
+    committed(result, intent = {}) {
       if (result.error) {
         set({ problem: result.error, regenerating: false, failure: null });
         return;
       }
+      const { origin = 'editor', edits = null, label = null, restore } = typeof intent === 'string' ? { origin: intent } : intent;
       const { text, hash } = result;
-      const history = state.history.at(-1)?.hash === hash ? state.history : [...state.history, { text, hash, origin }];
-      set({ result, hash, problem: null, regenerating: false, failure: null, selection: surviving(state.selection, result), history });
+      set({
+        result, hash, problem: null, regenerating: false, failure: null, selection: surviving(state.selection, result),
+        ...recorded(state, { text, hash, edits, label, origin }, restore),
+      });
     },
   };
 }

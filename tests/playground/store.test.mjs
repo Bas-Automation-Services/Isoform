@@ -61,12 +61,21 @@ test('a failed regeneration keeps the last result and selection', () => {
   assert.equal(store.state.problem, null);
 });
 
-test('history: one entry per changed document, with its canonical text and hash', () => {
+test('history: one entry per changed document, with its canonical text, hash and what made it', () => {
   const store = createStore();
   store.committed(result('v1', 'a'));
   store.committed(result('v1', 'a'));
-  store.committed(result('v2', 'a'), 'drag');
-  assert.deepEqual(store.state.history, [{ text: 'v1', hash: 'hash of v1', origin: 'editor' }, { text: 'v2', hash: 'hash of v2', origin: 'drag' }]);
+  store.committed(result('v2', 'a'), { origin: 'handle', edits: [{ set: 'plate.size.0', value: 120 }], label: 'drag plate/x+' });
+  store.committed(result('v3', 'a'), 'drag');
+  assert.deepEqual(store.state.history, [
+    { text: 'v1', hash: 'hash of v1', edits: null, label: null, origin: 'editor' },
+    { text: 'v2', hash: 'hash of v2', edits: [{ set: 'plate.size.0', value: 120 }], label: 'drag plate/x+', origin: 'handle' },
+    { text: 'v3', hash: 'hash of v3', edits: null, label: null, origin: 'drag' },
+  ]);
+  assert.equal(store.state.historyAt, 2);
+  store.committed(result('v1', 'a'), { restore: 0 });
+  assert.equal(store.state.history.length, 3);
+  assert.equal(store.state.historyAt, 0);
 });
 
 test('subscribers get the new and the previous state', () => {

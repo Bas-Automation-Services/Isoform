@@ -6,6 +6,10 @@ import { createPicking } from './picking.js';
 import { createEditor } from './panels/editor.js';
 import { createDiagnostics } from './panels/diagnostics.js';
 import { createSelection } from './panels/selection.js';
+import { createCommits } from './lib/commit.js';
+import { createAgent } from './panels/agent.js';
+import { createHistory } from './panels/history.js';
+import { createFlash } from './panels/flash.js';
 
 const $ = id => document.getElementById(id);
 const store = createStore();
@@ -34,18 +38,29 @@ createPicking(viewer, store, $('tooltip'));
 createSelection(store, $('selection'));
 createDiagnostics(store, { stats: $('stats'), list: $('diagnostics'), workers: workers.length });
 
-/** Regenerates the document in the store; latest wins, so edits made meanwhile fold into one next run. */
-async function regenerate({ fit: refit = false } = {}) {
+/**
+ * Regenerates the document in the store; latest wins, so edits made meanwhile fold into one next run. The rest is
+ * the commit's intent for the history (store.committed). Resolves to the result, or null when overtaken.
+ */
+async function regenerate({ fit: refit = false, ...intent } = {}) {
   if (refit) fit = true;
   const text = store.state.text;
   store.set({ regenerating: true });
   const reply = await client.latest('regenerate', 'regenerate', { document: text, cell: +$('cell').value, chord: +$('chord').value });
-  if (reply) store.committed(adaptResult(reply.result, reply.ms));
+  if (!reply) return null;
+  const result = adaptResult(reply.result, reply.ms);
+  store.committed(result, intent);
+  return result;
 }
 
 const editor = createEditor(store, { editor: $('editor'), parse: $('parse'), examplesBox: $('examples'), regenerate });
 $('cell').addEventListener('change', () => regenerate());
 $('chord').addEventListener('change', () => regenerate());
+
+// Commits, history and the agent view (lib/commit.js): applyEdits is how panels change the document.
+const commits = createCommits(store, { call: client.call, regenerate, flash: createFlash($('editor')) });
+createAgent(store, $('agent'), commits);
+createHistory(store, $('history'), commits);
 
 // For the browser tests and the console: plain data out, a promise per regeneration.
 window.isoform = {
@@ -60,6 +75,16 @@ window.isoform = {
     return regenerate();
   },
 };
+
+// Commits for the tests and the console: each resolves, once regenerated, to {hash} or {error, failedEdit?}, or
+// null (nothing to undo, or overtaken).
+const outcome = r => r && (r.error ? { error: r.error, failedEdit: r.failedEdit } : { hash: r.hash });
+Object.assign(window.isoform, {
+  applyEdits: (edits, label, origin) => commits.applyEdits(edits, label, origin).then(outcome),
+  undo: () => commits.undo().then(outcome),
+  redo: () => commits.redo().then(outcome),
+  history: () => ({ at: store.state.historyAt, entries: store.state.history.map(({ hash, edits, label, origin }) => ({ hash, edits, label, origin })) }),
+});
 
 await client.start();
 editor.load((await client.call('examples')).result);

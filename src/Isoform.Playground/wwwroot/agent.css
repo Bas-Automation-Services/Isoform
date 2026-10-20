@@ -1,0 +1,58 @@
+/* The agent view, the history list and the editor flash (js/panels/agent.js, history.js, flash.js). */
+
+:root { --add: #1a7f37; --del: #b91c1c; --flash: rgba(47, 111, 219, 0.28); }
+@media (prefers-color-scheme: dark) {
+  :root { --add: #56d364; --del: #ff7a7a; --flash: rgba(110, 160, 255, 0.30); }
+}
+
+/* The editor's wrapper (flash.js) takes the editor's place in the panel. */
+.editor-wrap { position: relative; flex: 1; display: flex; min-height: 300px; overflow: hidden; border-radius: 6px; }
+.editor-wrap #editor { flex: 1; }
+.editor-flash { position: absolute; inset: 0; pointer-events: none; }
+.editor-flash div { position: absolute; left: 1px; right: 1px; background: var(--flash); opacity: 0; }
+.editor-flash.on div { animation: flash 1.8s ease-out; }
+@keyframes flash { 0%, 30% { opacity: 1; } 100% { opacity: 0; } }
+
+.agent, .history {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 8px 10px;
+  background: var(--code);
+}
+.agent:empty, .history:empty { display: none; }
+
+.agent-head, .history-head { display: flex; align-items: baseline; gap: 8px; }
+.agent-head .muted { margin-left: auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.agent-hash { display: block; margin-top: 4px; font: 12px ui-monospace, Consolas, monospace; }
+.agent-label { margin-top: 6px; color: var(--muted); font-size: 12px; }
+.agent pre {
+  margin: 2px 0 0;
+  max-height: 180px;
+  overflow: auto;
+  font: 11.5px/1.45 ui-monospace, "Cascadia Code", Consolas, monospace;
+  white-space: pre;
+}
+.agent .bad, .agent-problem { color: var(--error); }
+.agent-problem { margin-top: 4px; }
+.agent-diff .add { color: var(--add); }
+.agent-diff .del { color: var(--del); }
+.agent-diff .skip { color: var(--muted); }
+
+.history-head button {
+  font: inherit;
+  color: var(--accent);
+  background: none;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 1px 8px;
+  cursor: pointer;
+}
+.history-head b { margin-right: auto; }
+.history-head button:disabled { color: var(--muted); cursor: default; }
+.history ol { list-style: none; margin: 6px 0 0; padding: 0; max-height: 200px; overflow: auto; }
+.history li { display: flex; gap: 8px; padding: 1px 4px 1px 8px; border-radius: 4px; cursor: pointer; white-space: nowrap; }
+.history li:hover { background: var(--line); }
+.history li span:first-of-type { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.history li code { flex: none; font: 12px ui-monospace, Consolas, monospace; color: var(--accent); }
+.history li.current { font-weight: 600; box-shadow: inset 3px 0 var(--accent); }
+.history li.ahead { opacity: 0.5; }
