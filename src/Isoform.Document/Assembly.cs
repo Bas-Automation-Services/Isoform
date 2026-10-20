@@ -14,8 +14,12 @@ public sealed record Placement(double[] Origin, double[] X, double[] Normal)
 /// <remarks>
 /// With mates the placement is where solving starts; a <paramref name="Grounded"/> component stays put (the first
 /// one, if none is).
+/// <para><paramref name="Parameters"/> sets some of the part's parameters for this occurrence (name → expression,
+/// as in <see cref="PartDocument.Parameters"/>): one bolt document, several lengths. The pinned hash is still the
+/// stored part's, before these are applied.</para>
 /// </remarks>
-public sealed record Component(string Id, string Part, Placement Placement, string? Hash = null, bool Grounded = false);
+public sealed record Component(string Id, string Part, Placement Placement, string? Hash = null, bool Grounded = false,
+    IReadOnlyDictionary<string, string>? Parameters = null);
 
 /// <summary>
 /// How a mate holds two faces: <see cref="Mate"/> puts flat faces against each other (normals opposite, gap
