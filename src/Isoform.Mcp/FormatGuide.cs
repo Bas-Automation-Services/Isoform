@@ -79,6 +79,15 @@ public static class FormatGuide
         """{"remove": "rib"}""",
     ];
 
+    /// <summary>Edits shown in the guide, valid on <see cref="BundleExample"/>: its assembly's, and one of its parts.</summary>
+    public static IReadOnlyList<string> AssemblyEditExamples { get; } =
+    [
+        """{"set": "components.pin.parameters.length", "value": 30}""",
+        """{"set": "mates.stop.offset", "value": 2}""",
+        """{"remove": "mates.stop"}""",
+        """{"document": "bracket.json", "set": "hole.diameter", "value": 10.5}""",
+    ];
+
     /// <summary>The part the edit examples apply to, with parameters: the plate's width and the bore follow <c>width</c>.</summary>
     public static PartDocument EditTarget { get; } = new([Plate, Bore, Rib, new Pattern("row", ["hole"], new LinearMotion([1, 0, 0], 20, 3))])
     {
@@ -164,6 +173,12 @@ public static class FormatGuide
         s.AppendLine("\"=expression\". parameters.<name> sets (or removes) a parameter. insert adds a feature before an id (appended");
         s.AppendLine("without before). remove deletes a feature by id. On the document above these are valid edits:");
         foreach (var e in EditExamples) s.AppendLine("- " + e);
+        s.AppendLine("An assembly takes the same edits on components.<id>.<field> and mates.<id>.<field>; insert adds a component (it");
+        s.AppendLine("has a part) or a mate (it has a kind); remove takes components.<id> or mates.<id>. In a bundle an edit changes the");
+        s.AppendLine("assembly, or with \"document\": \"<path>\" that part; set \"\" with a document adds or replaces it whole, remove \"\"");
+        s.AppendLine("drops it. On the bundle under Assemblies these are valid:");
+        foreach (var e in AssemblyEditExamples) s.AppendLine("- " + e);
+        s.AppendLine("Edits apply all or nothing: one that cannot be applied is an error naming it (edit 2 {...}: why).");
         s.AppendLine();
         s.AppendLine("## Assemblies (assembly tool)");
         s.AppendLine($"An assembly ({AssemblyDocument.FormatVersion}) places parts by path; placement is origin, x and normal (z) of the part's frame.");

@@ -129,11 +129,40 @@ public class ToolTests
     }
 
     [Fact]
-    public void An_edit_on_a_missing_feature_is_a_tool_error()
+    public void A_failing_edit_is_a_tool_error_naming_it_and_nothing_is_written()
     {
-        var edit = () => IsoformTools.ApplyEdits(Doc(Plate), Edits("""{"set": "hole.diameter", "value": 12}"""));
+        var path = Temp("edited.json");
+        var edit = () => IsoformTools.ApplyEdits(Doc(Plate), Edits("""{"set": "plate.size.2", "value": 12}""", """{"set": "hole.diameter", "value": 12}"""), outputPath: path);
 
-        edit.Should().Throw<McpException>().WithMessage("*feature id*");
+        edit.Should().Throw<McpException>().WithMessage("edit 2 *'hole' is not a feature id*");
+        File.Exists(path).Should().BeFalse();
+    }
+
+    [Fact]
+    public void Edits_on_a_bundle_change_its_assembly_and_its_parts()
+    {
+        var r = Parse(IsoformTools.ApplyEdits(CanonicalFormat.Write(FormatGuide.BundleExample), Edits(
+            """{"remove": "mates.stop"}""",
+            """{"document": "bracket.json", "set": "hole.diameter", "value": 10.5}""")));
+
+        var bundle = CanonicalFormat.ReadBundle(r["document"]!.ToJsonString());
+        bundle.Assembly.Mates.Should().ContainSingle();
+        ((Hole)CanonicalFormat.Read(bundle.Documents["bracket.json"])["hole"]).Diameter.Should().Be(10.5);
+        r["result"]!["ok"]!.GetValue<bool>().Should().BeTrue();
+        r["result"]!["freeDegrees"]!.GetValue<int>().Should().Be(2, "without its stop the pin slides as well as turns");
+        r["references"].Should().BeNull("face stability is a part's");
+    }
+
+    [Fact]
+    public void Edits_on_an_assembly_file_regenerate_it_with_the_parts_beside_it()
+    {
+        var path = AssemblyFolder();
+
+        var r = Parse(IsoformTools.ApplyEdits(path, Edits("""{"set": "components.pin.parameters.length", "value": 30}""")));
+
+        CanonicalFormat.ReadAssembly(r["document"]!.ToJsonString()).Components[1].Parameters!["length"].Should().Be("30");
+        r["result"]!["ok"]!.GetValue<bool>().Should().BeTrue();
+        r["result"]!["instances"]!.GetValue<int>().Should().Be(2);
     }
 
     // ---- query ----
@@ -223,6 +252,21 @@ public class ToolTests
         text["step"]!.GetValue<string>().Should().Contain("MANIFOLD_SOLID_BREP");
     }
 
+    [Fact]
+    public void Export_writes_a_bundle_or_assembly_file_as_placed_parts()
+    {
+        var bundle = Parse(IsoformTools.ExportStep(CanonicalFormat.Write(FormatGuide.BundleExample)));
+        var file = Parse(IsoformTools.ExportStep(AssemblyFolder(), name: "bracket-and-pin"));
+        var text = () => IsoformTools.ExportStep(CanonicalFormat.Write(FormatGuide.AssemblyExample));
+
+        bundle["ok"]!.GetValue<bool>().Should().BeTrue(bundle.ToJsonString());
+        bundle["instances"]!.GetValue<int>().Should().Be(2);
+        bundle["parts"]!.GetValue<int>().Should().Be(2);
+        bundle["step"]!.GetValue<string>().Should().Contain("NEXT_ASSEMBLY_USAGE_OCCURRENCE('pin'");
+        file["step"]!.GetValue<string>().Should().Contain("'bracket-and-pin'");
+        text.Should().Throw<McpException>().WithMessage("*no folder*");
+    }
+
     // ---- assembly ----
 
     [Fact]
@@ -245,15 +289,20 @@ public class ToolTests
     [Fact]
     public void An_assembly_file_finds_its_parts_next_to_it()
     {
-        var folder = Directory.CreateTempSubdirectory("isoform-mcp-").FullName;
-        foreach (var (name, text) in FormatGuide.BundleExample.Documents) File.WriteAllText(Path.Combine(folder, name), text);
-        var path = Path.Combine(folder, "assembly.json");
-        File.WriteAllText(path, CanonicalFormat.Write(FormatGuide.AssemblyExample));
-
-        var r = Parse(IsoformTools.Assembly(path, clearances: false));
+        var r = Parse(IsoformTools.Assembly(AssemblyFolder(), clearances: false));
 
         r["ok"]!.GetValue<bool>().Should().BeTrue();
         r["instances"]!.AsArray().Should().HaveCount(2);
         r["clearances"].Should().BeNull();
+    }
+
+    /// <summary>The example assembly written as files: its parts, and the assembly beside them, whose path this is.</summary>
+    static string AssemblyFolder()
+    {
+        var folder = Directory.CreateTempSubdirectory("isoform-mcp-").FullName;
+        foreach (var (name, text) in FormatGuide.BundleExample.Documents) File.WriteAllText(Path.Combine(folder, name), text);
+        var path = Path.Combine(folder, "assembly.json");
+        File.WriteAllText(path, CanonicalFormat.Write(FormatGuide.AssemblyExample));
+        return path;
     }
 }
