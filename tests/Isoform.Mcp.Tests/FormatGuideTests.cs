@@ -46,6 +46,18 @@ public class FormatGuideTests
     }
 
     [Fact]
+    public void The_parametric_example_follows_its_parameters()
+    {
+        var doc = CanonicalFormat.Write(FormatGuide.EditTarget);
+        var wider = JsonNode.Parse(IsoformTools.ApplyEdits(doc, [JsonDocument.Parse("""{"set": "parameters.width", "value": 120}""").RootElement]))!;
+
+        JsonNode.Parse(IsoformTools.Regenerate(doc))!["box"]!["max"]![0]!.GetValue<double>().Should().Be(100);
+        wider["result"]!["box"]!["max"]![0]!.GetValue<double>().Should().Be(120);
+        wider["references"]!["gone"]!.AsArray().Should().BeEmpty("names never depend on parameters");
+        ((string)wider["document"]!["features"]![1]!["diameter"]!).Should().Be("=bore", "the expression is the design intent and stays");
+    }
+
+    [Fact]
     public void The_text_shows_every_type_every_diagnostic_code_and_valid_documents()
     {
         var text = IsoformTools.DescribeFormat();

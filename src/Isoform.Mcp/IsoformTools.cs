@@ -54,7 +54,8 @@ public static class IsoformTools
     [Description("Applies edits to a part and returns the new document (compact JSON, same content and hash as the canonical " +
                  "text), its hash, a regeneration summary and reference stability: which face names appeared, disappeared or " +
                  "changed (split, merged) against the old document. " +
-                 "Edits: {\"set\": \"hole.diameter\", \"value\": 12}, {\"insert\": {feature}, \"before\": \"fillet\"}, {\"remove\": \"slot\"}.")]
+                 "Edits: {\"set\": \"hole.diameter\", \"value\": 12}, {\"set\": \"parameters.width\", \"value\": 120}, " +
+                 "{\"insert\": {feature}, \"before\": \"fillet\"}, {\"remove\": \"slot\"}.")]
     public static string ApplyEdits(
         [Description(DocumentHelp)] string document,
         [Description("Edits applied in order. set: \"<featureId>.<field>[.<field or index>...]\" with a JSON value; " +

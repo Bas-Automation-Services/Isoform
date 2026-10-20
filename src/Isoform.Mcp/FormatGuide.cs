@@ -70,6 +70,8 @@ public static class FormatGuide
     /// <summary>Edits shown in the guide, valid on <see cref="EditTarget"/>.</summary>
     public static IReadOnlyList<string> EditExamples { get; } =
     [
+        """{"set": "parameters.width", "value": 120}""",
+        """{"set": "hole.diameter", "value": "=width / 8"}""",
         """{"set": "hole.diameter", "value": 12}""",
         """{"set": "rib.profile.edges.1.to", "value": [40, 20]}""",
         """{"set": "row.linear.count", "value": 4}""",
@@ -77,26 +79,34 @@ public static class FormatGuide
         """{"remove": "rib"}""",
     ];
 
-    /// <summary>The part the edit examples apply to.</summary>
-    public static PartDocument EditTarget { get; } = new([Plate, Bore, Rib, new Pattern("row", ["hole"], new LinearMotion([1, 0, 0], 20, 3))]);
+    /// <summary>The part the edit examples apply to, with parameters: the plate's width and the bore follow <c>width</c>.</summary>
+    public static PartDocument EditTarget { get; } = new([Plate, Bore, Rib, new Pattern("row", ["hole"], new LinearMotion([1, 0, 0], 20, 3))])
+    {
+        Parameters = new Dictionary<string, string> { ["width"] = "100", ["bore"] = "width / 10" },
+        Expressions = new Dictionary<string, string> { ["plate.size.0"] = "width", ["hole.diameter"] = "bore" },
+    };
 
-    /// <summary>A small assembly: a bracket and a pin standing in its bore.</summary>
+    /// <summary>A small assembly: a bracket and a pin standing in its bore, made 25 long by a parameter.</summary>
     public static AssemblyDocument AssemblyExample { get; } = new(
     [
         new Component("base", "bracket.json", Placement.Identity, Grounded: true),
-        new Component("pin", "pin.json", new Placement([30, 25, -5], [1, 0, 0], [0, 0, 1])),
+        new Component("pin", "pin.json", new Placement([30, 25, -5], [1, 0, 0], [0, 0, 1]), Parameters: new Dictionary<string, string> { ["length"] = "25" }),
     ],
     [
         new Mate("seat", MateKind.Axis, "pin/shank/a", "base/hole/wall"),
         new Mate("stop", MateKind.Flush, "pin/shank/start", "base/plate/z-"),
     ]);
 
-    /// <summary>The assembly example with its two documents: the plate with its hole, and a Ø9.8 pin 20 long.</summary>
+    /// <summary>The assembly example with its two documents: the plate with its hole, and a Ø9.8 pin of parameter length.</summary>
     public static Bundle BundleExample { get; } = new(AssemblyExample, new Dictionary<string, string>
     {
         ["bracket.json"] = CanonicalFormat.Write(new PartDocument([Plate, Bore])),
         ["pin.json"] = CanonicalFormat.Write(new PartDocument([new Extrude("shank", BooleanOp.New, new SketchPlane([0, 0, 0], [1, 0, 0], [0, 0, 1]),
-            new Profile([-4.9, 0], [new ProfileEdge("a", [4.9, 0], 1), new ProfileEdge("b", [-4.9, 0], 1)]), 0, 20)])),
+            new Profile([-4.9, 0], [new ProfileEdge("a", [4.9, 0], 1), new ProfileEdge("b", [-4.9, 0], 1)]), 0, 20)])
+        {
+            Parameters = new Dictionary<string, string> { ["length"] = "20" },
+            Expressions = new Dictionary<string, string> { ["shank.end"] = "length" },
+        }),
     });
 
     /// <summary>The guide as plain text, built once.</summary>
@@ -143,17 +153,23 @@ public static class FormatGuide
         s.AppendLine("\"body\" to work on it (it becomes current); otherwise it works on the current body. Fillets and chamfers find");
         s.AppendLine("their body from their faces. Bodies stay separate solids until a combine joins or cuts them.");
         s.AppendLine();
-        s.AppendLine("## Edits (apply_edits)");
-        s.AppendLine("set takes a dotted path into a feature, starting with its id; array indices are numbers. insert adds a feature");
-        s.AppendLine("before an id (appended without before). remove deletes a feature by id. On the document");
+        s.AppendLine("## Parameters");
+        s.AppendLine("\"parameters\" (after units) names values: a number, or \"=expression\" over other parameters. Any number in a feature");
+        s.AppendLine("may be \"=expression\" too. Operators + - * / ^, parentheses, and " + string.Join(", ", Expression.Reserved) + " (angles");
+        s.AppendLine("in degrees; a count must come out whole). Ids and face names never change with parameters. Example:");
         s.AppendLine(Compact(CanonicalFormat.Write(EditTarget)));
-        s.AppendLine("these are valid edits:");
+        s.AppendLine();
+        s.AppendLine("## Edits (apply_edits)");
+        s.AppendLine("set takes a dotted path into a feature, starting with its id; array indices are numbers; the value may be an");
+        s.AppendLine("\"=expression\". parameters.<name> sets (or removes) a parameter. insert adds a feature before an id (appended");
+        s.AppendLine("without before). remove deletes a feature by id. On the document above these are valid edits:");
         foreach (var e in EditExamples) s.AppendLine("- " + e);
         s.AppendLine();
         s.AppendLine("## Assemblies (assembly tool)");
         s.AppendLine($"An assembly ({AssemblyDocument.FormatVersion}) places parts by path; placement is origin, x and normal (z) of the part's frame.");
-        s.AppendLine("hash (optional) pins a part's content hash; grounded components stay put (else the first). Mate kinds: mate (flat");
-        s.AppendLine("faces against each other, gap offset), flush (flat faces facing the same way), axis (cylinders or cones coaxial).");
+        s.AppendLine("hash (optional) pins the stored part's content hash; grounded components stay put (else the first); parameters");
+        s.AppendLine("overrides the part's own (one document, several variants). Mate kinds: mate (flat faces against each other, gap");
+        s.AppendLine("offset), flush (flat faces facing the same way), axis (cylinders or cones coaxial).");
         s.AppendLine(Compact(CanonicalFormat.Write(AssemblyExample)));
         s.AppendLine($"A bundle ({Bundle.FormatVersion}) carries the assembly and its documents in one file:");
         s.AppendLine($"{{\"format\":\"{Bundle.FormatVersion}\",\"units\":\"mm\",\"assembly\":{{...}},\"documents\":{{\"bracket.json\":{{part}},\"pin.json\":{{part}}}}}}");
