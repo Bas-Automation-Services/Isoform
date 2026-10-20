@@ -1,5 +1,5 @@
 // Opens every example in headless Edge or Chrome, waits for the part to regenerate, checks the stats line and
-// saves a screenshot to tests/playground/out/screenshots. Exits non-zero if any example fails.
+// saves a screenshot to tests/playground/out/screenshots; then picks a face. Exits non-zero if anything fails.
 // node tests/playground/e2e.mjs [published wwwroot]      (env: ISOFORM_BROWSER, ISOFORM_TIMEOUT in ms)
 import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -19,7 +19,7 @@ const settled = `(s => /\\d ms ·|Error:|does not parse/.test(s) && s)(document.
 
 const site = await serve(root);
 const browser = await launch();
-let failures = 0;
+let failures = 0, picking = false;
 try {
   const page = await browser.newPage();
   for (const [i, name] of names.entries()) {
@@ -45,9 +45,36 @@ try {
     for (const p of problems) console.log(`        ${p}`);
     if (problems.length) failures++;
   }
+
+  // Picking: a click selects the face under the pointer by name, and the selection survives a regeneration.
+  const problems = [];
+  let selected = [];
+  try {
+    await page.open(`${site.url}?example=0`);
+    await page.waitFor(settled, { timeout });
+    const [x, y] = await page.center('#view canvas');
+    // The middle of the view may look through a hole: try around it.
+    for (const [dx, dy] of [[0, 0], [80, 40], [-80, 40], [80, -40], [-80, -40]]) {
+      await page.click([x + dx, y + dy]);
+      selected = await page.evaluate('window.isoform.selection()');
+      if (selected.length) break;
+    }
+    if (!selected.length) throw new Error('no face under the pointer');
+    await page.evaluate(`(c => { c.value = '1'; c.dispatchEvent(new Event('change')); })(document.getElementById('cell'))`);
+    await page.waitFor(settled, { timeout });
+    const after = await page.evaluate('window.isoform.selection()');
+    if (after.join() !== selected.join()) problems.push(`selection ${JSON.stringify(selected)} became ${JSON.stringify(after)}`);
+    if (await page.evaluate(`document.getElementById('selection').hidden`)) problems.push('the selection box is hidden');
+  } catch (e) {
+    problems.push(e.message);
+  }
+  problems.push(...page.errors);
+  console.log(`${problems.length ? 'FAIL' : 'pass'}  picking: ${JSON.stringify(selected)} kept across a regeneration`);
+  for (const p of problems) console.log(`        ${p}`);
+  picking = !problems.length;
 } finally {
   await browser.close();
   await site.close();
 }
-console.log(`\n${names.length - failures}/${names.length} examples passed; screenshots in ${relative(repo, shots)}`);
-process.exitCode = failures ? 1 : 0;
+console.log(`\n${names.length - failures}/${names.length} examples passed, picking ${picking ? 'passed' : 'FAILED'}; screenshots in ${relative(repo, shots)}`);
+process.exitCode = failures || !picking ? 1 : 0;
