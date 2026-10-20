@@ -49,6 +49,32 @@ public class IntervalTests
     }
 
     [Fact]
+    public void Simplified_field_is_exactly_the_full_field_inside_its_box()
+    {
+        var rng = new Random(11);
+        foreach (var doc in Documents)
+        {
+            var field = new Compiler(new ModelingSettings()).Compile(doc).Field!;
+            for (var b = 0; b < 3000; b++)
+            {
+                var size = Math.Pow(10, rng.NextDouble() * 3 - 1.5); // 0.03 .. 30 mm
+                var min = new Point3D(rng.NextDouble() * 140 - 30, rng.NextDouble() * 90 - 20, rng.NextDouble() * 40 - 15);
+                var box = new Box3D(min, new Point3D(min.X + size, min.Y + size, min.Z + size));
+                var simple = field.Simplify(box);
+                for (var i = 0; i < 30; i++)
+                {
+                    var p = new Point3D(box.Min.X + size * rng.NextDouble(), box.Min.Y + size * rng.NextDouble(), box.Min.Z + size * rng.NextDouble());
+                    var (full, reduced) = (field.Sample(p), simple.Sample(p));
+                    reduced.Value.Should().Be(full.Value);
+                    reduced.Owner.Should().Be(full.Owner);
+                    (reduced.Gradient - full.Gradient).Length.Should().Be(0);
+                    simple.Value(p).Should().Be(full.Value, "the value-only path matches Sample bit for bit");
+                }
+            }
+        }
+    }
+
+    [Fact]
     public void Plane_bounds_are_exact()
     {
         var plane = new LeafField(new Surface(0, "p", SurfaceKind.Plane, new Point3D(0, 0, 0), new Vector3D(0, 0, 1)));

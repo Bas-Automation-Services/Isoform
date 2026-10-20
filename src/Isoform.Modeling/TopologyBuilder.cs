@@ -7,7 +7,8 @@ namespace Isoform.Modeling;
 /// <summary>
 /// Derives result topology from the owner-labelled mesh on every regeneration. Identity comes from the sources;
 /// the mesh only says which owner regions are connected. Adjacent regions on geometrically identical surfaces
-/// (e.g. two coplanar tops) become one face that keeps both sources.
+/// (e.g. two coplanar tops) become one face that keeps both sources. Works on flat arrays: a vertex→quads
+/// adjacency instead of an edge dictionary.
 /// </summary>
 public static class TopologyBuilder
 {
@@ -16,56 +17,76 @@ public static class TopologyBuilder
     public static Result Build(Mesh mesh, IReadOnlyList<Surface> surfaces, double tolerance)
     {
         var quads = mesh.Quads;
+        var quadCount = quads.Count;
 
         // Owners on the same geometric surface share a class.
-        var surfaceClass = new UnionFind(surfaces.Count);
+        var classes = new UnionFind(surfaces.Count);
         for (var i = 0; i < surfaces.Count; i++)
         for (var j = i + 1; j < surfaces.Count; j++)
-            if (surfaces[i].SameGeometry(surfaces[j], tolerance)) surfaceClass.Union(i, j);
+            if (surfaces[i].SameGeometry(surfaces[j], tolerance)) classes.Union(i, j);
+        var surfaceClass = Enumerable.Range(0, surfaces.Count).Select(classes.Find).ToArray();
 
-        var edgeQuads = new Dictionary<(int, int), List<int>>();
-        for (var q = 0; q < quads.Count; q++)
-            foreach (var e in Edges(quads[q]))
+        var incident = new Incidence(mesh);
+
+        // Neighbour quads across each of the four edges (one per edge on a manifold mesh, more otherwise).
+        var bodies = new UnionFind(quadCount);
+        var faces = new UnionFind(quadCount);
+        Span<int> around = stackalloc int[16];
+        for (var q = 0; q < quadCount; q++)
+            for (var e = 0; e < 4; e++)
             {
-                if (!edgeQuads.TryGetValue(e, out var list)) edgeQuads[e] = list = [];
-                list.Add(q);
+                var (a, b) = Edge(quads[q], e);
+                var n = incident.Sharing(a, b, around);
+                for (var k = 0; k < n; k++)
+                {
+                    var r = around[k];
+                    if (r <= q) continue;
+                    bodies.Union(q, r);
+                    if (surfaceClass[quads[q].Owner] == surfaceClass[quads[r].Owner]) faces.Union(q, r);
+                }
             }
 
-        var bodies = new UnionFind(quads.Count);
-        var faces = new UnionFind(quads.Count);
-        foreach (var list in edgeQuads.Values)
-            for (var i = 1; i < list.Count; i++)
-            {
-                bodies.Union(list[0], list[i]);
-                if (surfaceClass.Find(quads[list[0]].Owner) == surfaceClass.Find(quads[list[i]].Owner))
-                    faces.Union(list[0], list[i]);
-            }
-
-        var bodyIndex = Bodies(mesh, bodies, out var bodyCount);
-        var faceIndex = Number(quads.Count, faces);
-        var faceOfQuad = Enumerable.Range(0, quads.Count).Select(q => faceIndex[faces.Find(q)]).ToArray();
+        var faceIndex = Number(quadCount, faces);
+        var faceOfQuad = new int[quadCount];
+        for (var q = 0; q < quadCount; q++) faceOfQuad[q] = faceIndex[faces.Find(q)];
+        var bodyOfQuad = Bodies(mesh, bodies);
 
         var faceCount = faceIndex.Count;
-        var faceSources = new SortedSet<string>[faceCount];
+        var faceOwners = Enumerable.Range(0, faceCount).Select(_ => new HashSet<int>()).ToArray();
         var faceBody = new int[faceCount];
-        for (var q = 0; q < quads.Count; q++)
+        for (var q = 0; q < quadCount; q++)
         {
-            var f = faceOfQuad[q];
-            (faceSources[f] ??= new SortedSet<string>(StringComparer.Ordinal)).Add(surfaces[quads[q].Owner].Source);
-            faceBody[f] = bodyIndex[bodies.Find(q)];
+            faceOwners[faceOfQuad[q]].Add(quads[q].Owner);
+            faceBody[faceOfQuad[q]] = bodyOfQuad.Index[q];
         }
-        var topoFaces = Enumerable.Range(0, faceCount)
-            .Select(f => new TopoFace(f, faceSources[f].ToList(), faceBody[f])).ToList();
+        var topoFaces = Enumerable.Range(0, faceCount).Select(f => new TopoFace(f,
+            faceOwners[f].Select(o => surfaces[o].Source).Distinct().Order(StringComparer.Ordinal).ToList(), faceBody[f])).ToList();
 
-        // Edges: connected chains of mesh edges separating two faces.
+        // Edges: connected chains of mesh edges separating two faces. Each mesh edge is visited once, from the
+        // lowest-numbered quad around it.
         var segments = new List<(int A, int B, int V1, int V2)>();
-        foreach (var (e, list) in edgeQuads.OrderBy(kv => kv.Key))
-        {
-            var fs = list.Select(q => faceOfQuad[q]).Distinct().Order().ToList();
-            for (var i = 0; i < fs.Count; i++)
-            for (var j = i + 1; j < fs.Count; j++)
-                segments.Add((fs[i], fs[j], e.Item1, e.Item2));
-        }
+        for (var q = 0; q < quadCount; q++)
+            for (var e = 0; e < 4; e++)
+            {
+                var (a, b) = Edge(quads[q], e);
+                var n = incident.Sharing(a, b, around);
+                var lowest = true;
+                var mixed = false;
+                for (var k = 0; k < n; k++)
+                {
+                    lowest &= around[k] >= q;
+                    mixed |= faceOfQuad[around[k]] != faceOfQuad[q];
+                }
+                if (!lowest || !mixed) continue;
+                var fs = new List<int>(n);
+                for (var k = 0; k < n; k++)
+                    if (!fs.Contains(faceOfQuad[around[k]])) fs.Add(faceOfQuad[around[k]]);
+                fs.Sort();
+                for (var i = 0; i < fs.Count; i++)
+                for (var j = i + 1; j < fs.Count; j++)
+                    segments.Add((fs[i], fs[j], Math.Min(a, b), Math.Max(a, b)));
+            }
+        segments.Sort((x, y) => (x.V1, x.V2, x.A, x.B).CompareTo((y.V1, y.V2, y.A, y.B)));
         var chains = new UnionFind(segments.Count);
         foreach (var group in segments.Select((s, i) => (s, i)).GroupBy(x => (x.s.A, x.s.B)))
         {
@@ -81,75 +102,144 @@ public static class TopologyBuilder
             .ToList();
 
         // Vertices: clusters of mesh vertices where three or more faces meet.
-        var vertexFaces = new Dictionary<int, SortedSet<int>>();
-        for (var q = 0; q < quads.Count; q++)
-            foreach (var v in new[] { quads[q].A, quads[q].B, quads[q].C, quads[q].D })
-                (vertexFaces.TryGetValue(v, out var set) ? set : vertexFaces[v] = []).Add(faceOfQuad[q]);
-        var corners = vertexFaces.Where(kv => kv.Value.Count >= 3).Select(kv => kv.Key).Order().ToList();
-        var cornerSlot = corners.Select((v, i) => (v, i)).ToDictionary(x => x.v, x => x.i);
+        var corners = new List<(int Vertex, List<int> Faces)>();
+        for (var v = 0; v < mesh.Vertices.Count; v++)
+        {
+            var quadsHere = incident.QuadsOf(v);
+            var first = faceOfQuad[quadsHere[0]];
+            var single = true;
+            foreach (var q in quadsHere) single &= faceOfQuad[q] == first;
+            if (single) continue;
+            var fs = new List<int>();
+            foreach (var q in quadsHere)
+                if (!fs.Contains(faceOfQuad[q])) fs.Add(faceOfQuad[q]);
+            if (fs.Count < 3) continue;
+            fs.Sort();
+            corners.Add((v, fs));
+        }
+        var cornerSlot = corners.Select((c, i) => (c.Vertex, i)).ToDictionary(x => x.Vertex, x => x.i);
         var clusters = new UnionFind(corners.Count);
-        foreach (var e in edgeQuads.Keys)
-            if (cornerSlot.TryGetValue(e.Item1, out var c1) && cornerSlot.TryGetValue(e.Item2, out var c2))
-                clusters.Union(c1, c2);
+        foreach (var (vertex, slot) in cornerSlot)
+            foreach (var q in incident.QuadsOf(vertex).ToArray())
+                foreach (var (a, b) in Edges(quads[q]))
+                    if ((a == vertex || b == vertex) && cornerSlot.TryGetValue(a == vertex ? b : a, out var other))
+                        clusters.Union(slot, other);
         var clusterIndex = Number(corners.Count, clusters);
         var topoVertices = corners
-            .Select((v, i) => (Cluster: clusterIndex[clusters.Find(i)], Faces: vertexFaces[v]))
+            .Select((c, i) => (Cluster: clusterIndex[clusters.Find(i)], c.Faces))
             .GroupBy(x => x.Cluster)
             .OrderBy(g => g.Key)
             .Select(g => new TopoVertex(g.Key, g.SelectMany(x => x.Faces).Distinct().Order().ToList()))
             .ToList();
 
-        return new Result(new Topology(topoFaces, topoEdges, topoVertices, bodyCount), faceOfQuad);
+        return new Result(new Topology(topoFaces, topoEdges, topoVertices, bodyOfQuad.Count), faceOfQuad);
+    }
+
+    /// <summary>Vertex → quads adjacency in compressed rows.</summary>
+    sealed class Incidence
+    {
+        readonly int[] _start;
+        readonly int[] _quads;
+        readonly IReadOnlyList<Quad> _all;
+
+        public Incidence(Mesh mesh)
+        {
+            _all = mesh.Quads;
+            _start = new int[mesh.Vertices.Count + 1];
+            foreach (var q in _all)
+            {
+                _start[q.A + 1]++;
+                _start[q.B + 1]++;
+                _start[q.C + 1]++;
+                _start[q.D + 1]++;
+            }
+            for (var v = 0; v < mesh.Vertices.Count; v++) _start[v + 1] += _start[v];
+            _quads = new int[_start[^1]];
+            var cursor = (int[])_start.Clone();
+            for (var q = 0; q < _all.Count; q++)
+            {
+                _quads[cursor[_all[q].A]++] = q;
+                _quads[cursor[_all[q].B]++] = q;
+                _quads[cursor[_all[q].C]++] = q;
+                _quads[cursor[_all[q].D]++] = q;
+            }
+        }
+
+        public ReadOnlySpan<int> QuadsOf(int v) => _quads.AsSpan(_start[v], _start[v + 1] - _start[v]);
+
+        /// <summary>Writes the quads that have the mesh edge (a, b) into <paramref name="into"/>; returns how many.</summary>
+        public int Sharing(int a, int b, Span<int> into)
+        {
+            var n = 0;
+            for (var k = _start[a]; k < _start[a + 1]; k++)
+                if (HasEdge(_all[_quads[k]], a, b)) into[n++] = _quads[k];
+            return n;
+        }
+
+        static bool HasEdge(Quad q, int a, int b) =>
+            Same(q.A, q.B, a, b) || Same(q.B, q.C, a, b) || Same(q.C, q.D, a, b) || Same(q.D, q.A, a, b);
+
+        static bool Same(int x, int y, int a, int b) => (x == a && y == b) || (x == b && y == a);
     }
 
     /// <summary>
     /// Surface components with positive enclosed volume are bodies; negative ones are voids (a shell's cavity)
     /// and belong to the smallest body whose bounds contain them.
     /// </summary>
-    static Dictionary<int, int> Bodies(Mesh mesh, UnionFind components, out int bodyCount)
+    static (int[] Index, int Count) Bodies(Mesh mesh, UnionFind components)
     {
-        var volume = new Dictionary<int, double>();
-        var lo = new Dictionary<int, Point3D>();
-        var hi = new Dictionary<int, Point3D>();
+        var numbering = Number(mesh.Quads.Count, components);
+        var n = numbering.Count;
+        var volume = new double[n];
+        var lo = Enumerable.Repeat(new Point3D(double.MaxValue, double.MaxValue, double.MaxValue), n).ToArray();
+        var hi = Enumerable.Repeat(new Point3D(double.MinValue, double.MinValue, double.MinValue), n).ToArray();
+        var component = new int[mesh.Quads.Count];
         var v = mesh.Vertices;
         for (var q = 0; q < mesh.Quads.Count; q++)
         {
-            var root = components.Find(q);
+            var c = component[q] = numbering[components.Find(q)];
             var quad = mesh.Quads[q];
-            var (a, b, c, d) = (v[quad.A].AsVector(), v[quad.B].AsVector(), v[quad.C].AsVector(), v[quad.D].AsVector());
-            volume[root] = volume.GetValueOrDefault(root) + (a.Dot(b.Cross(c)) + a.Dot(c.Cross(d))) / 6;
-            foreach (var p in new[] { v[quad.A], v[quad.B], v[quad.C], v[quad.D] })
+            var (a, b, cc, d) = (v[quad.A].AsVector(), v[quad.B].AsVector(), v[quad.C].AsVector(), v[quad.D].AsVector());
+            volume[c] += (a.Dot(b.Cross(cc)) + a.Dot(cc.Cross(d))) / 6;
+            for (var corner = 0; corner < 4; corner++)
             {
-                lo[root] = lo.TryGetValue(root, out var l) ? new(Math.Min(l.X, p.X), Math.Min(l.Y, p.Y), Math.Min(l.Z, p.Z)) : p;
-                hi[root] = hi.TryGetValue(root, out var h) ? new(Math.Max(h.X, p.X), Math.Max(h.Y, p.Y), Math.Max(h.Z, p.Z)) : p;
+                var p = v[corner switch { 0 => quad.A, 1 => quad.B, 2 => quad.C, _ => quad.D }];
+                lo[c] = new(Math.Min(lo[c].X, p.X), Math.Min(lo[c].Y, p.Y), Math.Min(lo[c].Z, p.Z));
+                hi[c] = new(Math.Max(hi[c].X, p.X), Math.Max(hi[c].Y, p.Y), Math.Max(hi[c].Z, p.Z));
             }
         }
 
-        var roots = Number(mesh.Quads.Count, components).OrderBy(kv => kv.Value).Select(kv => kv.Key).ToList();
-        var index = new Dictionary<int, int>();
-        foreach (var r in roots.Where(r => volume[r] > 0)) index[r] = index.Count;
-        bodyCount = index.Count;
-        foreach (var r in roots.Where(r => volume[r] <= 0))
+        var body = new int[n];
+        var count = 0;
+        for (var c = 0; c < n; c++) if (volume[c] > 0) body[c] = count++;
+        for (var c = 0; c < n; c++)
         {
-            var host = index.Keys
-                .Where(b => lo[b].X <= lo[r].X && lo[b].Y <= lo[r].Y && lo[b].Z <= lo[r].Z && hi[b].X >= hi[r].X && hi[b].Y >= hi[r].Y && hi[b].Z >= hi[r].Z)
+            if (volume[c] > 0) continue;
+            var host = Enumerable.Range(0, n)
+                .Where(b => volume[b] > 0 && lo[b].X <= lo[c].X && lo[b].Y <= lo[c].Y && lo[b].Z <= lo[c].Z && hi[b].X >= hi[c].X && hi[b].Y >= hi[c].Y && hi[b].Z >= hi[c].Z)
                 .OrderBy(b => volume[b])
                 .Cast<int?>()
                 .FirstOrDefault();
-            index[r] = host is { } h ? index[h] : index.Count; // an unenclosed inward surface would be an error upstream
+            body[c] = host is { } h ? body[h] : count; // an unenclosed inward surface would be an error upstream
         }
-        return index;
+        return (component.Select(c => body[c]).ToArray(), count);
     }
+
+    static (int, int) Edge(Quad q, int e) => e switch
+    {
+        0 => (q.A, q.B),
+        1 => (q.B, q.C),
+        2 => (q.C, q.D),
+        _ => (q.D, q.A),
+    };
 
     static IEnumerable<(int, int)> Edges(Quad q)
     {
-        yield return Key(q.A, q.B);
-        yield return Key(q.B, q.C);
-        yield return Key(q.C, q.D);
-        yield return Key(q.D, q.A);
+        yield return (q.A, q.B);
+        yield return (q.B, q.C);
+        yield return (q.C, q.D);
+        yield return (q.D, q.A);
     }
-
-    static (int, int) Key(int a, int b) => a < b ? (a, b) : (b, a);
 
     /// <summary>Numbers union-find roots 0..n-1 in order of their smallest member, for deterministic indices.</summary>
     static Dictionary<int, int> Number(int count, UnionFind uf)

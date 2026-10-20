@@ -77,54 +77,75 @@ public static class DualContouring
 
         // Octree over cell ranges: a block whose bounds are certainly positive or negative has no sign change
         // on any grid edge inside its closed box, so it is skipped without evaluating a single point.
-        var leaves = new List<Block>();
+        var leaves = new List<(Block Block, Field Field)>();
         Subdivide(new Block(0, 0, 0, nx, ny, nz), field, grid, prune, leaves);
         Stage($"octree ({leaves.Count:N0} leaf blocks)");
 
-        // Each leaf evaluates its own closed box of grid points and reports its sign-changing edges.
+        // Each leaf evaluates its own closed box of grid points and reports its sign-changing edges. It also gets
+        // a field simplified for its box plus a two-cell margin, exact wherever its cells' vertices can move.
         var found = new List<(long Key, bool StartInside)>[leaves.Count];
-        Parallel.For(0, leaves.Count, b => found[b] = SignChanges(field, grid, leaves[b]));
-        // Edges on a face shared by two leaves are reported twice; sorting by key restores the dense order.
-        var edgeKeys = found.SelectMany(f => f).DistinctBy(e => e.Key).OrderBy(e => e.Key).ToList();
+        var near = new Field[leaves.Count];
+        Parallel.For(0, leaves.Count, b =>
+        {
+            found[b] = SignChanges(leaves[b].Field, grid, leaves[b].Block);
+            near[b] = prune ? field.Simplify(grid.Expanded(leaves[b].Block, 2)) : field;
+        });
+        // Every edge is reported by exactly one leaf, in leaf order. Pruning only removes leaves, so the order
+        // (and the mesh) is the same with and without it.
+        var edgeKeys = new List<(long Key, bool StartInside, int Leaf)>(found.Sum(f => f.Count));
+        for (var b = 0; b < found.Length; b++)
+            foreach (var (key, inside) in found[b]) edgeKeys.Add((key, inside, b));
         var edges = edgeKeys.Select(e => grid.Edge(e.Key)).ToList();
-        Stage($"sign changes ({edges.Count:N0} edges, {found.Sum(f => f.Count):N0} reported)");
+        Stage($"sign changes ({edges.Count:N0} edges)");
 
         var crossings = new Crossing[edges.Count];
         Parallel.For(0, edges.Count, e =>
         {
             var (axis, i, j, k) = edges[e];
             var p0 = grid.Position(i, j, k);
-            var c = FindRoot(field, p0, p0 + Grid.Unit(axis) * h);
-            var s = field.Sample(c);
-            crossings[e] = new(c, s.Gradient.Normalized(), s.Owner);
+            var leafField = leaves[edgeKeys[e].Leaf].Field;
+            var c = FindRoot(leafField, p0, p0 + Grid.Unit(axis) * h);
+            var sample = leafField.Sample(c);
+            crossings[e] = new(c, sample.Gradient.Normalized(), sample.Owner);
         });
         Stage("crossings (root finding)");
 
-        // Crossings per cell (each edge touches up to four cells).
-        var cellCrossings = new Dictionary<int, List<int>>();
+        // Each edge touches four cells. Sorting (cell, edge, slot) groups the crossings per cell, puts cells in
+        // ascending order and keeps each cell's crossings in edge order.
+        var pairs = new long[edges.Count * 4];
         for (var e = 0; e < edges.Count; e++)
-            foreach (var cell in grid.CellsAround(edges[e]))
-            {
-                if (!cellCrossings.TryGetValue(cell, out var list)) cellCrossings[cell] = list = [];
-                list.Add(e);
-            }
+        {
+            var around = grid.CellsAround(edges[e]);
+            for (var slot = 0; slot < 4; slot++) pairs[e * 4 + slot] = ((long)around[slot] << 32) | (uint)(e * 4 + slot);
+        }
+        Array.Sort(pairs);
+        var cellStart = new List<int>();
+        for (var k = 0; k < pairs.Length; k++)
+            if (k == 0 || pairs[k] >> 32 != pairs[k - 1] >> 32) cellStart.Add(k);
+        cellStart.Add(pairs.Length);
+        var cellCount = cellStart.Count - 1;
+        var vertexOfSlot = new int[pairs.Length];
+        for (var c = 0; c < cellCount; c++)
+            for (var k = cellStart[c]; k < cellStart[c + 1]; k++) vertexOfSlot[(int)(uint)pairs[k]] = c;
 
-        var cells = cellCrossings.Keys.Order().ToArray();
-        var positions = new Point3D[cells.Length];
-        Parallel.For(0, cells.Length, c =>
-            positions[c] = CellVertex(field, grid, cells[c], cellCrossings[cells[c]].Select(e => crossings[e]).ToList()));
-        Stage($"cell vertices ({cells.Length:N0} cells)");
-        var vertexOfCell = new Dictionary<int, int>(cells.Length);
-        for (var c = 0; c < cells.Length; c++) vertexOfCell[cells[c]] = c;
+        var positions = new Point3D[cellCount];
+        Parallel.For(0, cellCount, c =>
+        {
+            Span<Crossing> local = stackalloc Crossing[12];
+            var n = 0;
+            for (var k = cellStart[c]; k < cellStart[c + 1]; k++) local[n++] = crossings[(int)(uint)pairs[k] / 4];
+            // The first (lowest) edge of the cell decides which leaf's local field it uses.
+            var firstEdge = (int)(uint)pairs[cellStart[c]] / 4;
+            positions[c] = CellVertex(near[edgeKeys[firstEdge].Leaf], grid, (int)(pairs[cellStart[c]] >> 32), local[..n]);
+        });
+        Stage($"cell vertices ({cellCount:N0} cells)");
 
         var quads = new List<Quad>(edges.Count);
         for (var e = 0; e < edges.Count; e++)
         {
-            var around = grid.CellsAround(edges[e]).Select(c => vertexOfCell[c]).ToArray();
+            var (a, b, c, d) = (vertexOfSlot[e * 4], vertexOfSlot[e * 4 + 1], vertexOfSlot[e * 4 + 2], vertexOfSlot[e * 4 + 3]);
             // Wind so the quad faces outward: away from the inside end of the edge.
-            quads.Add(edgeKeys[e].StartInside
-                ? new Quad(around[0], around[1], around[2], around[3], crossings[e].Owner)
-                : new Quad(around[3], around[2], around[1], around[0], crossings[e].Owner));
+            quads.Add(edgeKeys[e].StartInside ? new Quad(a, b, c, d, crossings[e].Owner) : new Quad(d, c, b, a, crossings[e].Owner));
         }
 
         Stage($"quads ({quads.Count:N0})");
@@ -138,17 +159,20 @@ public static class DualContouring
     // Certify only with a margin, so floating-point noise in a bound can never hide a real sign change.
     const double CertifyMargin = 1e-9;
 
-    static void Subdivide(Block b, Field field, Grid grid, bool prune, List<Block> leaves)
+    static void Subdivide(Block b, Field field, Grid grid, bool prune, List<(Block, Field)> leaves)
     {
         if (prune)
         {
-            var bounds = field.Bounds(new Box3D(grid.Position(b.I0, b.J0, b.K0), grid.Position(b.I1, b.J1, b.K1)));
+            // Simplify first: the children are then bounded on a smaller tree.
+            var box = new Box3D(grid.Position(b.I0, b.J0, b.K0), grid.Position(b.I1, b.J1, b.K1));
+            field = field.Simplify(box);
+            var bounds = field.Bounds(box);
             if (bounds.Lo > CertifyMargin || bounds.Hi < -CertifyMargin) return;
         }
         var (sx, sy, sz) = (b.I1 - b.I0, b.J1 - b.J0, b.K1 - b.K0);
         if (sx <= LeafCells && sy <= LeafCells && sz <= LeafCells)
         {
-            leaves.Add(b);
+            leaves.Add((b, field));
             return;
         }
         if (sx >= sy && sx >= sz)
@@ -180,16 +204,18 @@ public static class DualContouring
         for (var i = 0; i < sx; i++)
             inside[(k * sy + j) * sx + i] = field.Value(grid.Position(b.I0 + i, b.J0 + j, b.K0 + k)) < 0;
 
+        // An edge belongs to the block holding the cell at its start point, so each edge is reported once. A
+        // skipped neighbour block has no sign change on the edges it owns: they lie in its closed box.
         var result = new List<(long, bool)>();
-        for (var k = 0; k < sz; k++)
-        for (var j = 0; j < sy; j++)
-        for (var i = 0; i < sx; i++)
+        for (var k = 0; k < sz - 1; k++)
+        for (var j = 0; j < sy - 1; j++)
+        for (var i = 0; i < sx - 1; i++)
         {
             var here = inside[(k * sy + j) * sx + i];
             var (gi, gj, gk) = (b.I0 + i, b.J0 + j, b.K0 + k);
-            if (i + 1 < sx && here != inside[(k * sy + j) * sx + i + 1]) result.Add((grid.EdgeKey(0, gi, gj, gk), here));
-            if (j + 1 < sy && here != inside[(k * sy + j + 1) * sx + i]) result.Add((grid.EdgeKey(1, gi, gj, gk), here));
-            if (k + 1 < sz && here != inside[((k + 1) * sy + j) * sx + i]) result.Add((grid.EdgeKey(2, gi, gj, gk), here));
+            if (here != inside[(k * sy + j) * sx + i + 1]) result.Add((grid.EdgeKey(0, gi, gj, gk), here));
+            if (here != inside[(k * sy + j + 1) * sx + i]) result.Add((grid.EdgeKey(1, gi, gj, gk), here));
+            if (here != inside[((k + 1) * sy + j) * sx + i]) result.Add((grid.EdgeKey(2, gi, gj, gk), here));
         }
         return result;
     }
@@ -227,15 +253,19 @@ public static class DualContouring
         return a + dir * ((t0 + t1) / 2);
     }
 
-    static Point3D CellVertex(Field field, Grid grid, int cell, List<Crossing> crossings)
+    static Point3D CellVertex(Field field, Grid grid, int cell, ReadOnlySpan<Crossing> crossings)
     {
         var mass = new Vector3D(0, 0, 0);
         foreach (var c in crossings) mass += c.Point.AsVector();
-        var m = (mass / crossings.Count);
+        var m = mass / crossings.Length;
         var mp = new Point3D(m.X, m.Y, m.Z);
 
-        if (crossings.All(c => c.Owner == crossings[0].Owner))
-            return Project(field, mp);
+        // Distinct owners in order of first appearance.
+        Span<int> owners = stackalloc int[crossings.Length];
+        var ownerCount = 0;
+        foreach (var c in crossings)
+            if (!owners[..ownerCount].Contains(c.Owner)) owners[ownerCount++] = c.Owner;
+        if (ownerCount == 1) return Project(field, mp);
 
         // Minimise Σ (nᵢ·(x − pᵢ))² around the mass point with a truncated pseudo-inverse.
         var ata = new double[3, 3];
@@ -251,7 +281,7 @@ public static class DualContouring
             }
         }
         var x = SymmetricSolver.PseudoSolve(ata, atb, relativeCutoff: 0.05);
-        var v = Refine(field, new Point3D(mp.X + x[0], mp.Y + x[1], mp.Z + x[2]), crossings.Select(c => c.Owner).Distinct().ToList());
+        var v = Refine(field, new Point3D(mp.X + x[0], mp.Y + x[1], mp.Z + x[2]), owners[..ownerCount]);
         // Tangent (G1) junctions leave the along-face position undetermined; land on the solid itself.
         v = Project(field, v);
         return grid.ContainsLoosely(cell, v) ? v : mp;
@@ -259,7 +289,7 @@ public static class DualContouring
 
     // The QEF uses tangent planes; Gauss-Newton on the owner surfaces themselves moves the vertex onto the
     // real (possibly curved) edge or corner.
-    static Point3D Refine(Field field, Point3D p, List<int> owners)
+    static Point3D Refine(Field field, Point3D p, ReadOnlySpan<int> owners)
     {
         for (var it = 0; it < 8; it++)
         {
@@ -318,6 +348,10 @@ public static class DualContouring
             1 => [Cell(e.I - 1, e.J, e.K - 1), Cell(e.I - 1, e.J, e.K), Cell(e.I, e.J, e.K), Cell(e.I, e.J, e.K - 1)],
             _ => [Cell(e.I - 1, e.J - 1, e.K), Cell(e.I, e.J - 1, e.K), Cell(e.I, e.J, e.K), Cell(e.I - 1, e.J, e.K)],
         };
+
+        /// <summary>The closed box of a block, grown by <paramref name="margin"/> cells on every side.</summary>
+        public Box3D Expanded(Block b, int margin) =>
+            new(Position(b.I0 - margin, b.J0 - margin, b.K0 - margin), Position(b.I1 + margin, b.J1 + margin, b.K1 + margin));
 
         public bool ContainsLoosely(int cell, Point3D p)
         {

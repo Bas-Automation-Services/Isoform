@@ -25,7 +25,14 @@ public abstract class Field
 {
     public abstract FieldSample Sample(Point3D p);
 
-    public double Value(Point3D p) => Sample(p).Value;
+    /// <summary>The field value alone, bit-identical to <c>Sample(p).Value</c> but without owner and gradient.</summary>
+    public virtual double Value(Point3D p) => Sample(p).Value;
+
+    /// <summary>
+    /// An equivalent field for points inside <paramref name="box"/>: children that can never decide a min/max
+    /// there are dropped. Value, owner and gradient are unchanged at every point of the box.
+    /// </summary>
+    public virtual Field Simplify(Box3D box) => this;
 
     /// <summary>The field of one owner surface alone, ignoring the rest of the tree; null if it is not in this tree.</summary>
     public abstract FieldSample? SampleSurface(int owner, Point3D p);
@@ -59,6 +66,12 @@ public sealed class LeafField(Surface surface, bool complement = false) : Field
         var d = Surface.Distance(p);
         var g = Surface.Gradient(p);
         return Complement ? new(-d, Surface.Id, -g) : new(d, Surface.Id, g);
+    }
+
+    public override double Value(Point3D p)
+    {
+        var d = Surface.Distance(p);
+        return Complement ? -d : d;
     }
 
     public override FieldSample? SampleSurface(int owner, Point3D p) => owner == Surface.Id ? Sample(p) : null;
@@ -98,11 +111,31 @@ public sealed class MaxField(IReadOnlyList<Field> children) : Field
         return null;
     }
 
+    public override double Value(Point3D p)
+    {
+        var best = Children[0].Value(p);
+        for (var i = 1; i < Children.Count; i++)
+        {
+            var v = Children[i].Value(p);
+            if (v > best) best = v;
+        }
+        return best;
+    }
+
     public override Interval Bounds(Box3D box)
     {
         var result = Children[0].Bounds(box);
         for (var i = 1; i < Children.Count; i++) result = Interval.Max(result, Children[i].Bounds(box));
         return result;
+    }
+
+    // A child whose upper bound is below another child's lower bound is never the maximum in the box.
+    public override Field Simplify(Box3D box)
+    {
+        var bounds = Children.Select(c => c.Bounds(box)).ToArray();
+        var floor = bounds.Max(b => b.Lo);
+        var kept = Children.Where((_, i) => bounds[i].Hi >= floor).Select(c => c.Simplify(box)).ToList();
+        return kept.Count == 1 ? kept[0] : new MaxField(kept);
     }
 }
 
@@ -129,11 +162,30 @@ public sealed class MinField(IReadOnlyList<Field> children) : Field
         return null;
     }
 
+    public override double Value(Point3D p)
+    {
+        var best = Children[0].Value(p);
+        for (var i = 1; i < Children.Count; i++)
+        {
+            var v = Children[i].Value(p);
+            if (v < best) best = v;
+        }
+        return best;
+    }
+
     public override Interval Bounds(Box3D box)
     {
         var result = Children[0].Bounds(box);
         for (var i = 1; i < Children.Count; i++) result = Interval.Min(result, Children[i].Bounds(box));
         return result;
+    }
+
+    public override Field Simplify(Box3D box)
+    {
+        var bounds = Children.Select(c => c.Bounds(box)).ToArray();
+        var ceiling = bounds.Min(b => b.Hi);
+        var kept = Children.Where((_, i) => bounds[i].Lo <= ceiling).Select(c => c.Simplify(box)).ToList();
+        return kept.Count == 1 ? kept[0] : new MinField(kept);
     }
 }
 
@@ -151,7 +203,11 @@ public sealed class NegateField(Field child) : Field
     public override FieldSample? SampleSurface(int owner, Point3D p) =>
         Child.SampleSurface(owner, p) is { } s ? new(-s.Value, s.Owner, -s.Gradient) : null;
 
+    public override double Value(Point3D p) => -Child.Value(p);
+
     public override Interval Bounds(Box3D box) => Child.Bounds(box).Negate();
+
+    public override Field Simplify(Box3D box) => new NegateField(Child.Simplify(box));
 }
 
 /// <summary>
@@ -220,15 +276,29 @@ public sealed class RoundedEdgeField : Field
         var denom = 1 - _c * _c;
         if (denom < 1e-12) return sharp;
 
-        var (aLo, aHi) = (ia.Lo + Radius, ia.Hi + Radius);
-        var (bLo, bHi) = (ib.Lo + Radius, ib.Hi + Radius);
-        var alphaHi = (aHi - Math.Min(_c * bLo, _c * bHi)) / denom;
-        var betaHi = (bHi - Math.Min(_c * aLo, _c * aHi)) / denom;
+        var (alphaHi, betaHi) = SectorReach(ia, ib, denom);
         if (alphaHi < 0 || betaHi < 0) return sharp;
 
         var (am, bm) = (Math.Max(alphaHi, 0), Math.Max(betaHi, 0));
         var wMax = Math.Sqrt(am * am + bm * bm + 2 * am * bm * Math.Max(_c, 0));
         return new Interval(sharp.Lo, Math.Max(sharp.Hi, wMax - Radius)).Intersect(LipschitzBounds(box));
+    }
+
+    // Upper ends of α and β over the box: if either is negative, no point of the box is in the fillet sector.
+    (double AlphaHi, double BetaHi) SectorReach(Interval ia, Interval ib, double denom)
+    {
+        var (aLo, aHi) = (ia.Lo + Radius, ia.Hi + Radius);
+        var (bLo, bHi) = (ib.Lo + Radius, ib.Hi + Radius);
+        return ((aHi - Math.Min(_c * bLo, _c * bHi)) / denom, (bHi - Math.Min(_c * aLo, _c * aHi)) / denom);
+    }
+
+    /// <summary>Outside the fillet sector the field is the sharp intersection; A wins ties, as in Sample.</summary>
+    public override Field Simplify(Box3D box)
+    {
+        var denom = 1 - _c * _c;
+        if (denom < 1e-12) return new MaxField([A, B]).Simplify(box);
+        var (alphaHi, betaHi) = SectorReach(A.Bounds(box), B.Bounds(box), denom);
+        return alphaHi < 0 || betaHi < 0 ? new MaxField([A, B]).Simplify(box) : this;
     }
 
     FieldSample Rounded(FieldSample sa, FieldSample sb, double alpha, double beta)
@@ -253,18 +323,33 @@ public sealed class RoundedEdgeField : Field
 /// owner. Because f is 1-Lipschitz, every point of the cavity is more than t from the outer boundary, so the
 /// wall is never thinner than t; at sharp edges it is thicker, like a CAD shell.
 /// </summary>
-public sealed class ShellField(Field child, double thickness, IReadOnlyDictionary<int, int> innerOf) : Field
+public sealed class ShellField : Field
 {
-    readonly Dictionary<int, int> _outerOf = innerOf.ToDictionary(kv => kv.Value, kv => kv.Key);
+    readonly IReadOnlyDictionary<int, int> _innerOf;
+    readonly IReadOnlyDictionary<int, int> _outerOf;
 
-    public Field Child { get; } = child;
-    public double Thickness { get; } = thickness;
+    public ShellField(Field child, double thickness, IReadOnlyDictionary<int, int> innerOf)
+        : this(child, thickness, innerOf, innerOf.ToDictionary(kv => kv.Value, kv => kv.Key)) { }
+
+    ShellField(Field child, double thickness, IReadOnlyDictionary<int, int> innerOf, IReadOnlyDictionary<int, int> outerOf)
+    {
+        (Child, Thickness, _innerOf, _outerOf) = (child, thickness, innerOf, outerOf);
+    }
+
+    public Field Child { get; }
+    public double Thickness { get; }
 
     public override FieldSample Sample(Point3D p)
     {
         var s = Child.Sample(p);
         var inner = -s.Value - Thickness;
-        return s.Value >= inner ? s : new(inner, innerOf[s.Owner], -s.Gradient);
+        return s.Value >= inner ? s : new(inner, _innerOf[s.Owner], -s.Gradient);
+    }
+
+    public override double Value(Point3D p)
+    {
+        var v = Child.Value(p);
+        return Math.Max(v, -v - Thickness);
     }
 
     public override FieldSample? SampleSurface(int owner, Point3D p)
@@ -277,6 +362,13 @@ public sealed class ShellField(Field child, double thickness, IReadOnlyDictionar
     {
         var c = Child.Bounds(box);
         return Interval.Max(c, new Interval(-c.Hi - Thickness, -c.Lo - Thickness));
+    }
+
+    // Where the cavity cannot reach, the shell is just its child.
+    public override Field Simplify(Box3D box)
+    {
+        var c = Child.Bounds(box);
+        return -c.Lo - Thickness < c.Lo ? Child.Simplify(box) : new ShellField(Child.Simplify(box), Thickness, _innerOf, _outerOf);
     }
 }
 
