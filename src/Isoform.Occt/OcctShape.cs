@@ -41,6 +41,17 @@ public sealed class OcctShape
     public int SolidCount => Get((out int n) => iso_solid_count(Handle, out n));
     public bool IsValid => Get((out int n) => iso_is_valid(Handle, out n)) == 1;
 
+    /// <summary>What OCCT's checker finds wrong with the shape, one problem per line; empty when it is valid.</summary>
+    public string CheckReport
+    {
+        get
+        {
+            var buffer = new byte[1 << 16];
+            Check(iso_check_report(Handle, buffer, buffer.Length));
+            return System.Text.Encoding.UTF8.GetString(buffer, 0, Array.IndexOf(buffer, (byte)0));
+        }
+    }
+
     public double Volume
     {
         get
@@ -75,10 +86,13 @@ public sealed class OcctShape
 
     public void WriteStep(string path) => Check(iso_write_step(Handle, path));
 
-    /// <summary>Reads a STEP file into one shape.</summary>
-    public static OcctShape ReadStep(string path)
+    /// <summary>
+    /// Reads a STEP file into one shape. Without <paramref name="heal"/> OCCT's shape healing is off, so the shape is
+    /// what the file itself describes: a check that it needs no fixing.
+    /// </summary>
+    public static OcctShape ReadStep(string path, bool heal = true)
     {
-        Check(iso_read_step(path, out var h));
+        Check(heal ? iso_read_step(path, out var h) : iso_read_step_unhealed(path, out h));
         return new(h);
     }
 
@@ -146,6 +160,42 @@ public sealed class OcctShape
         var buffer = new int[64];
         Check(call(buffer, out var n));
         return buffer[..n];
+    }
+}
+
+/// <summary>One part occurrence of an assembly read from STEP: its component path, its part, and where it is.</summary>
+/// <param name="Placement">Row-major 3×4 matrix [R | t] from the part's coordinates to the assembly's.</param>
+/// <param name="Part">Index of the distinct part (product) it uses.</param>
+public sealed record OcctOccurrence(string Path, string Product, double[] Placement, int Part, OcctShape Shape);
+
+/// <summary>A STEP file read with its product structure by OCCT's XCAF reader.</summary>
+public sealed record OcctAssembly(string Name, IReadOnlyList<OcctOccurrence> Occurrences)
+{
+    public static OcctAssembly ReadStep(string path)
+    {
+        Check(iso_read_step_assembly(path, out var h));
+        using (h)
+        {
+            Check(iso_assembly_count(h, out var n));
+            var occurrences = new List<OcctOccurrence>();
+            for (var i = 0; i < n; i++)
+            {
+                var (name, product) = Names(h, i);
+                var m = new double[12];
+                Check(iso_assembly_placement(h, i, m, out var part));
+                Check(iso_assembly_shape(h, i, out var shape));
+                occurrences.Add(new(name, product, m, part, new OcctShape(shape)));
+            }
+            return new(Names(h, -1).Path, occurrences);
+        }
+    }
+
+    static (string Path, string Product) Names(AssemblyHandle h, int i)
+    {
+        var (path, product) = (new byte[1024], new byte[1024]);
+        Check(iso_assembly_names(h, i, path, product, path.Length));
+        static string Text(byte[] b) => System.Text.Encoding.UTF8.GetString(b, 0, Array.IndexOf(b, (byte)0));
+        return (Text(path), Text(product));
     }
 }
 

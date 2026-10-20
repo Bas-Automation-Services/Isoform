@@ -7,25 +7,38 @@ using Xunit.Abstractions;
 namespace Isoform.Occt.Tests;
 
 /// <summary>
-/// K6: Isoform's own exact B-rep, written as STEP by Isoform and read back by OCCT. OCCT must find a valid solid
-/// with Isoform's face, edge and vertex counts and the analytic volume; where the OCCT baseline can model the same
-/// document, every vertex and edge must also lie within the modelling tolerance of OCCT's own.
+/// K6: Isoform's own exact B-rep, written as STEP by Isoform and read back by OCCT. OCCT must find valid solids with
+/// the B-rep's face, edge and vertex counts and the analytic volume, both with its reader's shape healing and without
+/// it (so the file itself is complete); where the OCCT baseline can model the same document, every vertex and edge
+/// must also lie within the modelling tolerance of OCCT's own.
 /// </summary>
 public class StepExportTests(ITestOutputHelper output)
 {
     static readonly SketchPlane Xy = new([0, 0, 0], [1, 0, 0], [0, 0, 1]);
     static readonly SketchPlane Xz = new([0, 0, 0], [1, 0, 0], [0, -1, 0]);
+    static readonly SketchPlane Top = new([0, 0, 10], [1, 0, 0], [0, 0, 1]);
     static readonly Block Plate = new("plate", BooleanOp.New, [0, 0, 0], [100, 50, 10]);
 
     static Profile Loop(double[] start, params (string Id, double U, double V, double Bulge)[] edges) =>
         new(start, edges.Select(e => new ProfileEdge(e.Id, [e.U, e.V], e.Bulge)).ToList());
 
+    static Profile Rectangle(double x0, double y0, double x1, double y1) =>
+        Loop([x0, y0], ("s", x1, y0, 0), ("e", x1, y1, 0), ("n", x0, y1, 0), ("w", x0, y0, 0));
+
+    // A stadium 20 long between two R5 ends, from (40, 20) to (60, 30).
+    static Profile Stadium() => Loop([40, 20], ("a", 60, 20, 0), ("right", 60, 30, 1), ("b", 40, 30, 0), ("left", 40, 20, 1));
+
     /// <summary>
-    /// A part and its analytic volume. OCCT's volume of the read-back file agrees to round-off, except where the
-    /// reader has to rebuild a non-circular closed curve's parameter-space image (the file carries 3D curves only):
-    /// that integration loosens the volume to about 1e-7 while the geometry itself matches OCCT's to 1e-13.
+    /// A part and its analytic volume. <paramref name="Healed"/>: the file still needs the reader's healing (a sphere
+    /// cap holding a pole needs a degenerate edge there, which STEP cannot say).
     /// </summary>
-    public sealed record Part(string Name, PartDocument Doc, double Volume, double VolumeTolerance = 1e-9);
+    public sealed record Part(string Name, PartDocument Doc, double Volume, int Solids = 1, bool Healed = false);
+
+    // The corner a rolling ball of radius r leaves out of a right-angled edge, its centroid's distance from either
+    // face, and what two such edges mitring at a convex corner leave out twice (2 · area · centroid).
+    static double Spandrel(double r) => r * r * (1 - Math.PI / 4);
+    static double Centroid(double r) => r * (5.0 / 6 - Math.PI / 4) / (1 - Math.PI / 4);
+    static double Mitre(double r) => r * r * r * (5.0 / 3 - Math.PI / 2);
 
     public static IEnumerable<Part> Parts()
     {
@@ -53,7 +66,11 @@ public class StepExportTests(ITestOutputHelper output)
         // Beyond planes and cylinders: cones, spheres, tori, ellipses, a cylinder merged from two arcs.
         yield return new("cone with a dome", new([new Revolve("nose", BooleanOp.New, Xz, Loop([0, 0],
             ("base", 10, 0, 0), ("side", 10, 10, 0), ("cone", 5, 20, 0), ("dome", 0, 25, Math.Tan(Math.PI / 8)), ("axis", 0, 0, 0)))]),
-            Math.PI * (1000 + 10.0 / 3 * (100 + 50 + 25) + 2.0 / 3 * 125));
+            Math.PI * (1000 + 10.0 / 3 * (100 + 50 + 25) + 2.0 / 3 * 125), Healed: true);
+        // A shallower dome: a cap of less than a hemisphere, whose poles the placement turns away.
+        yield return new("flat dome", new([new Revolve("cap", BooleanOp.New, Xz, Loop([0, 0],
+            ("base", 8, 0, 0), ("side", 8, 4, 0), ("dome", 0, 20 - Math.Sqrt(192), Math.Tan(Math.PI / 24)), ("axis", 0, 0, 0)))]),
+            Math.PI * 64 * 4 + Math.PI * Math.Pow(16 - Math.Sqrt(192), 2) * (3 * 16 - (16 - Math.Sqrt(192))) / 3);
         yield return new("torus", new([new Revolve("ring", BooleanOp.New, Xz, Loop([20, -3], ("outer", 20, 3, 1), ("inner", 20, -3, 1)))]),
             2 * Math.PI * Math.PI * 20 * 9);
         yield return new("quarter turn", new([new Revolve("elbow", BooleanOp.New, Xz, Loop([5, 0],
@@ -69,21 +86,48 @@ public class StepExportTests(ITestOutputHelper output)
                 Plate,
                 new Hole("hole", [30, 25], 10),
                 new PlaneCut("cut", [20, 25, 10], [slope, 0, 1]),
-            ]), Prism(slope) - Math.PI * 25 * (10 - 10 * slope), VolumeTolerance: 1e-6);
+            ]), Prism(slope) - Math.PI * 25 * (10 - 10 * slope));
 
         // Rolling-ball fillets between planes are cylinders, between a plane and a perpendicular cylinder tori.
-        var corner = 1 - Math.PI / 4; // the section a fillet of radius 1 cuts off a right-angled edge
-        yield return new("edit-suite base", EditSuite.Base, 50000 - Math.PI * 25 * 10 - corner * 4 * 50);
-        // Pappus: the cut-off section, of area corner·r², sits x̄ outside the hole wall.
-        var centroid = 2 * (5.0 / 6 - Math.PI / 4) / corner;
+        yield return new("edit-suite base", EditSuite.Base, 50000 - Math.PI * 25 * 10 - Spandrel(1) * 4 * 50);
+        // Pappus: the cut-off section sits its centroid outside the hole wall.
         yield return new("filleted hole edge", new([Plate, new Hole("hole", [30, 25], 10), new Fillet("round", ["plate/z+", "hole/wall"], 2)]),
-            50000 - Math.PI * 25 * 10 - 2 * Math.PI * (5 + centroid) * corner * 4);
+            50000 - Math.PI * 25 * 10 - 2 * Math.PI * (5 + Centroid(2)) * Spandrel(2));
         yield return new("L bracket with inside fillet", new(
             [
                 new Extrude("bracket", BooleanOp.New, Xy, Loop([0, 0],
                     ("bottom", 40, 0, 0), ("tip", 40, 5, 0), ("inner", 5, 5, 0), ("riser", 5, 30, 0), ("top", 0, 30, 0), ("back", 0, 0, 0)), 0, 20),
                 new Fillet("inside", ["bracket/inner", "bracket/riser"], 3),
-            ]), (40 * 5 + 5 * 25 + corner * 9) * 20);
+            ]), (40 * 5 + 5 * 25 + Spandrel(3)) * 20);
+
+        // Loop fillets and chamfers: cylinders along lines and tori along arcs (planes and cones for a chamfer),
+        // tangent where a line runs into an arc, mitred at convex corners.
+        var boss = 50000 + (20 * 10 + Math.PI * 25) * 8;
+        yield return new("boss with a loop round", new([Plate, new Extrude("boss", BooleanOp.Join, Top, Stadium(), 0, 8), new Fillet("round", [], 1, Loop: "boss/end")]),
+            boss - 40 * Spandrel(1) - 2 * Math.PI * (5 - Centroid(1)) * Spandrel(1));
+        yield return new("boss with a loop chamfer", new([Plate, new Extrude("boss", BooleanOp.Join, Top, Stadium(), 0, 8), new Chamfer("cut", [], 1, Loop: "boss/end")]),
+            boss - 40 * 0.5 - 2 * Math.PI * (5 * 0.5 - 1.0 / 6));
+        yield return new("outline with a loop round", new([new Extrude("outline", BooleanOp.New, Xy, Rectangle(0, 0, 60, 40), 0, 10), new Fillet("round", [], 2, Loop: "outline/end")]),
+            60 * 40 * 10 - 200 * Spandrel(2) + 4 * Mitre(2));
+        yield return new("pocket floor with a loop round", new(
+                [Plate, new Extrude("pocket", BooleanOp.Cut, Xy, Rectangle(20, 10, 60, 40), 4, 11), new Fillet("floor", [], 2, Loop: "pocket/start")]),
+            50000 - 40 * 30 * 6 + 140 * Spandrel(2) - 4 * Mitre(2));
+        yield return new("rim of a cut-out with a loop round", new([Plate, new Extrude("slot", BooleanOp.Cut, Xy, Stadium(), -1, 11), new Fillet("round", [], 1, Loop: "plate/z+")]),
+            50000 - (20 * 10 + Math.PI * 25) * 10 - (300 * Spandrel(1) - 4 * Mitre(1)) - 40 * Spandrel(1) - 2 * Math.PI * (5 + Centroid(1)) * Spandrel(1));
+        // A circle of two arcs: the loop's torus is two faces, whose edges are the tube circles at the arcs' joints.
+        yield return new("clamp: one torus in two faces", new(
+                [new Extrude("clamp", BooleanOp.New, Xy, Loop([-12, 0], ("a", 12, 0, 1), ("b", -12, 0, 1)), 0, 14), new Hole("bore", [0, 0], 10), new Fillet("lip", [], 1.5, Loop: "clamp/end")]),
+            Math.PI * (144 - 25) * 14 - 2 * Math.PI * (12 - Centroid(1.5)) * Spandrel(1.5) - 2 * Math.PI * (5 + Centroid(1.5)) * Spandrel(1.5));
+
+        // Shells: the cavity is a void of the solid.
+        yield return new("shelled block", new([new Block("box", BooleanOp.New, [0, 0, 0], [40, 30, 20]), new Shell("shell", 2)]), 24000 - 36 * 26 * 16);
+        yield return new("shelled plate with hole", new([Plate, new Hole("hole", [30, 25], 10), new Shell("shell", 1.5)]),
+            50000 - Math.PI * 25 * 10 - (97 * 47 * 7 - Math.PI * 6.5 * 6.5 * 7));
+        yield return new("shelled edit-suite base", new([.. EditSuite.Base.Features, new Shell("shell", 1)]),
+            50000 - Math.PI * 25 * 10 - Spandrel(2) * 50 - (98 * 48 * 8 - Math.PI * 36 * 8 - Spandrel(1) * 48));
+
+        // Bodies stay solids of their own.
+        yield return new("two overlapping bodies", new([Plate, new Block("post", BooleanOp.New, [40, 15, 5], [20, 20, 30])]), 50000 + 12000, Solids: 2);
     }
 
     /// <summary>The plate below z = 10 − (x − 20)·slope, clipped at z = 0.</summary>
@@ -105,18 +149,24 @@ public class StepExportTests(ITestOutputHelper output)
         frep.Diagnostics.Should().BeEmpty();
         var t = frep.Topology!;
 
-        var (brep, shape) = RoundTrip(frep, settings, name);
+        var (brep, shape, raw) = RoundTrip(frep, settings, name);
         var counts = Counts(shape);
-        output.WriteLine($"Isoform: {t.Faces.Count}F {t.Edges.Count}E {t.Vertices.Count}V; B-rep {brep.Edges.Count} edges, {brep.Vertices.Count} vertices");
+        output.WriteLine($"Isoform: {t.Faces.Count}F {t.Edges.Count}E {t.Vertices.Count}V; B-rep {Counts(brep)}");
         output.WriteLine($"OCCT:    {counts.Faces}F {counts.Edges}E {counts.Vertices}V (all: {shape.EdgeCount} edges, {shape.VertexCount} vertices), valid {shape.IsValid}, {shape.SolidCount} solid(s), max tolerance {shape.MaxTolerance:E2}");
         output.WriteLine($"volume {shape.Volume:R} vs {part.Volume:R}: relative error {Math.Abs(shape.Volume - part.Volume) / part.Volume:E2}");
+        output.WriteLine($"unhealed: valid {raw.IsValid}, max tolerance {raw.MaxTolerance:E2}, relative volume error {Math.Abs(raw.Volume - part.Volume) / part.Volume:E2}");
+        if (!raw.IsValid) output.WriteLine(raw.CheckReport);
 
         shape.IsValid.Should().BeTrue();
-        shape.SolidCount.Should().Be(1);
-        counts.Should().Be((t.Faces.Count, t.Edges.Count, t.Vertices.Count));
+        shape.SolidCount.Should().Be(part.Solids);
+        counts.Should().Be(Counts(brep));
+        // Where more than three faces meet the mesh can split the corner and leave an edge of no length between
+        // its halves; the exact B-rep has the one corner.
+        counts.Faces.Should().Be(t.Faces.Count);
+        counts.Edges.Should().BeInRange(t.Edges.Count - 2, t.Edges.Count);
 
         // The OCCT baseline models blocks, holes, plane cuts and fillets.
-        if (part.Doc.Features.All(f => f is Block or Hole or PlaneCut or Fillet))
+        if (part.Solids == 1 && part.Doc.Features.All(f => f is Block or Hole or PlaneCut or Fillet { Loop: null }))
         {
             var occt = new OcctModeler(settings).Regenerate(part.Doc).Shape!;
             var (vertexGap, edgeGap) = Gaps(shape, occt);
@@ -124,7 +174,11 @@ public class StepExportTests(ITestOutputHelper output)
             vertexGap.Should().BeLessThan(1e-7);
             edgeGap.Should().BeLessThan(1e-7);
         }
-        shape.Volume.Should().BeApproximately(part.Volume, part.Volume * part.VolumeTolerance);
+        shape.Volume.Should().BeApproximately(part.Volume, part.Volume * 1e-11);
+        if (part.Healed) return;
+        raw.IsValid.Should().BeTrue("the file needs no healing");
+        raw.MaxTolerance.Should().BeLessThanOrEqualTo(1e-7);
+        raw.Volume.Should().BeApproximately(part.Volume, part.Volume * 1e-11);
     }
 
     [Fact]
@@ -140,8 +194,50 @@ public class StepExportTests(ITestOutputHelper output)
     }
 
     /// <summary>
+    /// The playground's assembly (two brackets and a pin) as STEP product structure: OCCT's XCAF reader finds one
+    /// product per distinct part, every occurrence under its component id, placed where the assembly put it.
+    /// </summary>
+    [Fact]
+    public void Assembly_reads_back_with_its_product_structure()
+    {
+        var settings = new ModelingSettings { CellSize = 0.5 };
+        var (_, bundle) = Playground.Examples.Bundles.Single();
+        var assembly = new AssemblyModeler(settings).Regenerate(bundle.Assembly, p => bundle.Documents.GetValueOrDefault(p));
+        assembly.Diagnostics.Should().BeEmpty();
+        var path = Path.Combine(Path.GetTempPath(), $"isoform-{Guid.NewGuid():N}.step");
+        File.WriteAllText(path, StepWriter.Write(assembly, settings, "brackets"));
+        var read = OcctAssembly.ReadStep(path);
+        var plain = OcctShape.ReadStep(path, heal: false);
+        File.Delete(path);
+
+        read.Name.Should().Be("brackets");
+        read.Occurrences.Select(o => (o.Path, o.Product)).Should().Equal(("lower", "bracket"), ("upper", "bracket"), ("pin", "pin"));
+        read.Occurrences.Select(o => o.Part).Should().Equal(0, 0, 1);
+        plain.SolidCount.Should().Be(3);
+        plain.IsValid.Should().BeTrue();
+        foreach (var (o, instance) in read.Occurrences.Zip(assembly.Instances))
+        {
+            var f = instance.Placement;
+            double[] expected = [f.X.X, f.Y.X, f.Z.X, f.Origin.X, f.X.Y, f.Y.Y, f.Z.Y, f.Origin.Y, f.X.Z, f.Y.Z, f.Z.Z, f.Origin.Z];
+            o.Placement.Zip(expected).Max(x => Math.Abs(x.First - x.Second)).Should().BeLessThan(1e-12, o.Path);
+            o.Shape.IsValid.Should().BeTrue();
+            // The same solid as the part written alone, and each of its corners, placed, a corner of the occurrence.
+            var brep = ExactBrep.Build(instance.Result, settings);
+            var alone = Path.Combine(Path.GetTempPath(), $"isoform-{Guid.NewGuid():N}.step");
+            StepWriter.Write(brep, alone, instance.Part);
+            o.Shape.Volume.Should().BeApproximately(OcctShape.ReadStep(alone).Volume, 1e-9 * o.Shape.Volume);
+            File.Delete(alone);
+            var corners = brep.Vertices.Select(v => f.ToWorld(v.Point)).ToList();
+            Enumerable.Range(0, o.Shape.VertexCount).Select(o.Shape.VertexPoint)
+                .Max(p => corners.Min(c => Math.Sqrt((c.X - p[0]) * (c.X - p[0]) + (c.Y - p[1]) * (c.Y - p[1]) + (c.Z - p[2]) * (c.Z - p[2]))))
+                .Should().BeLessThan(1e-9, o.Path);
+            output.WriteLine($"{o.Path}: {o.Product}, part {o.Part}, volume {o.Shape.Volume:R}");
+        }
+    }
+
+    /// <summary>
     /// Writes what exports today: every playground example, every edit-suite result and a two-body part, with
-    /// OCCT's verdict on the read-back file or the reason the export stopped.
+    /// OCCT's verdict on the read-back file (with and without its healing) or the reason the export stopped.
     /// </summary>
     [Fact]
     public void Report_export_coverage()
@@ -155,39 +251,40 @@ public class StepExportTests(ITestOutputHelper output)
         }
         parts.Add(("two overlapping bodies", new PartDocument([Plate, new Block("post", BooleanOp.New, [40, 15, 5], [20, 20, 30])])));
 
-        output.WriteLine("| Part | Isoform F/E/V | OCCT read-back | Volume vs mesh |");
-        output.WriteLine("|---|---|---|---|");
+        output.WriteLine("| Part | Isoform F/E/V | OCCT read-back | Unhealed | Volume vs mesh |");
+        output.WriteLine("|---|---|---|---|---|");
         foreach (var (name, doc) in parts)
         {
             var frep = new FrepModeler(settings).Regenerate(doc);
             if (frep.Topology is not { } t)
             {
-                output.WriteLine($"| {name} | no geometry | – | – |");
+                output.WriteLine($"| {name} | no geometry | – | – | – |");
                 continue;
             }
             try
             {
-                var (_, shape) = RoundTrip(frep, settings, name);
+                var (brep, shape, raw) = RoundTrip(frep, settings, name);
                 var counts = Counts(shape);
                 var same = counts == (t.Faces.Count, t.Edges.Count, t.Vertices.Count) ? "same F/E/V" : $"{counts.Faces}/{counts.Edges}/{counts.Vertices}";
                 var mesh = MeshVolume(frep.Mesh!);
-                output.WriteLine($"| {name} | {t.Faces.Count}/{t.Edges.Count}/{t.Vertices.Count} | {(shape.IsValid ? "valid" : "**invalid**")}, {shape.SolidCount} solid(s), {same}, tolerance {shape.MaxTolerance:G2} | {(shape.Volume - mesh) / mesh:E1} |");
+                output.WriteLine($"| {name} | {t.Faces.Count}/{t.Edges.Count}/{t.Vertices.Count} | {(shape.IsValid ? "valid" : "**invalid**")}, {shape.SolidCount} solid(s), {same}, tolerance {shape.MaxTolerance:G2} " +
+                                 $"| {(raw.IsValid ? "valid" : "**invalid**")}, tolerance {raw.MaxTolerance:G2} | {(shape.Volume - mesh) / mesh:E1} |");
             }
             catch (Exception e) when (e is NotSupportedException or OcctException)
             {
-                output.WriteLine($"| {name} | {t.Faces.Count}/{t.Edges.Count}/{t.Vertices.Count} | not exported: {e.Message} | – |");
+                output.WriteLine($"| {name} | {t.Faces.Count}/{t.Edges.Count}/{t.Vertices.Count} | not exported: {e.Message} | – | – |");
             }
         }
     }
 
-    static (Brep Brep, OcctShape Shape) RoundTrip(FrepResult frep, ModelingSettings settings, string name)
+    static (Brep Brep, OcctShape Healed, OcctShape Unhealed) RoundTrip(FrepResult frep, ModelingSettings settings, string name)
     {
         var brep = ExactBrep.Build(frep, settings);
         var path = Path.Combine(Path.GetTempPath(), $"isoform-{Guid.NewGuid():N}.step");
         StepWriter.Write(brep, path, name);
-        var shape = OcctShape.ReadStep(path);
+        var (shape, raw) = (OcctShape.ReadStep(path), OcctShape.ReadStep(path, heal: false));
         File.Delete(path);
-        return (brep, shape);
+        return (brep, shape, raw);
     }
 
     static double MeshVolume(Meshing.Mesh mesh)
@@ -201,6 +298,15 @@ public class StepExportTests(ITestOutputHelper output)
         s.FaceCount,
         Enumerable.Range(0, s.EdgeCount).Count(e => s.EdgeFaces(e).Length == 2),
         Enumerable.Range(0, s.VertexCount).Count(v => s.VertexFaces(v).Length >= 3));
+
+    /// <summary>The same counts of the B-rep itself.</summary>
+    static (int Faces, int Edges, int Vertices) Counts(Brep b)
+    {
+        var faces = b.Solids.SelectMany(s => s.Faces).ToList();
+        var facesOfEdge = b.Edges.Select(e => faces.Where(f => f.Loops.Any(l => l.Coedges.Any(c => c.Edge == e.Index))).Count()).ToList();
+        var facesOfVertex = b.Vertices.Select(v => faces.Count(f => f.Loops.Any(l => l.Coedges.Any(c => b.Edges[c.Edge].Start == v.Index || b.Edges[c.Edge].End == v.Index)))).ToList();
+        return (faces.Count, facesOfEdge.Count(n => n == 2), facesOfVertex.Count(n => n >= 3));
+    }
 
     /// <summary>
     /// The largest distance from a corner of <paramref name="a"/> to the nearest corner of <paramref name="b"/> (and
