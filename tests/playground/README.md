@@ -62,6 +62,7 @@ page's worker calls. For every example from `Examples()`, at the page's default 
 
 It prints the kernel time, triangles, faces and diagnostics per example. A broken document must come back as
 `{error}`, not as an exception, and a bad edit as `{error, failedEdit}`. `Apply(old, Diff(old, new))` must give `new`.
+`Handles(slot)` gives the handles of that slot's last regeneration, with its hash.
 `Resolve` pins `plate/z+` by index, returns it by name, and reports it split after a cut across it.
 
 **`e2e.mjs`** serves the folder with `serve.mjs`, opens `?example=N` for every example and waits (in real time) for the

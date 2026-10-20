@@ -65,6 +65,19 @@ test('Apply(old, Diff(old, new)) gives new', () => {
     [{ set: 'plate.size.0', value: 120 }]);
 });
 
+test('Handles(slot) gives the handles of the slot\'s last regeneration', () => {
+  const [, document] = examples[0];
+  const r = JSON.parse(kernel.Regenerate(document, '[]', cell, chord, 'main'));
+  const { slot, hash, handles } = JSON.parse(kernel.Handles('main'));
+  assert.equal(slot, 'main');
+  assert.equal(hash, r.hash);
+  const x = handles.find(h => h.id === 'plate:x+');
+  assert.equal(x.kind, 'linear');
+  assert.deepEqual(x.axis, [1, 0, 0]);
+  assert.deepEqual(x.edits, [{ path: 'plate.size.0', base: 100, per: [1] }]);
+  assert.deepEqual(JSON.parse(kernel.Handles('nothing')).handles, []);
+});
+
 test('Resolve: a pin by index comes back by name, and a cut across plate/z+ splits it', () => {
   const [, document] = examples[0];
   const r = JSON.parse(kernel.Regenerate(document, '[]', cell, chord, 'main'));
