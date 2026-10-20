@@ -277,6 +277,32 @@ the corner between them open); fillets on cone, sphere and torus edges; a fillet
 part against a face of the tool); a single-edge fillet on a swept edge the profile is not behind; offsetting a shell. The OCCT baseline does not run the new features, so
 they are checked against analytic answers only; cross-checking them is part of K7.
 
+**K5 — queries (done).** On one body's field, checked against analytic answers (`QueryTests`):
+- *Ray hit:* Lipschitz sphere tracing then bracketed root finding; point on the boundary to ~1e-12, face named.
+- *Distance:* a certified interval [lower, upper] and the closest point; collapses to ≤ 4e-12 on the test cases.
+- *Clearance and interference* between two solids: certified branch-and-bound; facing planes, coaxial pin and bore
+  and convex shapes are exact at once; interference reports the penetration (−2 exactly for a 2 mm overlap).
+- *Minimum wall:* inward ray from the surface, like a caliper; 0.8 mm web and 1.5 mm shell measured exactly; not
+  certified (a spot narrower than the mesh polygons can fall between seeds). On the 20-op part it found a real
+  knife edge where `cut3/x+` runs through hole `h6`.
+- *Mass properties:* volume, area, centroid, inertia from the mesh with curvature correction (errors 1e-10 to
+  5e-7), plus a certified volume range.
+
+**K6 spike — exact B-rep / STEP (works for the analytic case).** `src/Isoform.Step` writes STEP from Isoform's own
+exact B-rep; OCCT reads every one of 15 parts back as one valid solid with Isoform's face/edge/vertex counts, volume
+equal to the analytic value to ≤ 3e-16 (one oblique-cut part 1.8e-7: the file has no 2D p-curves yet), and vertices
+and edges within 1e-13 of OCCT's own model. Covered: planes, cylinders, cones, spheres, tori, plane–plane and
+plane–cylinder fillets, tangent edges, seams. Not yet: loop fillets (mapping work), shell voids, p-curves; smooth
+blends and general fillets have no closed form and would need approximated surfaces: the exactness boundary of
+the implicit approach.
+
+**Assemblies, steps one and two (done).** Assembly documents with placed instances (one regeneration per distinct
+part), occurrence names, pinned hashes, sub-assemblies, bundles; mates (mate, flush, axis) solved by damped
+Gauss-Newton with the free degrees of freedom counted; clearance and interference between instances.
+
+**Review.** An independent read of the K4 code found 15 problems (wrong geometry without a diagnostic in several);
+all fixed, each with a regression test (`ReviewFindingTests`).
+
 ## 15. Where this stands (2026-10-20)
 
 **Is it adding something?** The pieces exist elsewhere: implicit kernels (nTop, libfive, Fidget) never fail a
