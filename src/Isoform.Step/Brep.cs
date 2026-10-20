@@ -39,5 +39,6 @@ public sealed record BrepShell(IReadOnlyList<BrepFace> Faces);
 /// <summary>A solid bounded by an outer shell and any number of inner shells (voids, such as a shell's cavity).</summary>
 public sealed record BrepSolid(string Name, BrepShell Outer, IReadOnlyList<BrepShell> Voids)
 {
-    public IEnumerable<BrepFace> Faces => Outer.Faces.Concat(Voids.SelectMany(v => v.Faces));
+    /// <summary>Every face: the outer shell's, then the voids'.</summary>
+    public IReadOnlyList<BrepFace> Faces => [.. Outer.Faces, .. Voids.SelectMany(v => v.Faces)];
 }
