@@ -16,6 +16,7 @@ public sealed class FrepModeler(ModelingSettings settings) : IModeler
     {
         var part = new Compiler(Settings).Compile(document);
         if (part.Field is null) return new FrepResult(part.Diagnostics, null, part, null, [], []);
+        document = Parametric.Resolve(document);
 
         var diagnostics = part.Diagnostics.ToList();
         // Each body is a solid of its own, meshed and given topology alone, so overlapping bodies stay apart. The
