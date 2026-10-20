@@ -13,7 +13,8 @@ node tests/playground/run.mjs path/to/wwwroot      # or any other published wwwr
 The parts on their own:
 
 ```sh
-node --test tests/playground/kernel-client.test.mjs tests/playground/store.test.mjs tests/playground/diagnose.test.mjs   # front end only
+node --test tests/playground/kernel-client.test.mjs tests/playground/store.test.mjs tests/playground/diagnose.test.mjs \
+  tests/playground/references.test.mjs   # front end only
 node --test tests/playground/kernel.test.mjs       # kernel only; ISOFORM_PLAYGROUND=<wwwroot> to point elsewhere
 node tests/playground/e2e.mjs [wwwroot]            # browser only
 node tests/playground/serve.mjs [wwwroot] [port]   # serve the page to look at it yourself (default port 8137)
@@ -40,6 +41,9 @@ definition names (a fillet's edge); a thin spot's thinnest point; the cell that 
 (size / 2, at least half the current cell, on a round value: a 0.6 mm wall at 0.5 mm cells gives 0.25 mm); preview
 results grey out their below-resolution reports; the valid / N problems verdict.
 
+**`references.test.mjs`**: what a selection pins (an edge, a face by name, or by index when it is the face
+clicked), and the kernel's replies folded into the pins by id.
+
 **`kernel.test.mjs`** loads `_framework/dotnet.js` from the published folder in Node and calls the same exports the
 page's worker calls. For every example from `Examples()`, at the page's default settings (0.5 mm cells, 0.05 mm chord):
 
@@ -50,6 +54,7 @@ page's worker calls. For every example from `Examples()`, at the page's default 
 
 It prints the kernel time, triangles, faces and diagnostics per example. A broken document must come back as
 `{error}`, not as an exception, and a bad edit as `{error, failedEdit}`. `Apply(old, Diff(old, new))` must give `new`.
+`Resolve` pins `plate/z+` by index, returns it by name, and reports it split after a cut across it.
 
 **`e2e.mjs`** serves the folder with `serve.mjs`, opens `?example=N` for every example and waits (in real time) for the
 stats line under the editor (`#stats`) to show a result. An example passes when that line names one or more faces,
@@ -60,7 +65,8 @@ face names are still selected. Last, diagnostics: example 0 with its hole moved 
 below-resolution thin spot between `plate/y+` and `hole/wall`; clicking it in the list lights both faces in two colours
 and flies the camera there (`out/screenshots/diagnostics.png`); "Resolve at 0.25 mm" regenerates the same document at
 0.25 mm cells with the report gone and the verdict Valid; "back to 0.5 mm" brings it back; a fillet radius of 12 mm gives
-`fillet-invalid`, lights the edge it names and keeps the rest of the part.
+`fillet-invalid`, lights the edge it names and keeps the rest of the part. Then pins: `plate/z+` pinned on example 0
+(`window.isoform.pin`), a slot edited in across it, and the pin shows `split`, lit when clicked (`out/screenshots/pins.png`).
 
 ## Screenshots
 
@@ -84,7 +90,7 @@ Coordinates are CSS pixels in the viewport. The page exposes `window.isoform`: `
 `document()`, `hash()`, `selection()` (face names), `faces()` (each face's names), `select(names)` and `edit(text)`
 (resolves once that text has regenerated); for diagnostics `diagnostics()` (as listed), `focusDiagnostic(index)`,
 `marked()` (the faces lit for the one in focus, with their colours), `cell()` (the cell the result was made at),
-`target()` (where the camera looks) and `resolve(cell)`. Later tasks add to it, for example handles:
+`target()` (where the camera looks) and `resolve(cell)`; for reference pins `pins()` and `pin(name | [a, b])` (resolves to the pin). Later tasks add to it, for example handles:
 
 ```js
 const page = await browser.newPage();

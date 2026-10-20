@@ -17,7 +17,8 @@ if (args.includes('--publish') && !run('dotnet', ['publish', 'src/Isoform.Playgr
 const root = publishedRoot(args.find(a => !a.startsWith('--')));
 console.log(`Testing the playground in ${root}\n`);
 
-const units = run(process.execPath, ['--test', join(here, 'kernel-client.test.mjs'), join(here, 'store.test.mjs'), join(here, 'diagnose.test.mjs')]);
+const units = run(process.execPath, ['--test', join(here, 'kernel-client.test.mjs'), join(here, 'store.test.mjs'),
+  join(here, 'diagnose.test.mjs'), join(here, 'references.test.mjs')]);
 console.log();
 const kernel = run(process.execPath, ['--test', join(here, 'kernel.test.mjs')], { ISOFORM_PLAYGROUND: root });
 console.log();
