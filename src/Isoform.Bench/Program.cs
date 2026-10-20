@@ -107,6 +107,42 @@ foreach (var (name, doc) in parts)
     }
 }
 
+// Incremental regeneration of the 20-op part: a region cache keeps every region an edit leaves alone. Best of 5,
+// against regenerating the edited part without a cache.
+Console.WriteLine("\n== 20 operations, regenerate after a small edit (mesh + topology, region cache)");
+var twenty = parts[2].Doc;
+PartDocument Edit(string id, Func<Feature, Feature> change) => new(twenty.Features.Select(f => f.Id == id ? change(f) : f).ToList());
+var edits = new (string Name, PartDocument Doc)[]
+{
+    ("move hole h4 by 5 mm", Edit("h4", f => (Hole)f with { Center = [55, 12] })),
+    ("fillet f1 radius 2 -> 2.5", Edit("f1", f => (Fillet)f with { Radius = 2.5 })),
+    ("tab1 2 mm longer (bounding box moves)", Edit("tab1", f => (Block)f with { Origin = [-22, 10, 0], Size = [32, 30, 10] })),
+};
+foreach (var (h, chord) in new[] { (0.5, 0.02), (0.25, 0.0054) })
+foreach (var snap in new[] { false, true })
+{
+    var s = new ModelingSettings { CellSize = h, ChordTolerance = chord, SnapGrid = snap };
+    double Best(Func<double> run) => Enumerable.Range(0, 5).Min(_ => run());
+    double Time(Action a) { var sw = Stopwatch.StartNew(); a(); return sw.Elapsed.TotalMilliseconds; }
+    Console.WriteLine($"  h={h} chord={chord}{(snap ? ", snapped grid" : "")}");
+    foreach (var (name, doc) in edits)
+    {
+        var cold = Best(() => Time(() => new FrepModeler(s).Regenerate(doc)));
+        var (hits, misses) = (0, 0);
+        var warm = Best(() =>
+        {
+            var cache = new RegionCache();
+            var modeler = new FrepModeler(s, cache);
+            modeler.Regenerate(twenty);
+            cache.Sweep();
+            var t = Time(() => modeler.Regenerate(doc));
+            (hits, misses) = cache.Sweep();
+            return t;
+        });
+        Console.WriteLine($"    {name,-40} cold {cold,5:N0} ms, after the edit {warm,5:N0} ms ({misses} of {hits + misses} regions meshed)");
+    }
+}
+
 // The same parts on OCCT: regenerate from the document, then tessellate at the chord accuracy our mesh
 // reaches at 0.5 / 0.25 / 0.1 mm cells. Best of 3 runs (the first includes warm-up).
 if (OcctModeler.IsAvailable)

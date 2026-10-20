@@ -172,22 +172,29 @@ function showSelection() {
   selectionBox.hidden = false;
 }
 
-// ---- Regeneration in the worker -----------------------------------------------------------------------------
+// ---- Regeneration in the workers ----------------------------------------------------------------------------
 
-const kernel = new Worker('kernel.js', { type: 'module' });
-let busy = false, pending = false, fitNext = true, timer = 0;
+// A pool of workers, each with its own kernel, meshes the regions of the part in parallel (up to 8; ?workers=N sets
+// the number). The first worker gathers the others' regions and regenerates; only it answers.
+const asked = +new URLSearchParams(location.search).get('workers');
+const kernels = Array.from({ length: asked > 0 ? asked : Math.min(navigator.hardwareConcurrency || 1, 8) },
+  () => new Worker('kernel.js', { type: 'module' }));
+let busy = false, pending = false, fitNext = true, timer = 0, run = 0, started = 0;
 
 function regenerate() {
   // One run at a time; edits made meanwhile are folded into a single next run.
   if (busy) { pending = true; return; }
   busy = true;
   stats.textContent = 'Regenerating…';
-  kernel.postMessage({ document: editor.value, cell: +$('cell').value, chord: +$('chord').value });
+  started = performance.now();
+  const message = { type: 'regenerate', id: ++run, document: editor.value, cell: +$('cell').value, chord: +$('chord').value };
+  for (const kernel of kernels) kernel.postMessage(message);
 }
 
 function received(result) {
   busy = false;
   const { info } = result;
+  const ms = performance.now() - started;
   if (info.error) {
     editor.classList.add('bad');
     parse.textContent = info.error;
@@ -197,7 +204,9 @@ function received(result) {
     parse.textContent = '';
     show(result, fitNext);
     fitNext = false;
-    stats.textContent = `${info.ms.toFixed(0)} ms · ${info.triangles.toLocaleString()} triangles · `
+    const regions = info.meshed + info.reused;
+    stats.textContent = `${ms.toFixed(0)} ms · ${kernels.length} worker${kernels.length > 1 ? 's' : ''}, `
+      + `${info.meshed} of ${regions} regions meshed · ${info.triangles.toLocaleString()} triangles · `
       + `${info.faces.length} faces, ${info.edges} edges, ${info.vertices} vertices · `
       + (info.bodies.length === 1 ? '1 body' : `${info.bodies.length} bodies: ${info.bodies.map(b => b.name).join(', ')}`);
     diagnostics.replaceChildren(...info.diagnostics.map(d => {
@@ -272,5 +281,16 @@ function start(examplesText) {
   regenerate();
 }
 
-kernel.onmessage = ({ data }) => data.type === 'ready' ? start(data.examples) : received(data);
-kernel.onerror = e => report(e.message ?? 'the kernel worker failed to start');
+// Once every worker has loaded its kernel: a message port from each helper to the first, then the first run.
+let loaded = 0;
+kernels.forEach((kernel, index) => {
+  kernel.onmessage = ({ data }) => {
+    if (data.type !== 'ready') { received(data); return; }
+    if (++loaded < kernels.length) return;
+    const channels = kernels.slice(1).map(() => new MessageChannel());
+    kernels[0].postMessage({ type: 'pool', index: 0, count: kernels.length, ports: channels.map(c => c.port1) }, channels.map(c => c.port1));
+    channels.forEach((c, i) => kernels[i + 1].postMessage({ type: 'pool', index: i + 1, count: kernels.length, ports: [c.port2] }, [c.port2]));
+    start(data.examples);
+  };
+  kernel.onerror = e => report(e.message ?? `kernel worker ${index} failed to start`);
+});
