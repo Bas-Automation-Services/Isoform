@@ -4,7 +4,7 @@ using Isoform.Document;
 using Isoform.Geometry;
 using Isoform.Meshing;
 using Isoform.Modeling;
-using Isoform.Playground;
+using Isoform.Interactive;
 
 namespace Isoform.Tests;
 

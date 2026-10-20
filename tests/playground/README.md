@@ -26,11 +26,13 @@ from a CDN, so the browser run needs a network connection.
 **`kernel.test.mjs`** loads `_framework/dotnet.js` from the published folder in Node and calls the same exports the
 page's worker calls. For every example from `Examples()`, at the page's default settings (0.5 mm cells, 0.05 mm chord):
 
-- `Regenerate` returns no `error`, at least one face and triangle, and no `invalid-parameter` diagnostic;
-- `Positions()` and `Faces()` hold three corners and one face index per triangle.
+- `Regenerate` returns result v2 (`src/Isoform.Interactive/README.md`) with no `error`, the example's own canonical
+  text and a hash, at least one face and triangle, and no `invalid-parameter` diagnostic;
+- `Positions()` and `Faces()` hold three corners and one face index per triangle, the line buffers two end points and
+  one `lineFaces` index per segment.
 
 It prints the kernel time, triangles, faces and diagnostics per example. A broken document must come back as
-`{error}`, not as an exception.
+`{error}`, not as an exception, and a bad edit as `{error, failedEdit}`. `Apply(old, Diff(old, new))` must give `new`.
 
 **`e2e.mjs`** serves the folder with `serve.mjs`, opens `?example=N` for every example and waits (in real time) for the
 stats line under the editor (`#stats`) to show a result. An example passes when that line names one or more faces,

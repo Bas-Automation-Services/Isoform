@@ -1,7 +1,7 @@
 using System.Text.Json.Nodes;
 using Isoform.Document;
 using Isoform.Modeling;
-using Isoform.Playground;
+using Isoform.Interactive;
 
 namespace Isoform.Tests;
 
