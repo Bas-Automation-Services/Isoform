@@ -15,6 +15,12 @@ public sealed record ModelingSettings
 
     /// <summary>Largest distance in mm the mesh may stray from a curved surface away from its edges.</summary>
     public double ChordTolerance { get; init; } = 0.01;
+
+    /// <summary>
+    /// Put the cell lattice on a fixed world grid instead of the part's corner, so an edit that moves the bounding
+    /// box keeps the cached regions it did not touch. Another lattice gives another (equally valid) mesh.
+    /// </summary>
+    public bool SnapGrid { get; init; }
 }
 
 /// <summary>Something the user or agent must know about: invalid input, degenerate geometry, a feature that failed.</summary>

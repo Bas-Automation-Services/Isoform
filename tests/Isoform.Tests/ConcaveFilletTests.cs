@@ -157,7 +157,7 @@ public class ConcaveFilletTests(ITestOutputHelper output)
 
     public static IEnumerable<object[]> Parts => [["pocket"], ["box boss"], ["round boss"], ["outline"], ["bracket"], ["shaft"]];
 
-    static PartDocument Part(string name) => name switch
+    internal static PartDocument Part(string name) => name switch
     {
         "pocket" => Pocket("x-", "y-", "x+", "y+"),
         "box boss" => BoxBoss(),

@@ -16,8 +16,10 @@ public static class TopologyBuilder
 
     public static Result Build(Mesh mesh, IReadOnlyList<Surface> surfaces, double tolerance)
     {
-        var quads = mesh.Quads;
-        var quadCount = quads.Count;
+        // Plain arrays: in WebAssembly, arrays of structs read through IReadOnlyList are many times slower.
+        var quads = mesh.Quads.ToArray();
+        var vertices = mesh.Vertices.ToArray();
+        var quadCount = quads.Length;
 
         // Owners on the same geometric surface share a class.
         var classes = new UnionFind(surfaces.Count);
@@ -26,7 +28,7 @@ public static class TopologyBuilder
             if (surfaces[i].SameGeometry(surfaces[j], tolerance)) classes.Union(i, j);
         var surfaceClass = Enumerable.Range(0, surfaces.Count).Select(classes.Find).ToArray();
 
-        var incident = new Incidence(mesh);
+        var incident = new Incidence(quads, vertices.Length);
 
         // Neighbour quads across each of the four edges (one per edge on a manifold mesh, more otherwise).
         var bodies = new UnionFind(quadCount);
@@ -47,12 +49,11 @@ public static class TopologyBuilder
                 }
             }
 
-        var faceIndex = Number(quadCount, faces);
+        var (faceIndex, faceCount) = Number(quadCount, faces);
         var faceOfQuad = new int[quadCount];
         for (var q = 0; q < quadCount; q++) faceOfQuad[q] = faceIndex[faces.Find(q)];
-        var bodyOfQuad = Bodies(mesh, bodies);
+        var bodyOfQuad = Bodies(vertices, quads, bodies);
 
-        var faceCount = faceIndex.Count;
         var faceOwners = Enumerable.Range(0, faceCount).Select(_ => new HashSet<int>()).ToArray();
         var faceBody = new int[faceCount];
         for (var q = 0; q < quadCount; q++)
@@ -65,7 +66,7 @@ public static class TopologyBuilder
 
         // Edges: connected chains of mesh edges separating two faces. Each mesh edge is visited once, from the
         // lowest-numbered quad around it.
-        var segments = new List<(int A, int B, int V1, int V2)>();
+        var segments = new List<Segment>();
         for (var q = 0; q < quadCount; q++)
             for (var e = 0; e < 4; e++)
             {
@@ -86,26 +87,35 @@ public static class TopologyBuilder
                 fs.Sort();
                 for (var i = 0; i < fs.Count; i++)
                 for (var j = i + 1; j < fs.Count; j++)
-                    segments.Add((fs[i], fs[j], Math.Min(a, b), Math.Max(a, b)));
+                    segments.Add(new(fs[i], fs[j], Math.Min(a, b), Math.Max(a, b)));
             }
-        segments.Sort((x, y) => (x.V1, x.V2, x.A, x.B).CompareTo((y.V1, y.V2, y.A, y.B)));
+        // Integer comparisons throughout: tuple comparers and keys are slow in WebAssembly.
+        static int Compare(int a, int b) => a < b ? -1 : a > b ? 1 : 0;
+        segments.Sort((x, y) => x.V1 != y.V1 ? Compare(x.V1, y.V1) : x.V2 != y.V2 ? Compare(x.V2, y.V2) : x.A != y.A ? Compare(x.A, y.A) : Compare(x.B, y.B));
+        // Segments between the same two faces that share an end are one chain: sort their ends and join neighbours.
         var chains = new UnionFind(segments.Count);
-        foreach (var group in segments.Select((s, i) => (s, i)).GroupBy(x => (x.s.A, x.s.B)))
+        var ends = new int[2 * segments.Count];
+        for (var k = 0; k < ends.Length; k++) ends[k] = k;
+        int End(int k) => k % 2 == 0 ? segments[k / 2].V1 : segments[k / 2].V2;
+        Array.Sort(ends, (x, y) =>
         {
-            var byVertex = new Dictionary<int, int>();
-            foreach (var (s, i) in group)
-                foreach (var v in new[] { s.V1, s.V2 })
-                    if (byVertex.TryGetValue(v, out var other)) chains.Union(i, other); else byVertex[v] = i;
+            var (s, t) = (segments[x / 2], segments[y / 2]);
+            return s.A != t.A ? Compare(s.A, t.A) : s.B != t.B ? Compare(s.B, t.B) : Compare(End(x), End(y));
+        });
+        for (var k = 1; k < ends.Length; k++)
+        {
+            var (s, t) = (segments[ends[k - 1] / 2], segments[ends[k] / 2]);
+            if (s.A == t.A && s.B == t.B && End(ends[k - 1]) == End(ends[k])) chains.Union(ends[k - 1] / 2, ends[k] / 2);
         }
-        var chainIndex = Number(segments.Count, chains);
-        var topoEdges = chainIndex
-            .OrderBy(kv => kv.Value)
-            .Select(kv => new TopoEdge(kv.Value, segments[kv.Key].A, segments[kv.Key].B))
-            .ToList();
+        var (chainIndex, _) = Number(segments.Count, chains);
+        // A chain's root is its smallest segment: numbered in that order.
+        var topoEdges = new List<TopoEdge>();
+        for (var i = 0; i < segments.Count; i++)
+            if (chainIndex[i] >= 0) topoEdges.Add(new TopoEdge(chainIndex[i], segments[i].A, segments[i].B));
 
         // Vertices: clusters of mesh vertices where three or more faces meet.
         var corners = new List<(int Vertex, List<int> Faces)>();
-        for (var v = 0; v < mesh.Vertices.Count; v++)
+        for (var v = 0; v < vertices.Length; v++)
         {
             var quadsHere = incident.QuadsOf(v);
             var first = faceOfQuad[quadsHere[0]];
@@ -125,16 +135,19 @@ public static class TopologyBuilder
         var cornerSlot = corners.Select((c, i) => (c.Vertex, i)).ToDictionary(x => x.Vertex, x => x.i);
         var clusters = new UnionFind(corners.Count);
         foreach (var (vertex, slot) in cornerSlot)
-            foreach (var q in incident.QuadsOf(vertex).ToArray())
-                foreach (var (a, b) in Edges(quads[q]))
+            foreach (var q in incident.QuadsOf(vertex))
+                for (var e = 0; e < 4; e++)
+                {
+                    var (a, b) = Edge(quads[q], e);
                     if (a != b && (a == vertex || b == vertex) && cornerSlot.TryGetValue(a == vertex ? b : a, out var other)
                         && SameCorner(corners[slot], corners[other]))
                         clusters.Union(slot, other);
+                }
 
         bool SameCorner((int Vertex, List<int> Faces) x, (int Vertex, List<int> Faces) y) =>
             x.Faces.All(y.Faces.Contains) || y.Faces.All(x.Faces.Contains)
-            || (mesh.Vertices[x.Vertex] - mesh.Vertices[y.Vertex]).Length <= 10 * tolerance;
-        var clusterIndex = Number(corners.Count, clusters);
+            || (vertices[x.Vertex] - vertices[y.Vertex]).Length <= 10 * tolerance;
+        var (clusterIndex, _) = Number(corners.Count, clusters);
         var topoVertices = corners
             .Select((c, i) => (Cluster: clusterIndex[clusters.Find(i)], c.Faces))
             .GroupBy(x => x.Cluster)
@@ -150,12 +163,12 @@ public static class TopologyBuilder
     {
         readonly int[] _start;
         readonly int[] _quads;
-        readonly IReadOnlyList<Quad> _all;
+        readonly Quad[] _all;
 
-        public Incidence(Mesh mesh)
+        public Incidence(Quad[] quads, int vertexCount)
         {
-            _all = mesh.Quads;
-            _start = new int[mesh.Vertices.Count + 1];
+            _all = quads;
+            _start = new int[vertexCount + 1];
             foreach (var q in _all)
             {
                 _start[q.A + 1]++;
@@ -163,10 +176,10 @@ public static class TopologyBuilder
                 _start[q.C + 1]++;
                 if (!q.IsTriangle) _start[q.D + 1]++;
             }
-            for (var v = 0; v < mesh.Vertices.Count; v++) _start[v + 1] += _start[v];
+            for (var v = 0; v < vertexCount; v++) _start[v + 1] += _start[v];
             _quads = new int[_start[^1]];
             var cursor = (int[])_start.Clone();
-            for (var q = 0; q < _all.Count; q++)
+            for (var q = 0; q < _all.Length; q++)
             {
                 _quads[cursor[_all[q].A]++] = q;
                 _quads[cursor[_all[q].B]++] = q;
@@ -196,19 +209,17 @@ public static class TopologyBuilder
     /// Surface components with positive enclosed volume are bodies; negative ones are voids (a shell's cavity)
     /// and belong to the smallest body whose bounds contain them.
     /// </summary>
-    static (int[] Index, int Count) Bodies(Mesh mesh, UnionFind components)
+    static (int[] Index, int Count) Bodies(Point3D[] v, Quad[] quads, UnionFind components)
     {
-        var numbering = Number(mesh.Quads.Count, components);
-        var n = numbering.Count;
+        var (numbering, n) = Number(quads.Length, components);
         var volume = new double[n];
         var lo = Enumerable.Repeat(new Point3D(double.MaxValue, double.MaxValue, double.MaxValue), n).ToArray();
         var hi = Enumerable.Repeat(new Point3D(double.MinValue, double.MinValue, double.MinValue), n).ToArray();
-        var component = new int[mesh.Quads.Count];
-        var v = mesh.Vertices;
-        for (var q = 0; q < mesh.Quads.Count; q++)
+        var component = new int[quads.Length];
+        for (var q = 0; q < quads.Length; q++)
         {
             var c = component[q] = numbering[components.Find(q)];
-            var quad = mesh.Quads[q];
+            var quad = quads[q];
             var (a, b, cc, d) = (v[quad.A].AsVector(), v[quad.B].AsVector(), v[quad.C].AsVector(), v[quad.D].AsVector());
             volume[c] += (a.Dot(b.Cross(cc)) + a.Dot(cc.Cross(d))) / 6;
             for (var corner = 0; corner < 4; corner++)
@@ -243,24 +254,18 @@ public static class TopologyBuilder
         _ => (q.D, q.A),
     };
 
-    static IEnumerable<(int, int)> Edges(Quad q)
-    {
-        yield return (q.A, q.B);
-        yield return (q.B, q.C);
-        yield return (q.C, q.D);
-        yield return (q.D, q.A);
-    }
+    readonly record struct Segment(int A, int B, int V1, int V2);
 
-    /// <summary>Numbers union-find roots 0..n-1 in order of their smallest member, for deterministic indices.</summary>
-    static Dictionary<int, int> Number(int count, UnionFind uf)
+    /// <summary>
+    /// Numbers union-find roots 0..n-1 in order of their smallest member, for deterministic indices: Index[root], and
+    /// -1 for the other members. A root is its set's smallest member (<see cref="UnionFind.Union"/> keeps the lower).
+    /// </summary>
+    static (int[] Index, int Count) Number(int count, UnionFind uf)
     {
-        var index = new Dictionary<int, int>();
-        for (var i = 0; i < count; i++)
-        {
-            var root = uf.Find(i);
-            if (!index.ContainsKey(root)) index[root] = index.Count;
-        }
-        return index;
+        var index = new int[count];
+        var n = 0;
+        for (var i = 0; i < count; i++) index[i] = uf.Find(i) == i ? n++ : -1;
+        return (index, n);
     }
 }
 

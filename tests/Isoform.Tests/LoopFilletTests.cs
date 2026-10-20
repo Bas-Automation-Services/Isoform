@@ -138,7 +138,7 @@ public class LoopFilletTests(ITestOutputHelper output)
 
     public static IEnumerable<object[]> Parts => [["boss"], ["outline"], ["pocket"], ["cut-out"], ["chamfer"]];
 
-    static PartDocument Part(string name) => name switch
+    internal static PartDocument Part(string name) => name switch
     {
         "boss" => Boss(new Fillet("round", [], 1, Loop: "boss/end")),
         "outline" => Outline(),
