@@ -19,6 +19,7 @@ Strings in and out; meshes as MemoryViews (copy them before the next call). In t
 | `Diff(old, new)` | `{edits}` with `Apply(old, edits).text` the canonical `new`; `{error}` if one does not read |
 | `Handles(slot)` | `{slot, hash, handles}`: the drag handles of the slot's last good regeneration (below) |
 | `Examples()` | `{name: canonical text}` |
+| `Resolve(refsJson, slot)` | pinned references against the slot's last good result (below) |
 | `Share(doc, editsJson, cell, chord, index, count)`, `Import(bytes)`, `Sweep()` | the worker pool's region exchange |
 
 Slots: `"main"` for what is committed, `"preview"` for a drag in progress (any name works). A failed regeneration
@@ -106,3 +107,22 @@ where a handle sits, how it moves, and which document fields it edits. Dragging 
 | offset | `distance`: arrow on the largest moved face, outward | `distance` |
 | pattern | `spacing` (linear), `angle` (circular below 360°), `plane` (mirror): at the last copy | `linear.spacing` (per 1/(count − 1)), `circular.angle`, `mirror.point.i` (per nᵢ/2) |
 | assembly component | `placement`: a frame at the instance | `components.<id>.placement.origin/x/normal` |
+
+## Reference pins
+
+`ReferencePins` resolves pinned faces and edges through the kernel's reference layer (`ReferenceResolver`): by source
+name, never by face index, so a pin says what an edit did to its face. `Resolve(refsJson, slot)` takes an array of pins:
+
+```jsonc
+[{"id": "p1", "face": "plate/z+"},                       // every piece of a source face
+ {"id": "p2", "face": "plate/y+", "signature": ["…"]},   // one piece, by the sources around it
+ {"id": "p3", "edge": ["plate/z+", "hole/wall"]},        // every edge between two sources
+ {"id": "p4", "face": 7}, {"id": "p5", "edge": [3, 5]}]   // by face index: pinned on this result first
+```
+
+and answers `{slot, hash, pins: [{id, ref, status, faces, edges?}]}`, or `{error}` when the slot has no result or a pin
+does not read. `ref` is the pin by name (keep it for the next edit); a face pinned by index is pinned as a piece only
+when its source is already in pieces. `status` is `resolved`, `split` (`faces` lists every piece), `merged` (the face
+is shared with another source), `gone` or `ambiguous` (a piece that can no longer be told apart; `faces` lists the
+candidates). `edges` are the face pairs of the resolved edges, as in `lineFaces`. `ReferencePins.Report(before,
+after)` is the same per source over a whole result: what the MCP server's `apply_edits` reports as `references`.

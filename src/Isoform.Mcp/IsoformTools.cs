@@ -7,6 +7,7 @@ using System.Text.Json.Nodes;
 using BasAutomation.Geometry;
 using Isoform.Document;
 using Isoform.Geometry;
+using Isoform.Interactive;
 using Isoform.Meshing;
 using Isoform.Modeling;
 using Isoform.Step;
@@ -432,28 +433,16 @@ public static class IsoformTools
         o["bodies"] = bodies;
     }
 
-    /// <summary>
-    /// Every source face of the old result resolved against the new one: names that appeared, that are gone, and those
-    /// whose status changed (a face split in two, merged with another). Unchanged names are only counted.
-    /// </summary>
+    /// <summary>Face stability across an edit (<see cref="ReferencePins.Report"/>): kept, appeared, gone, changed.</summary>
     static JsonObject Stability(Topology? before, Topology? after)
     {
-        static Dictionary<string, ReferenceStatus> Statuses(Topology? t) => t is null ? []
-            : t.Faces.SelectMany(f => f.Sources).Distinct().ToDictionary(s => s, s => ReferenceResolver.Resolve(new FaceReference(s, s), t).Status);
-        var (old, now) = (Statuses(before), Statuses(after));
+        var r = ReferencePins.Report(before, after);
         var changed = new JsonObject();
-        foreach (var s in old.Keys.Intersect(now.Keys).Where(s => old[s] != now[s]).Order(StringComparer.Ordinal))
-            changed[s] = $"{Lower(old[s])} -> {Lower(now[s])}";
-        return new JsonObject
-        {
-            ["kept"] = old.Keys.Count(s => now.TryGetValue(s, out var n) && n == old[s]),
-            ["appeared"] = Names(now.Keys.Except(old.Keys)),
-            ["gone"] = Names(old.Keys.Except(now.Keys)),
-            ["changed"] = changed,
-        };
+        foreach (var (s, old, now) in r.Changed) changed[s] = $"{Lower(old)} -> {Lower(now)}";
+        return new JsonObject { ["kept"] = r.Kept, ["appeared"] = Names(r.Appeared), ["gone"] = Names(r.Gone), ["changed"] = changed };
 
         static string Lower(ReferenceStatus s) => s.ToString().ToLowerInvariant();
-        static JsonArray Names(IEnumerable<string> names) => new(names.Order(StringComparer.Ordinal).Select(n => (JsonNode)n).ToArray());
+        static JsonArray Names(IEnumerable<string> names) => new(names.Select(n => (JsonNode)n).ToArray());
     }
 
     /// <summary>A face by its source name; a face several sources share lists them all.</summary>
