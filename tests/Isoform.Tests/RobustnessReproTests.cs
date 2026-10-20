@@ -144,22 +144,33 @@ public class RobustnessReproTests
     }
 
     /// <summary>
-    /// Two fillets of radius 2 on a 3.5 mm plate, on the bottom front and the top left edge: the second is refused as
-    /// not fitting between its neighbours. OCCT builds it (8 faces, the volume of both fillets).
+    /// Two fillets of radius 2 on a 3.5 mm plate, on the bottom front and the top left edge: the second was refused as
+    /// not fitting, because within 0.064 mm of y = 0 its ball touches plate/x- where the first round has already eaten
+    /// that face's end. The rounds meet in a mitre there; OCCT builds that same solid (8 faces, 1365.66377182). The ball
+    /// must still fit on the faces as they were: two rounds on one 3.5 mm face stay refused, as in OCCT.
     /// </summary>
-    [Fact(Skip = Open)]
+    [Fact]
     public void Fillets_on_edges_round_one_corner_both_fit()
     {
-        var r = Regenerate("""
+        static string Plate(string first) => """
             [
               {"id":"plate","type":"block","op":"new","origin":[0,0,0],"size":[20,20,3.5]},
-              {"id":"round1","type":"fillet","edge":["plate/y-","plate/z-"],"radius":2},
+              {"id":"round1","type":"fillet","edge":["plate/FIRST","plate/z-"],"radius":2},
               {"id":"round2","type":"fillet","edge":["plate/x-","plate/z+"],"radius":2}
             ]
-            """);
+            """.Replace("FIRST", first);
 
+        var r = Regenerate(Plate("y-"));
         r.Diagnostics.Should().BeEmpty();
         Counts(r).Should().Be((8, 18, 12, 1));
+        // Each round takes (4 − π) mm² of section over 20 mm; near the corner both take the same material, which the
+        // integral of (2 − √(4 − (2 − z)²))·(2 − √(4 − (z − 1.5)²)) over z in [1.5, 2] gives: 6.5694e-5 mm³.
+        var exact = 20 * 20 * 3.5 - 2 * 20 * (4 - Math.PI) + 6.5694e-5;
+        var bounds = MassProperties.VolumeBounds(r.Part.Field!, r.Part.Min, r.Part.Max, 0.1);
+        exact.Should().BeInRange(bounds.Lo, bounds.Hi);
+        MassProperties.Of(r.Part.Field!, r.Mesh!).Volume.Should().BeApproximately(exact, 1e-5 * exact);
+
+        Regenerate(Plate("x-")).Diagnostics.Should().ContainSingle(d => d.Code == Diagnostic.FilletInvalid && d.FeatureId == "round2");
     }
 
     /// <summary>
@@ -227,40 +238,50 @@ public class RobustnessReproTests
 
     /// <summary>
     /// F-rep only, the one crash in 3000 documents: a four-edge profile with two concave arcs, joined on the plate top,
-    /// throws InvalidOperationException (Nullable object must have a value) from DualContouring.Refine:
-    /// <c>field.SampleSurface(owner, p)!.Value</c> is null for an owner the cell's crossings reported. Either a sample
-    /// of the profile field names an owner that its SampleSurface does not know, or the profile intersects itself and
-    /// Profiles.Problem lets it through.
+    /// threw from DualContouring.Refine. The arcs into (8, 6.258) cut the corner's 68.6° by 70.4°: they cross 0.04 mm
+    /// from it, inside the first of the 32 pieces the crossing test sees, and the field's corner sign was wrong there.
+    /// The profile is now refused; with the second arc a little flatter the corner is open and the part meshes.
     /// </summary>
-    [Fact(Skip = Open)]
+    [Fact]
     public void Profile_with_concave_arcs_does_not_crash()
     {
-        var act = () => Regenerate("""
+        static string Knob(string bulge) => """
             [
               {"id":"plate","type":"block","op":"new","origin":[0,0,0],"size":[20,20,14]},
-              {"id":"knob1","type":"extrude","op":"join","plane":{"origin":[0,0,14],"x":[1,0,0],"normal":[0,0,1]},"profile":{"start":[8.358,7.732],"edges":[{"id":"e0","to":[7,10]},{"id":"e1","to":[6.518,7.3]},{"id":"e2","to":[8,6.258],"bulge":-0.238},{"id":"e3","to":[8.358,7.732],"bulge":-0.4}]},"start":0,"end":2}
+              {"id":"knob1","type":"extrude","op":"join","plane":{"origin":[0,0,14],"x":[1,0,0],"normal":[0,0,1]},"profile":{"start":[8.358,7.732],"edges":[{"id":"e0","to":[7,10]},{"id":"e1","to":[6.518,7.3]},{"id":"e2","to":[8,6.258],"bulge":-0.238},{"id":"e3","to":[8.358,7.732],"bulge":BULGE}]},"start":0,"end":2}
             ]
-            """);
+            """.Replace("BULGE", bulge);
 
-        act.Should().NotThrow();
+        var crossed = Regenerate(Knob("-0.4"));
+        crossed.Diagnostics.Should().ContainSingle(d => d.Code == Diagnostic.InvalidParameter && d.Message.Contains("e2 and e3 cross"));
+
+        var valid = Regenerate(Knob("-0.3"));
+        valid.Diagnostics.Should().BeEmpty();
+        valid.Mesh!.IsWatertight().Should().BeTrue();
+        FieldProperties.Check(valid.Part);
     }
 
     /// <summary>
-    /// F-rep only: a 1 mm shell of a 2.2 mm plate leaves a 0.2 mm cavity. The mesh is the solid plate (volume 1760 against
-    /// a certified 1613–1629), the shell is called no-effect, and nothing is reported below resolution.
+    /// F-rep only: a 1 mm shell of a 2.2 mm plate leaves a 0.2 mm cavity no grid edge crosses. The mesh was the solid
+    /// plate (volume 1760 against a certified 1613–1629), the shell called no-effect, nothing reported. The compiler now
+    /// reports a cavity under 2 cells; on a 3.2 mm plate the 1.2 mm cavity is resolved and built without a word.
     /// </summary>
-    [Fact(Skip = Open)]
+    [Fact]
     public void Shell_with_a_cavity_below_the_cells_is_reported()
     {
-        var r = Regenerate("""
+        static string Plate(string height) => """
             [
-              {"id":"plate","type":"block","op":"new","origin":[0,0,0],"size":[40,20,2.2]},
+              {"id":"plate","type":"block","op":"new","origin":[0,0,0],"size":[40,20,HEIGHT]},
               {"id":"shell2","type":"shell","thickness":1}
             ]
-            """);
+            """.Replace("HEIGHT", height);
 
-        Reported(r).Should().BeTrue();
-        r.Diagnostics.Should().NotContain(d => d.Code == Diagnostic.NoEffect);
+        var r = Regenerate(Plate("2.2"));
+        r.Diagnostics.Should().ContainSingle(d => d.Code == Diagnostic.BelowResolution && d.FeatureId == "shell2");
+
+        var resolved = Regenerate(Plate("3.2"));
+        resolved.Diagnostics.Should().BeEmpty();
+        resolved.Topology!.Faces.Should().HaveCount(12);
     }
 
     /// <summary>F-rep only: a half revolve with a D-shaped boss joined on its top meshes with open edges.</summary>

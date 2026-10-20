@@ -60,9 +60,10 @@ dotnet publish src/Isoform.Playground -c Release -o out/playground
 python -m http.server 8137 -d out/playground/wwwroot   # or any static file server
 ```
 
-The page loads three.js from a CDN. In the browser the kernel runs on one thread, so it is several times slower
+The page needs no network: three.js r160 is vendored in `wwwroot/vendor/three`. In the browser the kernel runs on one thread, so it is several times slower
 than on the desktop.
 
 ## Licence
 
-[MPL-2.0](LICENSE). OpenCASCADE is LGPL-2.1 with an exception and is linked dynamically.
+[MPL-2.0](LICENSE). OpenCASCADE is LGPL-2.1 with an exception and is linked dynamically. The vendored three.js is
+MIT ([its licence](src/Isoform.Playground/wwwroot/vendor/three/LICENSE)).

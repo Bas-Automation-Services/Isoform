@@ -53,8 +53,60 @@ public static class Profiles
         if (Math.Abs(edges.Sum(e => e.Edge.Area)) <= tolerance) return "the profile encloses no area";
         if (revolve && edges.Any(e => e.Edge.Points(32).Any(q => q.U < -tolerance)))
             return "a revolve profile must stay on one side of the axis (x ≥ 0)";
-        if (SelfIntersection(edges, tolerance) is { } pair) return $"profile edges {pair.A} and {pair.B} cross";
+        if ((CornerCrossing(edges, tolerance) ?? SelfIntersection(edges, tolerance)) is { } pair) return $"profile edges {pair.A} and {pair.B} cross";
         return null;
+    }
+
+    /// <summary>
+    /// Neighbouring edges that meet again besides at their corner, where the 32-piece test does not look: concave arcs
+    /// can cross a few hundredths from it. Their lines or circles share at most one more point, found exactly.
+    /// </summary>
+    static (string A, string B)? CornerCrossing(List<(string Id, ProfileEdge2D Edge)> edges, double tolerance)
+    {
+        for (var k = 0; k < edges.Count; k++)
+        {
+            var (a, b) = (edges[k].Edge, edges[(k + 1) % edges.Count].Edge);
+            if (Folds(a, b, tolerance) || Second(a, b, tolerance) is { } x && Within(a, x) && Within(b, x))
+                return (edges[k].Id, edges[(k + 1) % edges.Count].Id);
+        }
+        return null;
+
+        // Strictly inside the edge: off both ends, on its line or circle.
+        bool Within(ProfileEdge2D e, (double U, double V) x) => e.Closest(x.U, x.V) is var (sq, where) && where < 0 && sq <= tolerance * tolerance
+            && Math.Min(Sq(x.U - e.U0) + Sq(x.V - e.V0), Sq(x.U - e.U1) + Sq(x.V - e.V1)) > tolerance * tolerance;
+    }
+
+    /// <summary>Edge b runs straight back over edge a: on the same line, or on the same circle the other way round.</summary>
+    static bool Folds(ProfileEdge2D a, ProfileEdge2D b, double tolerance)
+    {
+        if (a.IsArc != b.IsArc) return false;
+        if (a.IsArc) return Math.Abs(a.Cu - b.Cu) <= tolerance && Math.Abs(a.Cv - b.Cv) <= tolerance && Math.Abs(a.R - b.R) <= tolerance && Math.Sign(a.Sweep) != Math.Sign(b.Sweep);
+        var (au, av, bu, bv) = (a.U1 - a.U0, a.V1 - a.V0, b.U1 - b.U0, b.V1 - b.V0);
+        return Math.Abs(au * bv - av * bu) <= tolerance * Math.Sqrt((au * au + av * av) * (bu * bu + bv * bv)) && au * bu + av * bv < 0;
+    }
+
+    /// <summary>The other point the line or circle of edge a shares with that of b, which starts where a ends.</summary>
+    static (double U, double V)? Second(ProfileEdge2D a, ProfileEdge2D b, double tolerance)
+    {
+        var (du, dv) = (a.U1, a.V1);
+        if (!a.IsArc && !b.IsArc) return null;
+        if (a.IsArc && b.IsArc)
+        {
+            // Two circles through the corner meet again at its mirror image in the line through their centres.
+            var (wu, wv) = (b.Cu - a.Cu, b.Cv - a.Cv);
+            var w = Math.Sqrt(wu * wu + wv * wv);
+            if (w <= tolerance) return null;
+            (wu, wv) = (wu / w, wv / w);
+            var along = (du - a.Cu) * wu + (dv - a.Cv) * wv;
+            return (2 * (a.Cu + along * wu) - du, 2 * (a.Cv + along * wv) - dv);
+        }
+        // A line through the corner leaves the circle again at the chord's other end.
+        var (line, arc) = a.IsArc ? (b, a) : (a, b);
+        var (lu, lv) = (line.U1 - line.U0, line.V1 - line.V0);
+        var l = Math.Sqrt(lu * lu + lv * lv);
+        (lu, lv) = (lu / l, lv / l);
+        var t = -2 * ((du - arc.Cu) * lu + (dv - arc.Cv) * lv);
+        return (du + t * lu, dv + t * lv);
     }
 
     static List<(string Id, ProfileEdge2D Edge)> Edges(Profile p)

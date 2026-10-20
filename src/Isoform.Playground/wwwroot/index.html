@@ -5,11 +5,12 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Isoform Playground</title>
   <link rel="stylesheet" href="playground.css">
+  <!-- three r0.160.0, vendored (MIT, vendor/three/LICENSE): pinned, and the page works offline. -->
   <script type="importmap">
     {
       "imports": {
-        "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
-        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+        "three": "./vendor/three/build/three.module.min.js",
+        "three/addons/": "./vendor/three/examples/jsm/"
       }
     }
   </script>
@@ -61,6 +62,6 @@
     <div class="hint">Drag to orbit · right-drag to pan · scroll to zoom · click a face for its name · shift+click a second face for an edge</div>
   </main>
 
-  <script type="module" src="main.js"></script>
+  <script type="module" src="js/main.js"></script>
 </body>
 </html>

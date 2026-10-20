@@ -429,7 +429,7 @@ public static partial class Queries
         return Math.Sqrt(x * x + y * y + z * z);
     }
 
-    static Box3D[] Split(Box3D b)
+    internal static Box3D[] Split(Box3D b)
     {
         var c = b.Center;
         var children = new Box3D[8];

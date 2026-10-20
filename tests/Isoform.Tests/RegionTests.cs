@@ -19,7 +19,7 @@ public class RegionTests(ITestOutputHelper output)
             .Concat(SketchFeatureTests.Parts().Select(p => $"sketch: {p.Name}"))
             .Concat(LoopFilletTests.Parts.Select(n => $"loop: {n[0]}"))
             .Concat(ConcaveFilletTests.Parts.Select(n => $"concave: {n[0]}"))
-            .Concat(Playground.Examples.All.Select(e => $"example: {e.Name}"))
+            .Concat(Isoform.Interactive.Examples.All.Select(e => $"example: {e.Name}"))
             .Select(n => new object[] { n });
 
     PartDocument Part(string name) => name.Split(": ", 2) switch
@@ -29,7 +29,7 @@ public class RegionTests(ITestOutputHelper output)
         ["sketch", var n] => SketchFeatureTests.Parts().Single(p => p.Name == n).Doc,
         ["loop", var n] => LoopFilletTests.Part(n),
         ["concave", var n] => ConcaveFilletTests.Part(n),
-        [_, var n] => Playground.Examples.All.Single(e => e.Name == n).Doc,
+        [_, var n] => Isoform.Interactive.Examples.All.Single(e => e.Name == n).Doc,
         _ => throw new ArgumentException(name),
     };
 

@@ -11,7 +11,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="../Isoform.Modeling/Isoform.Modeling.csproj" />
+    <ProjectReference Include="../Isoform.Interactive/Isoform.Interactive.csproj" />
   </ItemGroup>
 
 </Project>
