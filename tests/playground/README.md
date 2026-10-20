@@ -13,7 +13,8 @@ node tests/playground/run.mjs path/to/wwwroot      # or any other published wwwr
 The parts on their own:
 
 ```sh
-node --test tests/playground/kernel-client.test.mjs tests/playground/store.test.mjs tests/playground/references.test.mjs   # front end only
+node --test tests/playground/kernel-client.test.mjs tests/playground/store.test.mjs tests/playground/diagnose.test.mjs \
+  tests/playground/references.test.mjs   # front end only
 node --test tests/playground/kernel.test.mjs       # kernel only; ISOFORM_PLAYGROUND=<wwwroot> to point elsewhere
 node tests/playground/e2e.mjs [wwwroot]            # browser only
 node tests/playground/serve.mjs [wwwroot] [port]   # serve the page to look at it yourself (default port 8137)
@@ -33,6 +34,12 @@ helpers to the primary; `adaptResult` keeps result v2 as written and adds the me
 **`store.test.mjs`**: the selection is face names, so it follows a face that is renumbered and drops one that is gone;
 a document that does not read keeps the last result; history gets one entry per changed document; the status line has
 the form `e2e.mjs` reads.
+
+**`diagnose.test.mjs`** (`wwwroot/js/lib/diagnose.js`): diagnostics grouped by code with readable titles, errors
+first; the face names a message mentions (whole names only), else for a feature that left no faces the ones its
+definition names (a fillet's edge); a thin spot's thinnest point; the cell that resolves a below-resolution report
+(size / 2, at least half the current cell, on a round value: a 0.6 mm wall at 0.5 mm cells gives 0.25 mm); preview
+results grey out their below-resolution reports; the valid / N problems verdict.
 
 **`references.test.mjs`**: what a selection pins (an edge, a face by name, or by index when it is the face
 clicked), and the kernel's replies folded into the pins by id.
@@ -54,8 +61,12 @@ stats line under the editor (`#stats`) to show a result. An example passes when 
 does not start with `Error:` or say the document does not parse, and the page logged no uncaught exception or console
 error. Per example it prints the kernel time from the stats line and the page time (navigation to result, including
 loading the runtime). Then it clicks a face of example 0, regenerates at another cell size and checks that the same
-face names are still selected. Last it pins `plate/z+` on example 0 (`window.isoform.pin`), edits in a slot across it,
-and waits for the pin to show `split`, lit when clicked.
+face names are still selected. Last, diagnostics: example 0 with its hole moved to leave a 0.6 mm wall reports a
+below-resolution thin spot between `plate/y+` and `hole/wall`; clicking it in the list lights both faces in two colours
+and flies the camera there (`out/screenshots/diagnostics.png`); "Resolve at 0.25 mm" regenerates the same document at
+0.25 mm cells with the report gone and the verdict Valid; "back to 0.5 mm" brings it back; a fillet radius of 12 mm gives
+`fillet-invalid`, lights the edge it names and keeps the rest of the part. Then pins: `plate/z+` pinned on example 0
+(`window.isoform.pin`), a slot edited in across it, and the pin shows `split`, lit when clicked (`out/screenshots/pins.png`).
 
 ## Screenshots
 
@@ -77,7 +88,9 @@ mesh, stray triangles, and red diagnostics under the stats line.
 
 Coordinates are CSS pixels in the viewport. The page exposes `window.isoform`: `ready` (a result is shown),
 `document()`, `hash()`, `selection()` (face names), `faces()` (each face's names), `select(names)` and `edit(text)`
-(resolves once that text has regenerated), `pins()` and `pin(name | [a, b])` (resolves to the pin). Later tasks add to it, for example handles:
+(resolves once that text has regenerated); for diagnostics `diagnostics()` (as listed), `focusDiagnostic(index)`,
+`marked()` (the faces lit for the one in focus, with their colours), `cell()` (the cell the result was made at),
+`target()` (where the camera looks) and `resolve(cell)`; for reference pins `pins()` and `pin(name | [a, b])` (resolves to the pin). Later tasks add to it, for example handles:
 
 ```js
 const page = await browser.newPage();

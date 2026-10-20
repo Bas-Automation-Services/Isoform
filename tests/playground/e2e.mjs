@@ -1,6 +1,6 @@
 // Opens every example in headless Edge or Chrome, waits for the part to regenerate, checks the stats line and
-// saves a screenshot to tests/playground/out/screenshots; then picks a face and pins one. Exits non-zero if anything
-// fails.
+// saves a screenshot to tests/playground/out/screenshots; then picks a face, resolves a thin spot from the
+// diagnostics and pins a face. Exits non-zero if anything fails.
 // node tests/playground/e2e.mjs [published wwwroot]      (env: ISOFORM_BROWSER, ISOFORM_TIMEOUT in ms)
 import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -21,7 +21,7 @@ const settled = `(s => /\\d ms ·|Error:|does not parse/.test(s) && s)(document.
 
 const site = await serve(root);
 const browser = await launch();
-let failures = 0, picking = false, pins = false;
+let failures = 0, picking = false, diagnosing = false, pinning = false;
 try {
   const page = await browser.newPage();
   for (const [i, name] of names.entries()) {
@@ -75,32 +75,112 @@ try {
   for (const p of problems) console.log(`        ${p}`);
   picking = !problems.length;
 
-  // Reference pins: pin plate/z+ on example 0, cut a slot across it, and the pin reports it split in two.
-  const pinProblems = [];
+  diagnosing = await diagnostics(page);
+  pinning = await pins(page);
+} finally {
+  await browser.close();
+  await site.close();
+}
+console.log(`\n${names.length - failures}/${names.length} examples passed, picking ${picking ? 'passed' : 'FAILED'}, `
+  + `diagnostics ${diagnosing ? 'passed' : 'FAILED'}, pins ${pinning ? 'passed' : 'FAILED'}; screenshots in ${relative(repo, shots)}`);
+process.exitCode = failures || !picking || !diagnosing || !pinning ? 1 : 0;
+
+/**
+ * Diagnostics in place: example 0 with its hole moved to leave a 0.6 mm wall gives a below-resolution thin spot at
+ * 0.5 mm cells. Clicking it lights both faces in two colours and flies the camera there; Resolve regenerates at
+ * 0.25 mm cells, where the wall is resolved and the report is gone; "back to" returns to the default cell. Then a
+ * fillet too large to fit gives fillet-invalid, lights the edge it names, and leaves the rest of the part.
+ */
+async function diagnostics(page) {
+  const problems = [];
+  let found = null;
+  const clickOn = async selector => {
+    await page.evaluate(`document.querySelector(${JSON.stringify(selector)})?.scrollIntoView({ block: 'center' })`);
+    const at = await page.center(selector);
+    if (!at) throw new Error(`nothing matches ${selector}`);
+    await page.click(at);
+  };
+  const verdict = () => page.evaluate(`document.getElementById('verdict').textContent`);
+  try {
+    await page.open(`${site.url}?example=0`);
+    await page.waitFor(settled, { timeout });
+    await page.evaluate(`(d => { d.features.find(f => f.id === 'hole').center = [30, 44.4]; return window.isoform.edit(JSON.stringify(d, null, 2)); })(JSON.parse(window.isoform.document()))`);
+    const items = await page.evaluate('window.isoform.diagnostics()');
+    found = items.find(d => d.code === 'below-resolution' && d.thickness);
+    if (!found) throw new Error(`no below-resolution thin spot: ${JSON.stringify(items)}`);
+    if (found.faces.join() !== 'plate/y+,hole/wall') problems.push(`the thin spot names ${JSON.stringify(found.faces)}`);
+    if (found.resolve !== 0.25) problems.push(`resolve offers ${found.resolve} mm, not 0.25`);
+    if (!/1 problem/.test(await verdict())) problems.push(`the verdict says ${await verdict()}`);
+
+    const item = `#diagnostics li.item[data-index="${found.index}"]`;
+    await clickOn(item);
+    const marked = await page.evaluate('window.isoform.marked()');
+    const colours = Object.fromEntries(marked.map(m => [m.face, m.color]));
+    if (!colours['plate/y+'] || !colours['hole/wall'] || colours['plate/y+'] === colours['hole/wall'])
+      problems.push(`both faces should be lit in two colours: ${JSON.stringify(marked)}`);
+    // The thin spot is on the y+ face, near y = 49.7.
+    await page.waitFor(`(t => t[1] > 49 && t[1] < 50.5)(window.isoform.target())`, { timeout: 5000 })
+      .catch(e => problems.push(`the camera did not fly to the thin spot: ${e.message}`));
+    await page.frames();
+    await page.screenshot(join(shots, 'diagnostics.png'));
+
+    const hash = await page.evaluate('window.isoform.hash()');
+    await clickOn(`${item} button.resolve`);
+    await page.waitFor(`window.isoform.cell() === 0.25`, { timeout });
+    const after = await page.evaluate('window.isoform.diagnostics()');
+    if (after.some(d => d.code === 'below-resolution')) problems.push(`still reported at 0.25 mm: ${JSON.stringify(after)}`);
+    if (await page.evaluate('window.isoform.hash()') !== hash) problems.push('resolving changed the document');
+    if (await page.evaluate(`document.getElementById('cell').value`) !== '0.25') problems.push('the cell select does not show 0.25 mm');
+    if (!/^Valid/.test(await verdict())) problems.push(`after resolving the verdict says ${await verdict()}`);
+
+    await clickOn('#diagnostics li.cell button');
+    await page.waitFor(`window.isoform.cell() === 0.5`, { timeout });
+    if (!(await page.evaluate('window.isoform.diagnostics()')).some(d => d.code === 'below-resolution'))
+      problems.push('back at 0.5 mm the thin spot is not reported again');
+
+    // A fillet radius past what fits: a precise fillet-invalid naming the edge, and the rest of the part stays.
+    await page.evaluate(`(d => { d.features.find(f => f.id === 'fillet').radius = 12; return window.isoform.edit(JSON.stringify(d, null, 2)); })(JSON.parse(window.isoform.document()))`);
+    const fillet = (await page.evaluate('window.isoform.diagnostics()')).find(d => d.code === 'fillet-invalid');
+    if (!fillet) problems.push('no fillet-invalid for a radius of 12 mm');
+    else {
+      if (!/problem/.test(await verdict())) problems.push(`with fillet-invalid the verdict says ${await verdict()}`);
+      if (!(await page.evaluate('window.isoform.faces()')).some(f => f[0] === 'hole/wall')) problems.push('the rest of the part is gone');
+      await page.evaluate(`window.isoform.focusDiagnostic(${fillet.index})`);
+      const lit = (await page.evaluate('window.isoform.marked()')).map(m => m.face).sort().join();
+      if (lit !== 'plate/x+,plate/z+') problems.push(`fillet-invalid lights ${lit}, not the edge plate/z+ · plate/x+`);
+    }
+  } catch (e) {
+    problems.push(e.message);
+  }
+  problems.push(...page.errors);
+  const what = found ? `${found.thickness.toFixed(3)} mm between ${found.faces.join(' and ')}` : '-';
+  console.log(`${problems.length ? 'FAIL' : 'pass'}  diagnostics: thin spot ${what} lit, resolved at 0.25 mm and back; fillet-invalid lights its edge`);
+  for (const p of problems) console.log(`        ${p}`);
+  return !problems.length;
+}
+
+/** Reference pins: plate/z+ pinned on example 0, a slot cut across it, and the pin reports it split in two. */
+async function pins(page) {
+  const problems = [];
   try {
     await page.open(`${site.url}?example=0`);
     await page.waitFor(settled, { timeout });
     const pinned = await page.evaluate(`window.isoform.pin('plate/z+')`);
-    if (pinned?.status !== 'resolved') pinProblems.push(`pinned as ${JSON.stringify(pinned)}`);
+    if (pinned?.status !== 'resolved') problems.push(`pinned as ${JSON.stringify(pinned)}`);
     const slot = { insert: { id: 'slot', type: 'block', op: 'cut', origin: [60, -1, 5], size: [5, 52, 10] }, before: 'fillet' };
     const { text } = JSON.parse(kernel.Apply(await page.evaluate('window.isoform.document()'), JSON.stringify(slot)));
     await page.evaluate(`window.isoform.edit(${JSON.stringify(text)})`);
     await page.waitFor(`(p => p?.status === 'split' && p.faces.length === 2)(window.isoform.pins()[0])`, { timeout });
     await page.evaluate(`document.querySelector('#references li').click()`);
     const shown = await page.evaluate(`(li => [li.querySelector('.chip').textContent, li.classList.contains('lit')])(document.querySelector('#references li'))`);
-    if (shown.join() !== 'split,true') pinProblems.push(`the pin shows ${JSON.stringify(shown)}`);
+    if (shown.join() !== 'split,true') problems.push(`the pin shows ${JSON.stringify(shown)}`);
     await page.frames();
     await page.screenshot(join(shots, 'pins.png'));
   } catch (e) {
-    pinProblems.push(e.message);
+    problems.push(e.message);
   }
-  pinProblems.push(...page.errors);
-  console.log(`${pinProblems.length ? 'FAIL' : 'pass'}  pins: plate/z+ pinned, split by a slot across it`);
-  for (const p of pinProblems) console.log(`        ${p}`);
-  pins = !pinProblems.length;
-} finally {
-  await browser.close();
-  await site.close();
+  problems.push(...page.errors);
+  console.log(`${problems.length ? 'FAIL' : 'pass'}  pins: plate/z+ pinned, split by a slot across it`);
+  for (const p of problems) console.log(`        ${p}`);
+  return !problems.length;
 }
-console.log(`\n${names.length - failures}/${names.length} examples passed, picking ${picking ? 'passed' : 'FAILED'}, pins ${pins ? 'passed' : 'FAILED'}; screenshots in ${relative(repo, shots)}`);
-process.exitCode = failures || !picking || !pins ? 1 : 0;
