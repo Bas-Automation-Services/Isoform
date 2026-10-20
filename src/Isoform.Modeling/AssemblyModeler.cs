@@ -29,9 +29,11 @@ public sealed class AssemblyResult(IReadOnlyList<Instance> instances, IReadOnlyL
     /// <summary>
     /// Clearance between every pair of instances whose boxes come within <paramref name="within"/> mm of each other
     /// (certified interval, see <see cref="Queries.Clearance(Field, Box3D, Field, Box3D, double, int)"/>); pairs
-    /// that interfere have a negative upper end.
+    /// that interfere have a negative upper end. Faces touching over an area are the costly case: the search cannot
+    /// prove them apart, so <paramref name="budget"/> caps it, and the lower end stays a little below zero while the
+    /// upper end shows the contact exactly.
     /// </summary>
-    public IReadOnlyList<(string A, string B, ClearanceResult Clearance)> Clearances(double within = 0)
+    public IReadOnlyList<(string A, string B, ClearanceResult Clearance)> Clearances(double within = 0, double tolerance = 1e-4, int budget = 20_000)
     {
         var placed = Instances.Where(i => i.Field is not null).Select(i => (i.Id, Field: i.Field!, Box: WorldBox(i))).ToList();
         var result = new List<(string, string, ClearanceResult)>();
@@ -41,7 +43,7 @@ public sealed class AssemblyResult(IReadOnlyList<Instance> instances, IReadOnlyL
             var (x, y) = (placed[a].Box, placed[b].Box);
             var gap = Math.Max(0, Math.Max(Math.Max(x.Min.X - y.Max.X, y.Min.X - x.Max.X), Math.Max(Math.Max(x.Min.Y - y.Max.Y, y.Min.Y - x.Max.Y), Math.Max(x.Min.Z - y.Max.Z, y.Min.Z - x.Max.Z))));
             if (gap > within) continue;
-            result.Add((placed[a].Id, placed[b].Id, Queries.Clearance(placed[a].Field, x, placed[b].Field, y)));
+            result.Add((placed[a].Id, placed[b].Id, Queries.Clearance(placed[a].Field, x, placed[b].Field, y, tolerance, budget)));
         }
         return result;
     }
