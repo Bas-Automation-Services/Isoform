@@ -77,7 +77,7 @@ function show(result, fit) {
   group.add(mesh,
     new THREE.LineSegments(geometryOf(sharp), sharpMaterial),
     new THREE.LineSegments(geometryOf(smooth), smoothMaterial),
-    new THREE.Points(geometryOf(new Float32Array(info.thinSpots.flat())), spotMaterial));
+    new THREE.Points(geometryOf(new Float32Array(info.thinSpots.flatMap(s => s.at))), spotMaterial));
   scene.add(group);
 
   const bodyOfFace = [];

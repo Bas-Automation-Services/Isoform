@@ -18,7 +18,8 @@ const arrived = new Map(); // regeneration id → region results from the helper
 let current = null;        // the regeneration the coordinator is working on
 
 function regenerate(data) {
-  const info = JSON.parse(kernel.Regenerate(data.document, data.cell, data.chord));
+  // Result v2 (src/Isoform.Interactive/README.md); the page applies no edits yet and has one slot.
+  const info = JSON.parse(kernel.Regenerate(data.document, '[]', data.cell, data.chord, 'main'));
   if (info.error) {
     postMessage({ type: 'result', id: data.id, info });
     return;
@@ -27,7 +28,11 @@ function regenerate(data) {
   const faces = take(kernel.Faces(), Int32Array);
   const sharp = new Float32Array(take(kernel.Lines(), Float64Array));
   const smooth = new Float32Array(take(kernel.SmoothLines(), Float64Array));
-  postMessage({ type: 'result', id: data.id, info, positions, faces, sharp, smooth }, [positions.buffer, faces.buffer, sharp.buffer, smooth.buffer]);
+  // Per segment, its face pair in info.lineFaces.
+  const sharpEdges = take(kernel.LineEdges(), Int32Array);
+  const smoothEdges = take(kernel.SmoothLineEdges(), Int32Array);
+  postMessage({ type: 'result', id: data.id, info, positions, faces, sharp, smooth, sharpEdges, smoothEdges },
+    [positions.buffer, faces.buffer, sharp.buffer, smooth.buffer, sharpEdges.buffer, smoothEdges.buffer]);
 }
 
 // The coordinator regenerates once its own share is meshed and every helper's has arrived.
@@ -57,12 +62,12 @@ onmessage = ({ data }) => {
   if (count === 1) {
     regenerate(data);
   } else if (index > 0) {
-    const regions = take(kernel.Share(data.document, data.cell, data.chord, index, count), Uint8Array);
+    const regions = take(kernel.Share(data.document, '[]', data.cell, data.chord, index, count), Uint8Array);
     kernel.Sweep();
     coordinator.postMessage({ id: data.id, regions }, [regions.buffer]);
   } else {
     current = data;
-    kernel.Share(data.document, data.cell, data.chord, 0, count).dispose();
+    kernel.Share(data.document, '[]', data.cell, data.chord, 0, count).dispose();
     current.shared = true;
     finish();
   }

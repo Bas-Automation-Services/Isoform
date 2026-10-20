@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- The kernel behind an interactive front end: a session that regenerates, its results as JSON and flat mesh
+       buffers. The playground wraps it in [JSExport]s; it has no browser dependency, so tests and the MCP server use it. -->
+  <PropertyGroup>
+    <!-- Published ahead of time to WebAssembly: the analyzers flag reflection that trimming would break. -->
+    <IsAotCompatible>true</IsAotCompatible>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../Isoform.Modeling/Isoform.Modeling.csproj" />
+  </ItemGroup>
+
+</Project>

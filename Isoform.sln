@@ -39,6 +39,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Isoform.Mcp", "src\Isoform.
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Isoform.Mcp.Tests", "tests\Isoform.Mcp.Tests\Isoform.Mcp.Tests.csproj", "{77DE175C-D380-4F9F-B9EE-F0D8B94F2D1F}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Isoform.Interactive", "src\Isoform.Interactive\Isoform.Interactive.csproj", "{8C0B2EBA-9DCB-481F-ABB8-C5A2AF171EC5}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -193,6 +195,18 @@ Global
 		{77DE175C-D380-4F9F-B9EE-F0D8B94F2D1F}.Release|x64.Build.0 = Release|Any CPU
 		{77DE175C-D380-4F9F-B9EE-F0D8B94F2D1F}.Release|x86.ActiveCfg = Release|Any CPU
 		{77DE175C-D380-4F9F-B9EE-F0D8B94F2D1F}.Release|x86.Build.0 = Release|Any CPU
+		{8C0B2EBA-9DCB-481F-ABB8-C5A2AF171EC5}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{8C0B2EBA-9DCB-481F-ABB8-C5A2AF171EC5}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{8C0B2EBA-9DCB-481F-ABB8-C5A2AF171EC5}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{8C0B2EBA-9DCB-481F-ABB8-C5A2AF171EC5}.Debug|x64.Build.0 = Debug|Any CPU
+		{8C0B2EBA-9DCB-481F-ABB8-C5A2AF171EC5}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{8C0B2EBA-9DCB-481F-ABB8-C5A2AF171EC5}.Debug|x86.Build.0 = Debug|Any CPU
+		{8C0B2EBA-9DCB-481F-ABB8-C5A2AF171EC5}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{8C0B2EBA-9DCB-481F-ABB8-C5A2AF171EC5}.Release|Any CPU.Build.0 = Release|Any CPU
+		{8C0B2EBA-9DCB-481F-ABB8-C5A2AF171EC5}.Release|x64.ActiveCfg = Release|Any CPU
+		{8C0B2EBA-9DCB-481F-ABB8-C5A2AF171EC5}.Release|x64.Build.0 = Release|Any CPU
+		{8C0B2EBA-9DCB-481F-ABB8-C5A2AF171EC5}.Release|x86.ActiveCfg = Release|Any CPU
+		{8C0B2EBA-9DCB-481F-ABB8-C5A2AF171EC5}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

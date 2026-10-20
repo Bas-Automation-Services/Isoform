@@ -5,7 +5,7 @@ using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Isoform.Document;
-using Isoform.Playground;
+using Isoform.Interactive;
 
 namespace Isoform.Tests;
 
@@ -35,7 +35,8 @@ static class TestDocuments
 
     static IEnumerable<(string Name, string Text)> Built()
     {
-        foreach (var type in typeof(TestDocuments).Assembly.GetTypes().Where(t => !t.IsDefined(typeof(CompilerGeneratedAttribute)) && !t.ContainsGenericParameters))
+        // The examples live with the interactive session, outside this assembly.
+        foreach (var type in typeof(TestDocuments).Assembly.GetTypes().Append(typeof(Examples)).Where(t => !t.IsDefined(typeof(CompilerGeneratedAttribute)) && !t.ContainsGenericParameters))
         {
             var features = new List<Feature>();
             foreach (var member in type.GetMembers(Statics).Where(m => !m.Name.Contains('<')))
