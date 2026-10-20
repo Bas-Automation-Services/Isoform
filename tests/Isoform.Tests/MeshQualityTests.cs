@@ -59,6 +59,34 @@ public class MeshQualityTests(ITestOutputHelper output)
         b.Topology.Edges.Should().Equal(a.Topology.Edges);
     }
 
+    [Fact]
+    public void Interval_pruning_gives_the_bit_identical_mesh()
+    {
+        PartDocument[] docs =
+        [
+            EditSuite.Base,
+            new([.. EditSuite.Base.Features, new Shell("shell", 1.5)]),
+            new(
+            [
+                new Block("plate", BooleanOp.New, [0, 0, 0], [100, 50, 10]),
+                new Hole("hole", [30, 25], 10),
+                new Block("tab", BooleanOp.Join, [-20, 10, 0], [30, 30, 10]),
+                new Block("slot", BooleanOp.Cut, [60, 30, -1], [10, 30, 12]),
+                new PlaneCut("cut", [100, 0, 10], [0.7071067811865476, 0, 0.7071067811865476]),
+                new Fillet("fillet", ["plate/z-", "plate/y-"], 2),
+            ]),
+        ];
+        foreach (var doc in docs)
+        {
+            var part = new Compiler(new ModelingSettings()).Compile(doc);
+            var pruned = DualContouring.Build(part.Field!, part.Min, part.Max, 0.5, prune: true);
+            var dense = DualContouring.Build(part.Field!, part.Min, part.Max, 0.5, prune: false);
+
+            pruned.Quads.Should().Equal(dense.Quads);
+            pruned.Vertices.Select(Bits).Should().Equal(dense.Vertices.Select(Bits));
+        }
+    }
+
     static FrepResult Regenerate(PartDocument doc, double h) =>
         new FrepModeler(new ModelingSettings { CellSize = h }).Regenerate(doc);
 

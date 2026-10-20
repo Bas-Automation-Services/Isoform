@@ -55,7 +55,11 @@ public static class DualContouring
 
     readonly record struct Crossing(Point3D Point, Vector3D Normal, int Owner);
 
-    public static Mesh Build(Field field, Point3D min, Point3D max, double cellSize, Action<string, TimeSpan>? trace = null)
+    /// <param name="prune">
+    /// Skip blocks of cells whose interval bounds prove they hold no surface. The mesh is identical either way;
+    /// false evaluates every grid point and exists to test exactly that.
+    /// </param>
+    public static Mesh Build(Field field, Point3D min, Point3D max, double cellSize, Action<string, TimeSpan>? trace = null, bool prune = true)
     {
         var clock = System.Diagnostics.Stopwatch.StartNew();
         void Stage(string name)
@@ -71,41 +75,30 @@ public static class DualContouring
         var nz = (int)Math.Ceiling((max.Z - origin.Z) / h) + 2;
         var grid = new Grid(origin, h, nx, ny, nz);
 
-        var values = new double[(nx + 1) * (ny + 1) * (nz + 1)];
-        Parallel.For(0, nz + 1, k =>
-        {
-            for (var j = 0; j <= ny; j++)
-            for (var i = 0; i <= nx; i++)
-                values[grid.Point(i, j, k)] = field.Value(grid.Position(i, j, k));
-        });
+        // Octree over cell ranges: a block whose bounds are certainly positive or negative has no sign change
+        // on any grid edge inside its closed box, so it is skipped without evaluating a single point.
+        var leaves = new List<Block>();
+        Subdivide(new Block(0, 0, 0, nx, ny, nz), field, grid, prune, leaves);
+        Stage($"octree ({leaves.Count:N0} leaf blocks)");
 
-        Stage($"grid values ({values.Length:N0} points)");
+        // Each leaf evaluates its own closed box of grid points and reports its sign-changing edges.
+        var found = new List<(long Key, bool StartInside)>[leaves.Count];
+        Parallel.For(0, leaves.Count, b => found[b] = SignChanges(field, grid, leaves[b]));
+        // Edges on a face shared by two leaves are reported twice; sorting by key restores the dense order.
+        var edgeKeys = found.SelectMany(f => f).DistinctBy(e => e.Key).OrderBy(e => e.Key).ToList();
+        var edges = edgeKeys.Select(e => grid.Edge(e.Key)).ToList();
+        Stage($"sign changes ({edges.Count:N0} edges, {found.Sum(f => f.Count):N0} reported)");
 
-        // Sign-changing grid edges, in a fixed order: (axis, i, j, k).
-        var edges = new List<(int Axis, int I, int J, int K)>();
-        for (var k = 0; k <= nz; k++)
-        for (var j = 0; j <= ny; j++)
-        for (var i = 0; i <= nx; i++)
-        {
-            var inside = values[grid.Point(i, j, k)] < 0;
-            if (i < nx && inside != values[grid.Point(i + 1, j, k)] < 0) edges.Add((0, i, j, k));
-            if (j < ny && inside != values[grid.Point(i, j + 1, k)] < 0) edges.Add((1, i, j, k));
-            if (k < nz && inside != values[grid.Point(i, j, k + 1)] < 0) edges.Add((2, i, j, k));
-        }
-
-        Stage($"sign changes ({edges.Count:N0} edges)");
         var crossings = new Crossing[edges.Count];
         Parallel.For(0, edges.Count, e =>
         {
             var (axis, i, j, k) = edges[e];
             var p0 = grid.Position(i, j, k);
-            var p1 = p0 + Grid.Unit(axis) * h;
-            var c = Bisect(field, p0, p1, values[grid.Point(i, j, k)] < 0);
+            var c = FindRoot(field, p0, p0 + Grid.Unit(axis) * h);
             var s = field.Sample(c);
             crossings[e] = new(c, s.Gradient.Normalized(), s.Owner);
         });
-
-        Stage("crossings (bisection)");
+        Stage("crossings (root finding)");
 
         // Crossings per cell (each edge touches up to four cells).
         var cellCrossings = new Dictionary<int, List<int>>();
@@ -128,10 +121,8 @@ public static class DualContouring
         for (var e = 0; e < edges.Count; e++)
         {
             var around = grid.CellsAround(edges[e]).Select(c => vertexOfCell[c]).ToArray();
-            var (axis, i, j, k) = edges[e];
             // Wind so the quad faces outward: away from the inside end of the edge.
-            var startInside = values[grid.Point(i, j, k)] < 0;
-            quads.Add(startInside
+            quads.Add(edgeKeys[e].StartInside
                 ? new Quad(around[0], around[1], around[2], around[3], crossings[e].Owner)
                 : new Quad(around[3], around[2], around[1], around[0], crossings[e].Owner));
         }
@@ -140,15 +131,100 @@ public static class DualContouring
         return new Mesh(positions, quads);
     }
 
-    static Point3D Bisect(Field field, Point3D a, Point3D b, bool aInside)
+    readonly record struct Block(int I0, int J0, int K0, int I1, int J1, int K1);
+
+    const int LeafCells = 4;
+
+    // Certify only with a margin, so floating-point noise in a bound can never hide a real sign change.
+    const double CertifyMargin = 1e-9;
+
+    static void Subdivide(Block b, Field field, Grid grid, bool prune, List<Block> leaves)
     {
+        if (prune)
+        {
+            var bounds = field.Bounds(new Box3D(grid.Position(b.I0, b.J0, b.K0), grid.Position(b.I1, b.J1, b.K1)));
+            if (bounds.Lo > CertifyMargin || bounds.Hi < -CertifyMargin) return;
+        }
+        var (sx, sy, sz) = (b.I1 - b.I0, b.J1 - b.J0, b.K1 - b.K0);
+        if (sx <= LeafCells && sy <= LeafCells && sz <= LeafCells)
+        {
+            leaves.Add(b);
+            return;
+        }
+        if (sx >= sy && sx >= sz)
+        {
+            var m = b.I0 + sx / 2;
+            Subdivide(b with { I1 = m }, field, grid, prune, leaves);
+            Subdivide(b with { I0 = m }, field, grid, prune, leaves);
+        }
+        else if (sy >= sz)
+        {
+            var m = b.J0 + sy / 2;
+            Subdivide(b with { J1 = m }, field, grid, prune, leaves);
+            Subdivide(b with { J0 = m }, field, grid, prune, leaves);
+        }
+        else
+        {
+            var m = b.K0 + sz / 2;
+            Subdivide(b with { K1 = m }, field, grid, prune, leaves);
+            Subdivide(b with { K0 = m }, field, grid, prune, leaves);
+        }
+    }
+
+    static List<(long, bool)> SignChanges(Field field, Grid grid, Block b)
+    {
+        var (sx, sy, sz) = (b.I1 - b.I0 + 1, b.J1 - b.J0 + 1, b.K1 - b.K0 + 1);
+        var inside = new bool[sx * sy * sz];
+        for (var k = 0; k < sz; k++)
+        for (var j = 0; j < sy; j++)
+        for (var i = 0; i < sx; i++)
+            inside[(k * sy + j) * sx + i] = field.Value(grid.Position(b.I0 + i, b.J0 + j, b.K0 + k)) < 0;
+
+        var result = new List<(long, bool)>();
+        for (var k = 0; k < sz; k++)
+        for (var j = 0; j < sy; j++)
+        for (var i = 0; i < sx; i++)
+        {
+            var here = inside[(k * sy + j) * sx + i];
+            var (gi, gj, gk) = (b.I0 + i, b.J0 + j, b.K0 + k);
+            if (i + 1 < sx && here != inside[(k * sy + j) * sx + i + 1]) result.Add((grid.EdgeKey(0, gi, gj, gk), here));
+            if (j + 1 < sy && here != inside[(k * sy + j + 1) * sx + i]) result.Add((grid.EdgeKey(1, gi, gj, gk), here));
+            if (k + 1 < sz && here != inside[((k + 1) * sy + j) * sx + i]) result.Add((grid.EdgeKey(2, gi, gj, gk), here));
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// Root of the field on a sign-changing segment: Illinois (modified regula falsi), which keeps the bracket of
+    /// bisection but converges superlinearly on the piecewise-smooth fields we have.
+    /// </summary>
+    static Point3D FindRoot(Field field, Point3D a, Point3D b)
+    {
+        var dir = b - a;
+        double t0 = 0, t1 = 1;
+        var f0 = field.Value(a);
+        var f1 = field.Value(b);
+        var side = 0;
         for (var it = 0; it < 60; it++)
         {
-            var m = new Point3D((a.X + b.X) / 2, (a.Y + b.Y) / 2, (a.Z + b.Z) / 2);
-            if (field.Value(m) < 0 == aInside) a = m; else b = m;
-            if ((b - a).LengthSquared == 0) break;
+            var t = (t0 * f1 - t1 * f0) / (f1 - f0);
+            if (!(t > t0 && t < t1)) t = (t0 + t1) / 2;
+            var ft = field.Value(a + dir * t);
+            if (ft == 0 || t1 - t0 < 1e-16 || Math.Abs(ft) < 1e-14) return a + dir * t;
+            if (ft < 0 == f0 < 0)
+            {
+                (t0, f0) = (t, ft);
+                if (side == -1) f1 /= 2;
+                side = -1;
+            }
+            else
+            {
+                (t1, f1) = (t, ft);
+                if (side == 1) f0 /= 2;
+                side = 1;
+            }
         }
-        return new Point3D((a.X + b.X) / 2, (a.Y + b.Y) / 2, (a.Z + b.Z) / 2);
+        return a + dir * ((t0 + t1) / 2);
     }
 
     static Point3D CellVertex(Field field, Grid grid, int cell, List<Crossing> crossings)
@@ -221,6 +297,15 @@ public static class DualContouring
         public int Point(int i, int j, int k) => (k * (ny + 1) + j) * (nx + 1) + i;
 
         public Point3D Position(int i, int j, int k) => new(origin.X + i * h, origin.Y + j * h, origin.Z + k * h);
+
+        /// <summary>Ordered like the dense scan: by grid point (k, j, i), then axis.</summary>
+        public long EdgeKey(int axis, int i, int j, int k) => (long)Point(i, j, k) * 3 + axis;
+
+        public (int Axis, int I, int J, int K) Edge(long key)
+        {
+            var point = (int)(key / 3);
+            return ((int)(key % 3), point % (nx + 1), point / (nx + 1) % (ny + 1), point / ((nx + 1) * (ny + 1)));
+        }
 
         int Cell(int i, int j, int k) => (k * ny + j) * nx + i;
 
