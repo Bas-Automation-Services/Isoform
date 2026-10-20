@@ -512,6 +512,87 @@ public sealed class BlendField(Field a, Field b, double k, Surface blend, bool u
     bool Apart(Interval a, Interval b) => a.Lo - b.Hi >= K || b.Lo - a.Hi >= K;
 }
 
+/// <summary>
+/// A fillet or chamfer along every edge where a flat cap meets a swept side: an extruded profile (or its complement)
+/// whose field is an exact distance with its gradient always in the cap's plane. With the two directions
+/// perpendicular the rolling ball of <see cref="RoundedEdgeField"/> is exact for the whole loop at once: straight
+/// edges give cylinders, arcs tori, tangent junctions run on seamlessly, convex corners mitre and reflex corners
+/// sweep round. The chamfer is the plane (a + b + d)/√2 = 0, a cone along arcs. Each side face gets a face of its own.
+/// </summary>
+public sealed class LoopEdgeField : Field
+{
+    static readonly double Root2 = Math.Sqrt(2);
+    readonly IReadOnlyDictionary<int, Surface> _faceOf;
+    readonly Dictionary<int, int> _sideOf;
+    readonly int _fallback;
+
+    /// <param name="faceOf">The loop face for each owner of <paramref name="side"/>.</param>
+    public LoopEdgeField(LeafField cap, Field side, double size, bool round, IReadOnlyDictionary<int, Surface> faceOf)
+    {
+        (Cap, Side, Size, Round, _faceOf) = (cap, side, size, round, faceOf);
+        _sideOf = faceOf.ToDictionary(kv => kv.Value.Id, kv => kv.Key);
+        _fallback = faceOf.Values.First().Id;
+    }
+
+    public LeafField Cap { get; }
+    public Field Side { get; }
+    public double Size { get; }
+    public bool Round { get; }
+    public IReadOnlyDictionary<int, Surface> FaceOf => _faceOf;
+
+    int Face(int sideOwner) => _faceOf.TryGetValue(sideOwner, out var s) ? s.Id : _fallback;
+
+    public override FieldSample Sample(Point3D p)
+    {
+        var (sa, sb) = (Cap.Sample(p), Side.Sample(p));
+        var sharp = sa.Value >= sb.Value ? sa : sb;
+        return Edge(sa, sb, Face(sb.Owner), always: false) is { } e && e.Value > sharp.Value ? e : sharp;
+    }
+
+    /// <summary>The fillet or chamfer surface itself; outside its sector only when <paramref name="always"/>.</summary>
+    FieldSample? Edge(FieldSample sa, FieldSample sb, int owner, bool always)
+    {
+        if (!Round)
+            return new((sa.Value + sb.Value + Size) / Root2, owner, (sa.Gradient + sb.Gradient) / Root2);
+        var (alpha, beta) = (sa.Value + Size, sb.Value + Size);
+        if (!always && (alpha < 0 || beta < 0)) return null;
+        var w = sa.Gradient * alpha + sb.Gradient * beta;
+        var len = w.Length;
+        return len > 0 ? new(len - Size, owner, w / len) : new(-Size, owner, sa.Gradient);
+    }
+
+    public override FieldSample? SampleSurface(int owner, Point3D p)
+    {
+        if (!_sideOf.TryGetValue(owner, out var side)) return Cap.SampleSurface(owner, p) ?? Side.SampleSurface(owner, p);
+        return Side.SampleSurface(side, p) is { } sb ? Edge(Cap.Sample(p), sb, owner, always: true) : null;
+    }
+
+    public override Interval Bounds(Box3D box)
+    {
+        var (ia, ib) = (Cap.Bounds(box), Side.Bounds(box));
+        var sharp = Interval.Max(ia, ib);
+        if (!Round) return Interval.Max(sharp, Chamfer(ia, ib));
+        var (alphaHi, betaHi) = (ia.Hi + Size, ib.Hi + Size);
+        if (alphaHi < 0 || betaHi < 0) return sharp;
+        var wMax = Math.Sqrt(alphaHi * alphaHi + betaHi * betaHi);
+        return new Interval(sharp.Lo, Math.Max(sharp.Hi, wMax - Size)).Intersect(LipschitzBounds(box));
+    }
+
+    Interval Chamfer(Interval a, Interval b) => new((a.Lo + b.Lo + Size) / Root2, (a.Hi + b.Hi + Size) / Root2);
+
+    // Away from the edge the loop is the plain intersection; ties go to the cap, as in Sample.
+    public override Field Simplify(Box3D box)
+    {
+        var (ia, ib) = (Cap.Bounds(box), Side.Bounds(box));
+        var gone = Round ? ia.Hi + Size < 0 || ib.Hi + Size < 0 : Chamfer(ia, ib).Hi < Math.Max(ia.Lo, ib.Lo);
+        if (gone) return new MaxField([Cap, Side]).Simplify(box);
+        var side = Side.Simplify(box);
+        return ReferenceEquals(side, Side) ? this : new LoopEdgeField(Cap, side, Size, Round, _faceOf);
+    }
+
+    public LoopEdgeField WithSide(Field side) => new(Cap, side, Size, Round, _faceOf);
+}
+
 public static class FieldAlgebra
 {
     /// <summary>
@@ -553,7 +634,7 @@ public static class FieldAlgebra
     static bool HeldByRoundedEdge(List<Field> fields, LeafField leaf)
     {
         foreach (var f in fields)
-            if (f is RoundedEdgeField r && (r.A == leaf || r.B == leaf)) return true;
+            if (f is RoundedEdgeField r && (r.A == leaf || r.B == leaf) || f is LoopEdgeField l && l.Cap == leaf) return true;
         return false;
     }
 
@@ -592,6 +673,7 @@ public static class FieldAlgebra
             MinField m => m.Children,
             NegateField n => [n.Child],
             RoundedEdgeField r => [r.A, r.B],
+            LoopEdgeField l => [l.Cap, l.Side],
             BlendField b => [b.A, b.B],
             ProfileField p => p.Leaves,
             _ => [],

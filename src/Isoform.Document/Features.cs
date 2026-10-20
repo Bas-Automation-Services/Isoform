@@ -19,11 +19,15 @@ public sealed record Hole(string Id, double[] Center, double Diameter) : Feature
 /// <summary>Removes all material on the side <paramref name="Normal"/> points to, starting at <paramref name="Point"/>.</summary>
 public sealed record PlaneCut(string Id, double[] Point, double[] Normal) : Feature(Id);
 
-/// <summary>Constant-radius fillet on the edge between two source faces, e.g. ["plate/z+", "plate/x+"].</summary>
-public sealed record Fillet(string Id, string[] Edge, double Radius) : Feature(Id);
+/// <summary>
+/// Constant-radius fillet on the edge between two source faces, e.g. ["plate/z+", "plate/x+"], or with
+/// <paramref name="Loop"/> on every edge round one face (its edge list then stays empty). A loop fillet names its
+/// faces after the face on the other side: <c>round/rib/a</c>.
+/// </summary>
+public sealed record Fillet(string Id, string[] Edge, double Radius, string? Loop = null) : Feature(Id);
 
 /// <summary>Equal-distance chamfer on the edge between two source faces: a plane, or a cone on a hole or boss edge.</summary>
-public sealed record Chamfer(string Id, string[] Edge, double Distance) : Feature(Id);
+public sealed record Chamfer(string Id, string[] Edge, double Distance, string? Loop = null) : Feature(Id);
 
 /// <summary>Hollows the solid into a closed skin of wall <paramref name="Thickness"/>; inner faces are named after their outer face.</summary>
 public sealed record Shell(string Id, double Thickness) : Feature(Id);

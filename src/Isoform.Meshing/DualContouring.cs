@@ -543,6 +543,10 @@ public static class DualContouring
                 Surfaces(b.A, owners);
                 Surfaces(b.B, owners);
                 break;
+            case LoopEdgeField l:
+                Surfaces(l.Cap, owners);
+                Surfaces(l.Side, owners);
+                break;
         }
     }
 

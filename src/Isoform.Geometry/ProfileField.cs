@@ -318,7 +318,7 @@ public sealed class ProfileField : Field
     {
         var (u, v, radial) = Map(p);
         var (i, where, squared) = Nearest(u, v);
-        if (where < 0) return _leaves[i]!.Sample(p);
+        if (where < 0 || Tangent(i, where)) return _leaves[i]!.Sample(p);
         var (vu, vv, sign, k) = Vertex(i, where, p);
         var (du, dv) = (u - vu, v - vv);
         var d = Math.Sqrt(du * du + dv * dv);
@@ -330,7 +330,7 @@ public sealed class ProfileField : Field
     {
         var (u, v, _) = Map(p);
         var (i, where, _) = Nearest(u, v);
-        if (where < 0) return _leaves[i]!.Value(p);
+        if (where < 0 || Tangent(i, where)) return _leaves[i]!.Value(p);
         var (vu, vv, sign, _) = Vertex(i, where, p);
         var (du, dv) = (u - vu, v - vv);
         return sign * Math.Sqrt(du * du + dv * dv) - _offset;
@@ -423,7 +423,12 @@ public sealed class ProfileField : Field
     {
         var e = _edges[i];
         var k = where == 1 ? i : (i - 1 + _edges.Length) % _edges.Length;
-        var sign = _vertexSign[k] != 0 ? _vertexSign[k] : _leaves[i]!.Value(p) + _offset < 0 ? -1 : 1;
-        return where == 1 ? (e.U1, e.V1, sign, k) : (e.U0, e.V0, sign, k);
+        return where == 1 ? (e.U1, e.V1, _vertexSign[k], k) : (e.U0, e.V0, _vertexSign[k], k);
     }
+
+    /// <summary>
+    /// Nearest to a tangent junction, which only rounding can make happen: both edges share the normal there, so the
+    /// edge's own surface gives the value, and a true normal instead of the direction of a vanishing vector.
+    /// </summary>
+    bool Tangent(int i, int where) => _vertexSign[where == 1 ? i : (i - 1 + _edges.Length) % _edges.Length] == 0;
 }

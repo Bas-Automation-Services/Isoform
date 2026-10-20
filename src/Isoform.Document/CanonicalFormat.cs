@@ -76,16 +76,12 @@ public static class CanonicalFormat
                 break;
             case Fillet fl:
                 w.WriteString("type", "fillet");
-                w.WriteStartArray("edge");
-                foreach (var s in fl.Edge) w.WriteStringValue(s);
-                w.WriteEndArray();
+                EdgeOrLoop(w, fl.Edge, fl.Loop);
                 Number(w, "radius", fl.Radius);
                 break;
             case Chamfer ch:
                 w.WriteString("type", "chamfer");
-                w.WriteStartArray("edge");
-                foreach (var s in ch.Edge) w.WriteStringValue(s);
-                w.WriteEndArray();
+                EdgeOrLoop(w, ch.Edge, ch.Loop);
                 Number(w, "distance", ch.Distance);
                 break;
             case Shell sh:
@@ -157,13 +153,28 @@ public static class CanonicalFormat
             "hole" => new Hole(id, Arr(n["center"], 2), (double)n["diameter"]!),
             "plane-cut" => new PlaneCut(id, Arr(n["point"], 3), Arr(n["normal"], 3)),
             "shell" => new Shell(id, (double)n["thickness"]!),
-            "fillet" => new Fillet(id, n["edge"]!.AsArray().Select(e => (string)e!).ToArray(), (double)n["radius"]!),
-            "chamfer" => new Chamfer(id, n["edge"]!.AsArray().Select(e => (string)e!).ToArray(), (double)n["distance"]!),
+            "fillet" => new Fillet(id, Edge(n), (double)n["radius"]!, (string?)n["loop"]),
+            "chamfer" => new Chamfer(id, Edge(n), (double)n["distance"]!, (string?)n["loop"]),
             "extrude" => new Extrude(id, Op(n), ReadPlane(n["plane"]!), ReadProfile(n["profile"]!), (double)n["start"]!, (double)n["end"]!, (double?)n["blend"] ?? 0),
             "revolve" => new Revolve(id, Op(n), ReadPlane(n["plane"]!), ReadProfile(n["profile"]!), (double)n["angle"]!, (double?)n["blend"] ?? 0),
             "pattern" => new Pattern(id, n["features"]!.AsArray().Select(f => (string)f!).ToArray(), ReadMotion(n)),
             var t => throw new FormatException($"Unknown feature type '{t}'."),
         };
+    }
+
+    static string[] Edge(JsonNode n) => n["edge"]?.AsArray().Select(e => (string)e!).ToArray() ?? [];
+
+    // A loop names one face; an edge names two.
+    static void EdgeOrLoop(Utf8JsonWriter w, string[] edge, string? loop)
+    {
+        if (loop is not null)
+        {
+            w.WriteString("loop", loop);
+            return;
+        }
+        w.WriteStartArray("edge");
+        foreach (var s in edge) w.WriteStringValue(s);
+        w.WriteEndArray();
     }
 
     static PatternMotion ReadMotion(JsonNode n) =>

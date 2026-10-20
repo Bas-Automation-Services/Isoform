@@ -9,3 +9,6 @@ artifacts/
 
 # Published playground
 out/
+
+# Agent worktrees
+.claude/worktrees/

@@ -29,7 +29,7 @@ public static class Examples
             ]), 0, 30),
             new Fillet("inside", ["bracket/inner", "bracket/riser"], 4),
             new Fillet("outside", ["bracket/bottom", "bracket/back"], 6),
-            new Fillet("edge", ["bracket/end", "bracket/bottom"], 2),
+            new Fillet("edge", [], 1.5, Loop: "bracket/end"),
             new Revolve("bore", BooleanOp.Cut, new SketchPlane([40, 0, 15], [0, 0, 1], [-1, 0, 0]), new Profile([0, -1],
             [
                 new ProfileEdge("bottom", [3, -1]), new ProfileEdge("wall", [3, 7]), new ProfileEdge("top", [0, 7]), new ProfileEdge("axis", [0, -1]),
@@ -62,11 +62,26 @@ public static class Examples
             ])),
             new Pattern("circle", ["bolt"], new CircularMotion([0, 0, 0], [0, 0, 1], 6)),
         ])),
+        ("Rounded outline with a slot: loop fillets", new(
+        [
+            new Extrude("outline", BooleanOp.New, Xy, new Profile([0, 0],
+            [
+                new ProfileEdge("s", [80, 0]), new ProfileEdge("e", [80, 50]), new ProfileEdge("n", [0, 50]), new ProfileEdge("w", [0, 0]),
+            ]), 0, 8),
+            new Fillet("corner", ["outline/s", "outline/e"], 10),
+            new Fillet("corner2", ["outline/n", "outline/w"], 10),
+            new Extrude("slot", BooleanOp.Cut, Xy, new Profile([25, 20],
+            [
+                new ProfileEdge("a", [55, 20]), new ProfileEdge("right", [55, 30], 1), new ProfileEdge("b", [25, 30]), new ProfileEdge("left", [25, 20], 1),
+            ]), -1, 9),
+            new Fillet("top", [], 1.5, Loop: "outline/end"),
+            new Chamfer("bottom", [], 1, Loop: "outline/start"),
+        ])),
         ("Pocket with rounded floor, boss with foot fillet", new(
         [
             Plate,
             new Block("pocket", BooleanOp.Cut, [10, 10, 4], [35, 30, 10]),
-            .. new[] { "x-", "y-", "x+", "y+" }.Select((w, i) => new Fillet($"floor{i}", ["pocket/z-", $"pocket/{w}"], 3)),
+            new Fillet("floor", [], 3, Loop: "pocket/z-"),
             new Block("boss", BooleanOp.Join, [65, 15, 10], [20, 20, 12]),
             new Fillet("foot", ["plate/z+", "boss/x-"], 3),
             new Chamfer("top", ["boss/z+", "boss/x+"], 2),
