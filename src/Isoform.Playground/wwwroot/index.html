@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Isoform Playground</title>
+  <link rel="stylesheet" href="playground.css">
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+      }
+    }
+  </script>
+</head>
+<body>
+  <aside id="panel">
+    <header>
+      <h1>Isoform</h1>
+      <span class="muted">kernel playground · runs in your browser</span>
+    </header>
+
+    <label class="row">
+      <span>Example</span>
+      <select id="examples"></select>
+    </label>
+
+    <div class="editor-head">
+      <span>Document</span>
+      <span id="parse" class="muted"></span>
+    </div>
+    <textarea id="editor" spellcheck="false" autocomplete="off"></textarea>
+
+    <div class="settings">
+      <label>Cell size
+        <select id="cell">
+          <option value="1">1 mm</option>
+          <option value="0.5" selected>0.5 mm</option>
+          <option value="0.25">0.25 mm</option>
+          <option value="0.1">0.1 mm (slow)</option>
+        </select>
+      </label>
+      <label>Chord tolerance
+        <select id="chord">
+          <option value="0.05" selected>0.05 mm</option>
+          <option value="0.02">0.02 mm</option>
+          <option value="0.01">0.01 mm</option>
+          <option value="0.005">0.005 mm</option>
+        </select>
+      </label>
+    </div>
+
+    <div id="stats" class="stats muted">Loading the kernel…</div>
+    <div id="selection" class="selection" hidden></div>
+    <ul id="diagnostics" class="diagnostics"></ul>
+  </aside>
+
+  <main id="view">
+    <div id="tooltip" hidden></div>
+    <div class="hint">Drag to orbit · right-drag to pan · scroll to zoom · click a face for its name · shift+click a second face for an edge</div>
+  </main>
+
+  <script type="module" src="main.js"></script>
+</body>
+</html>

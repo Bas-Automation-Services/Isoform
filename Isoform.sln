@@ -31,6 +31,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Isoform.Occt.Tests", "tests
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Isoform.Bench", "src\Isoform.Bench\Isoform.Bench.csproj", "{D23524D7-DD1A-4905-BB3E-54E4C4806590}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Isoform.Playground", "src\Isoform.Playground\Isoform.Playground.csproj", "{2E00EDAD-2D16-4E9A-8E6D-890A2399EA60}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -137,6 +139,18 @@ Global
 		{D23524D7-DD1A-4905-BB3E-54E4C4806590}.Release|x64.Build.0 = Release|Any CPU
 		{D23524D7-DD1A-4905-BB3E-54E4C4806590}.Release|x86.ActiveCfg = Release|Any CPU
 		{D23524D7-DD1A-4905-BB3E-54E4C4806590}.Release|x86.Build.0 = Release|Any CPU
+		{2E00EDAD-2D16-4E9A-8E6D-890A2399EA60}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{2E00EDAD-2D16-4E9A-8E6D-890A2399EA60}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{2E00EDAD-2D16-4E9A-8E6D-890A2399EA60}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{2E00EDAD-2D16-4E9A-8E6D-890A2399EA60}.Debug|x64.Build.0 = Debug|Any CPU
+		{2E00EDAD-2D16-4E9A-8E6D-890A2399EA60}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{2E00EDAD-2D16-4E9A-8E6D-890A2399EA60}.Debug|x86.Build.0 = Debug|Any CPU
+		{2E00EDAD-2D16-4E9A-8E6D-890A2399EA60}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{2E00EDAD-2D16-4E9A-8E6D-890A2399EA60}.Release|Any CPU.Build.0 = Release|Any CPU
+		{2E00EDAD-2D16-4E9A-8E6D-890A2399EA60}.Release|x64.ActiveCfg = Release|Any CPU
+		{2E00EDAD-2D16-4E9A-8E6D-890A2399EA60}.Release|x64.Build.0 = Release|Any CPU
+		{2E00EDAD-2D16-4E9A-8E6D-890A2399EA60}.Release|x86.ActiveCfg = Release|Any CPU
+		{2E00EDAD-2D16-4E9A-8E6D-890A2399EA60}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

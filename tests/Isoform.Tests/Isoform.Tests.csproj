@@ -23,6 +23,8 @@
     <Using Include="Xunit" />
     <Using Include="FluentAssertions" />
     <None Include="Cases\**\*.json" CopyToOutputDirectory="PreserveNewest" />
+    <!-- The playground runs in the browser; its example parts are plain documents and are tested here. -->
+    <Compile Include="..\..\src\Isoform.Playground\Examples.cs" Link="Playground\Examples.cs" />
   </ItemGroup>
 
 </Project>

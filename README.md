@@ -15,6 +15,7 @@ vertices while producing exact output, and does it do better at this than a B-re
 | `Isoform.Meshing` | Adaptive, feature-preserving dual contouring with a resolution guarantee |
 | `Isoform.Modeling` | Regeneration, topology, references, diagnostics: the backend-neutral API |
 | `Isoform.Occt` | OCCT B-rep baseline behind the same API |
+| `Isoform.Playground` | The kernel in the browser (WebAssembly): document editor and 3D view |
 | `native/Isoform.Occt` | Small C ABI over OpenCASCADE used by `Isoform.Occt` |
 
 ## Features
@@ -42,6 +43,25 @@ cmake -S native/Isoform.Occt -B native/build -DOCCT_ROOT=<occt-build>
 cmake --build native/build --config Release
 dotnet test tests/Isoform.Occt.Tests
 ```
+
+## Playground
+
+The kernel compiled to WebAssembly, running in the browser: edit the document, see the part regenerate, hover a
+face for its name, click two faces to get the edge to fillet, read the diagnostics.
+
+```sh
+dotnet run --project src/Isoform.Playground     # http://localhost:5240, interpreted: fine for small parts
+```
+
+For a faster build, compiled ahead of time (needs `dotnet workload install wasm-tools` once):
+
+```sh
+dotnet publish src/Isoform.Playground -c Release -o out/playground
+python -m http.server 8137 -d out/playground/wwwroot   # or any static file server
+```
+
+The page loads three.js from a CDN. In the browser the kernel runs on one thread, so it is several times slower
+than on the desktop.
 
 ## Licence
 

@@ -1,0 +1,93 @@
+using Isoform.Document;
+
+namespace Isoform.Playground;
+
+/// <summary>Starting points for the playground, one per kind of feature.</summary>
+public static class Examples
+{
+    static readonly Block Plate = new("plate", BooleanOp.New, [0, 0, 0], [100, 50, 10]);
+    static readonly SketchPlane Xy = new([0, 0, 0], [1, 0, 0], [0, 0, 1]);
+    static readonly SketchPlane Top = new([0, 0, 10], [1, 0, 0], [0, 0, 1]);
+    static readonly SketchPlane Xz = new([0, 0, 0], [1, 0, 0], [0, -1, 0]);
+
+    static Profile Circle(double cx, double cy, double r) => new([cx - r, cy], [new ProfileEdge("a", [cx + r, cy], 1), new ProfileEdge("b", [cx - r, cy], 1)]);
+
+    public static IReadOnlyList<(string Name, PartDocument Doc)> All { get; } =
+    [
+        ("Plate with hole and fillet", new(
+        [
+            Plate,
+            new Hole("hole", [30, 25], 10),
+            new Fillet("fillet", ["plate/z+", "plate/x+"], 2),
+        ])),
+        ("Bracket: extrude, inside round, hole row", new(
+        [
+            new Extrude("bracket", BooleanOp.New, Xy, new Profile([0, 0],
+            [
+                new ProfileEdge("bottom", [60, 0]), new ProfileEdge("tip", [60, 6]), new ProfileEdge("inner", [6, 6]),
+                new ProfileEdge("riser", [6, 40]), new ProfileEdge("top", [0, 40]), new ProfileEdge("back", [0, 0]),
+            ]), 0, 30),
+            new Fillet("inside", ["bracket/inner", "bracket/riser"], 4),
+            new Fillet("outside", ["bracket/bottom", "bracket/back"], 6),
+            new Fillet("edge", ["bracket/end", "bracket/bottom"], 2),
+            new Revolve("bore", BooleanOp.Cut, new SketchPlane([40, 0, 15], [0, 0, 1], [-1, 0, 0]), new Profile([0, -1],
+            [
+                new ProfileEdge("bottom", [3, -1]), new ProfileEdge("wall", [3, 7]), new ProfileEdge("top", [0, 7]), new ProfileEdge("axis", [0, -1]),
+            ])),
+            new Pattern("row", ["bore"], new LinearMotion([-1, 0, 0], 12, 3)),
+        ])),
+        ("Turned shaft: revolve with undercut and dome", new(
+        [
+            new Revolve("shaft", BooleanOp.New, Xz, new Profile([0, 0],
+            [
+                new ProfileEdge("base", [12, 0]), new ProfileEdge("big", [12, 20]), new ProfileEdge("step", [7, 20]),
+                new ProfileEdge("small", [7, 45]), new ProfileEdge("cone", [4, 52]), new ProfileEdge("dome", [0, 56], Math.Tan(Math.PI / 8)),
+                new ProfileEdge("axis", [0, 0]),
+            ])),
+            new Fillet("undercut", ["shaft/step", "shaft/small"], 1.5),
+            new Chamfer("lead", ["shaft/base", "shaft/big"], 1),
+        ])),
+        ("Flange: bolt circle and countersinks", new(
+        [
+            new Extrude("flange", BooleanOp.New, Xy, Circle(0, 0, 40), 0, 8),
+            new Extrude("hub", BooleanOp.Join, new SketchPlane([0, 0, 8], [1, 0, 0], [0, 0, 1]), Circle(0, 0, 18), 0, 14),
+            new Fillet("foot", ["flange/end", "hub/a"], 3),
+            new Hole("bore", [0, 0], 16),
+            new Chamfer("bore-edge", ["hub/end", "bore/wall"], 1),
+            // A countersunk bolt hole as one revolved cut, so the pattern copies the countersink too.
+            new Revolve("bolt", BooleanOp.Cut, new SketchPlane([30, 0, 0], [1, 0, 0], [0, -1, 0]), new Profile([0, -1],
+            [
+                new ProfileEdge("bottom", [3, -1]), new ProfileEdge("wall", [3, 7]), new ProfileEdge("sink", [5, 9]),
+                new ProfileEdge("top", [0, 9]), new ProfileEdge("axis", [0, -1]),
+            ])),
+            new Pattern("circle", ["bolt"], new CircularMotion([0, 0, 0], [0, 0, 1], 6)),
+        ])),
+        ("Pocket with rounded floor, boss with foot fillet", new(
+        [
+            Plate,
+            new Block("pocket", BooleanOp.Cut, [10, 10, 4], [35, 30, 10]),
+            .. new[] { "x-", "y-", "x+", "y+" }.Select((w, i) => new Fillet($"floor{i}", ["pocket/z-", $"pocket/{w}"], 3)),
+            new Block("boss", BooleanOp.Join, [65, 15, 10], [20, 20, 12]),
+            new Fillet("foot", ["plate/z+", "boss/x-"], 3),
+            new Chamfer("top", ["boss/z+", "boss/x+"], 2),
+        ])),
+        ("Smooth blends and a shell", new(
+        [
+            Plate,
+            new Extrude("knob", BooleanOp.Join, Top, Circle(30, 25, 10), 0, 15, Blend: 4),
+            new Block("groove", BooleanOp.Cut, [60, -1, 6], [12, 52, 10], Blend: 3),
+            new Shell("shell", 1.5),
+        ])),
+        ("Mirror and offset", new(
+        [
+            Plate,
+            new Extrude("rib", BooleanOp.Join, Top, new Profile([5, 5],
+            [
+                new ProfileEdge("a", [30, 5]), new ProfileEdge("b", [30, 12]), new ProfileEdge("c", [12, 12]),
+                new ProfileEdge("d", [12, 40]), new ProfileEdge("e", [5, 40]), new ProfileEdge("f", [5, 5]),
+            ]), 0, 6),
+            new Pattern("mirror", ["rib"], new MirrorMotion([50, 0, 0], [1, 0, 0])),
+            new Offset("grow", 1),
+        ])),
+    ];
+}

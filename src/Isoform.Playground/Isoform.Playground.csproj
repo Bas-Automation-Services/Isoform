@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk.WebAssembly">
+
+  <!-- The kernel compiled to WebAssembly: the playground page runs it in the browser, no server needed. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <PlatformTarget>AnyCPU</PlatformTarget>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <!-- Published builds are compiled ahead of time to WebAssembly (needs the wasm-tools workload): several times
+         faster than the interpreter that plain builds and `dotnet run` use. -->
+    <RunAOTCompilation Condition="'$(Configuration)' == 'Release'">true</RunAOTCompilation>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../Isoform.Modeling/Isoform.Modeling.csproj" />
+  </ItemGroup>
+
+</Project>

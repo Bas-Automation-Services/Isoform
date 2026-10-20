@@ -6,3 +6,6 @@ TestResults/
 native/build/
 native/out/
 artifacts/
+
+# Published playground
+out/
