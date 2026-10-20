@@ -1,0 +1,293 @@
+using Isoform.Document;
+using Isoform.Modeling;
+
+namespace Isoform.Tests;
+
+/// <summary>
+/// Minimized failures from the K7 robustness runs, each asserting what the kernel promises: the right answer, or a
+/// below-resolution report. Skipped until fixed; the expected values are exact (or OCCT's, where noted, which agreed
+/// with the certified volume).
+/// </summary>
+public class RobustnessReproTests
+{
+    const string Open = "K7 finding, not fixed yet";
+    static readonly ModelingSettings Settings = new();
+
+    static FrepResult Regenerate(string features) => new FrepModeler(Settings).Regenerate(RobustnessDocuments.Parse(features));
+
+    static bool Reported(FrepResult r) => r.Diagnostics.Any(d => d.Code == Diagnostic.BelowResolution);
+
+    static (int, int, int, int) Counts(FrepResult r) => (r.Topology!.Faces.Count, r.Topology.Edges.Count, r.Topology.Vertices.Count, r.Topology.BodyCount);
+
+    /// <summary>
+    /// A plane cut leaving a 25° wedge along the bottom edge: the topology is right but the mesh loses about 0.2 mm² of
+    /// section per mm of edge (1% here), with nothing reported. Every wedge from about 14° to 25° does this at 0.5 mm cells;
+    /// 30° and up are exact, 10° is reported. The thin-spot test in DualContouring.FindThin skips surfaces that meet
+    /// within four cells, assuming the cell vertices then reproduce the edge; below ~30° they do not.
+    /// </summary>
+    [Fact(Skip = Open)]
+    public void Acute_wedge_keeps_its_volume()
+    {
+        var a = 25 * Math.PI / 180;
+        var r = new FrepModeler(Settings).Regenerate(new PartDocument(
+        [
+            new Block("plate", BooleanOp.New, [0, 0, 0], [10, 20, 4]),
+            new PlaneCut("cut", [0, 10, 0], [0, Math.Sin(a), Math.Cos(a)]),
+        ]));
+        var exact = 10 * 4 * (10 - 2 / Math.Tan(a));
+
+        var volume = MassProperties.Of(r.Part.Field!, r.Mesh!).Volume;
+
+        (Reported(r) || Math.Abs(volume - exact) < 1e-6 * exact).Should().BeTrue($"volume {volume} vs {exact}");
+    }
+
+    /// <summary>
+    /// A hole that clips the plate's corner by 1e-6 mm (ten times the tolerance) is called no-effect: the face and the
+    /// sliver of material it removes are neither built nor reported. OCCT builds the 7-face part.
+    /// </summary>
+    [Fact(Skip = Open)]
+    public void Hole_clipping_a_corner_is_built_or_reported()
+    {
+        var r = Regenerate("""
+            [
+              {"id":"plate","type":"block","op":"new","origin":[0,0,0],"size":[10,29,10]},
+              {"id":"hole1","type":"hole","center":[10,31.999999],"diameter":6}
+            ]
+            """);
+
+        (Reported(r) || Counts(r) == (7, 15, 10, 1)).Should().BeTrue();
+        r.Diagnostics.Should().NotContain(d => d.Code == Diagnostic.NoEffect, "the hole does reach into the part");
+    }
+
+    /// <summary>
+    /// An oblique plane cut through a hole wall meets it in a thin wedge: the mesh gets non-manifold edges (four quads
+    /// on one edge) near (19.4, 10.5, 1) at every cell size, while the topology is right. One vertex per cell cannot
+    /// separate the two sheets of the wedge (DualContouring vertex placement).
+    /// </summary>
+    [Fact(Skip = Open)]
+    public void Oblique_cut_through_a_hole_meshes_watertight()
+    {
+        var r = Regenerate("""
+            [
+              {"id":"plate","type":"block","op":"new","origin":[0,0,0],"size":[30,30,2]},
+              {"id":"hole1","type":"hole","center":[22,12],"diameter":6},
+              {"id":"slice2","type":"plane-cut","point":[33,0,0],"normal":[-0.3,-0.451,0.5]}
+            ]
+            """);
+
+        (Reported(r) || r.Mesh!.IsWatertight()).Should().BeTrue();
+    }
+
+    /// <summary>
+    /// A plane cut leaves plate/x+ as a 0.1 mm² triangle; at 0.5 mm cells it disappears (5 faces), at 0.125 mm it is there
+    /// (6 faces, as in OCCT). A face smaller than the cells is neither kept nor reported.
+    /// </summary>
+    [Fact(Skip = Open)]
+    public void Small_corner_face_is_kept_or_reported()
+    {
+        var r = Regenerate("""
+            [
+              {"id":"plate","type":"block","op":"new","origin":[0,0,0],"size":[38,20,3]},
+              {"id":"slice1","type":"plane-cut","point":[0,15,0.5],"normal":[0.16,0.35,-0.4]}
+            ]
+            """);
+
+        (Reported(r) || Counts(r) == (6, 12, 8, 1)).Should().BeTrue();
+    }
+
+    /// <summary>A block 1e-6 mm off the plate's side is fused into it: one body instead of two, nothing reported.</summary>
+    [Fact(Skip = Open)]
+    public void Gap_of_a_micron_keeps_two_bodies_or_is_reported()
+    {
+        var r = Regenerate("""
+            [
+              {"id":"plate","type":"block","op":"new","origin":[0,0,0],"size":[30,36.5,2]},
+              {"id":"boss1","type":"block","op":"join","origin":[10,36.500001,0],"size":[4,2,2]}
+            ]
+            """);
+
+        (Reported(r) || Counts(r) == (12, 24, 16, 2)).Should().BeTrue();
+    }
+
+    /// <summary>
+    /// A block on the plate shifted 1e-6 mm along x: the two 1e-6 mm steps are neither built (OCCT: 10 faces) nor reported,
+    /// and the side faces are not merged either (8 faces).
+    /// </summary>
+    [Fact(Skip = Open)]
+    public void Step_of_a_micron_is_built_or_reported()
+    {
+        var r = Regenerate("""
+            [
+              {"id":"plate","type":"block","op":"new","origin":[0,0,0],"size":[20,20,11.5]},
+              {"id":"boss1","type":"block","op":"join","origin":[-1E-06,0,10],"size":[20,20,10]}
+            ]
+            """);
+
+        (Reported(r) || Counts(r) == (10, 24, 16, 1)).Should().BeTrue();
+    }
+
+    /// <summary>
+    /// A cut reaching 1e-9 mm into the side face (below the 1e-7 tolerance) splits plate/y- in two and adds a cut1/y+
+    /// face: 8 faces where the part is the plain 6-face block with a coincident face, as OCCT builds it.
+    /// </summary>
+    [Fact(Skip = Open)]
+    public void Cut_within_tolerance_of_a_face_adds_no_faces()
+    {
+        var r = Regenerate("""
+            [
+              {"id":"plate","type":"block","op":"new","origin":[0,0,0],"size":[40,20,4.473]},
+              {"id":"cut1","type":"block","op":"cut","origin":[10,-13.999999999,0],"size":[20,14,10]}
+            ]
+            """);
+
+        Counts(r).Should().Be((6, 12, 8, 1));
+    }
+
+    /// <summary>
+    /// Two fillets of radius 2 on a 3.5 mm plate, on the bottom front and the top left edge: the second is refused as
+    /// not fitting between its neighbours. OCCT builds it (8 faces, the volume of both fillets).
+    /// </summary>
+    [Fact(Skip = Open)]
+    public void Fillets_on_edges_round_one_corner_both_fit()
+    {
+        var r = Regenerate("""
+            [
+              {"id":"plate","type":"block","op":"new","origin":[0,0,0],"size":[20,20,3.5]},
+              {"id":"round1","type":"fillet","edge":["plate/y-","plate/z-"],"radius":2},
+              {"id":"round2","type":"fillet","edge":["plate/x-","plate/z+"],"radius":2}
+            ]
+            """);
+
+        r.Diagnostics.Should().BeEmpty();
+        Counts(r).Should().Be((8, 18, 12, 1));
+    }
+
+    /// <summary>
+    /// A plane cut whose trace on the top face misses it except at the corner (0, 0, 11): top and cut face share only that
+    /// vertex, but the topology gets an edge between them (15 edges, 10 vertices; OCCT 14 and 9).
+    /// </summary>
+    [Fact(Skip = Open)]
+    public void Cut_touching_a_face_at_a_vertex_adds_no_edge()
+    {
+        var r = Regenerate("""
+            [
+              {"id":"plate","type":"block","op":"new","origin":[0,0,0],"size":[40,30,11]},
+              {"id":"slice1","type":"plane-cut","point":[0,0,11],"normal":[-0.1,-1,-1]}
+            ]
+            """);
+
+        Counts(r).Should().Be((7, 14, 9, 1));
+    }
+
+    /// <summary>A loose 1e-6 × 1e-4 mm block beside the plate is dropped and called no-effect instead of reported.</summary>
+    [Fact(Skip = Open)]
+    public void Loose_sliver_body_is_reported_not_called_no_effect()
+    {
+        var r = Regenerate("""
+            [
+              {"id":"plate","type":"block","op":"new","origin":[0,0,0],"size":[40,16,10]},
+              {"id":"boss1","type":"block","op":"join","origin":[0,20,0],"size":[1E-06,1E-04,4]}
+            ]
+            """);
+
+        (Reported(r) || r.Topology!.BodyCount == 2).Should().BeTrue();
+        r.Diagnostics.Should().NotContain(d => d.Code == Diagnostic.NoEffect);
+    }
+
+    /// <summary>
+    /// A boss overhanging the plate's side by 0.03 mm: the 0.03 mm strip of its bottom face is missing (10 faces, OCCT 11)
+    /// and nothing is reported, at 0.5 and at 0.125 mm cells alike.
+    /// </summary>
+    [Fact(Skip = Open)]
+    public void Overhang_below_the_cells_is_built_or_reported()
+    {
+        var r = Regenerate("""
+            [
+              {"id":"plate","type":"block","op":"new","origin":[0,0.63,0],"size":[20,10,10]},
+              {"id":"boss1","type":"block","op":"join","origin":[10,0.6,10],"size":[10,4,5]}
+            ]
+            """);
+
+        (Reported(r) || Counts(r) == (11, 26, 17, 1)).Should().BeTrue();
+    }
+
+    /// <summary>A cut whose top is flush with the plate bottom splits that face in two (cut2/z+ beside plate/z-): 7 faces for a plain block.</summary>
+    [Fact(Skip = Open)]
+    public void Flush_cut_leaves_one_bottom_face()
+    {
+        var r = Regenerate("""
+            [
+              {"id":"plate","type":"block","op":"new","origin":[0.25,0,0.31],"size":[40,10,5]},
+              {"id":"cut2","type":"block","op":"cut","origin":[10,0,-0.7],"size":[32,20,1.01]}
+            ]
+            """);
+
+        Counts(r).Should().Be((6, 12, 8, 1));
+    }
+
+    /// <summary>
+    /// F-rep only, the one crash in 3000 documents: a four-edge profile with two concave arcs, joined on the plate top,
+    /// throws InvalidOperationException (Nullable object must have a value) from DualContouring.Refine:
+    /// <c>field.SampleSurface(owner, p)!.Value</c> is null for an owner the cell's crossings reported. Either a sample
+    /// of the profile field names an owner that its SampleSurface does not know, or the profile intersects itself and
+    /// Profiles.Problem lets it through.
+    /// </summary>
+    [Fact(Skip = Open)]
+    public void Profile_with_concave_arcs_does_not_crash()
+    {
+        var act = () => Regenerate("""
+            [
+              {"id":"plate","type":"block","op":"new","origin":[0,0,0],"size":[20,20,14]},
+              {"id":"knob1","type":"extrude","op":"join","plane":{"origin":[0,0,14],"x":[1,0,0],"normal":[0,0,1]},"profile":{"start":[8.358,7.732],"edges":[{"id":"e0","to":[7,10]},{"id":"e1","to":[6.518,7.3]},{"id":"e2","to":[8,6.258],"bulge":-0.238},{"id":"e3","to":[8.358,7.732],"bulge":-0.4}]},"start":0,"end":2}
+            ]
+            """);
+
+        act.Should().NotThrow();
+    }
+
+    /// <summary>
+    /// F-rep only: a 1 mm shell of a 2.2 mm plate leaves a 0.2 mm cavity. The mesh is the solid plate (volume 1760 against
+    /// a certified 1613–1629), the shell is called no-effect, and nothing is reported below resolution.
+    /// </summary>
+    [Fact(Skip = Open)]
+    public void Shell_with_a_cavity_below_the_cells_is_reported()
+    {
+        var r = Regenerate("""
+            [
+              {"id":"plate","type":"block","op":"new","origin":[0,0,0],"size":[40,20,2.2]},
+              {"id":"shell2","type":"shell","thickness":1}
+            ]
+            """);
+
+        Reported(r).Should().BeTrue();
+        r.Diagnostics.Should().NotContain(d => d.Code == Diagnostic.NoEffect);
+    }
+
+    /// <summary>F-rep only: a half revolve with a D-shaped boss joined on its top meshes with open edges.</summary>
+    [Fact(Skip = Open)]
+    public void Boss_on_a_half_revolve_meshes_watertight()
+    {
+        var r = Regenerate("""
+            [
+              {"id":"body","type":"revolve","op":"new","plane":{"origin":[0,0,0],"x":[1,0,0],"normal":[0,-1,0]},"profile":{"start":[0,0],"edges":[{"id":"base","to":[10,0]},{"id":"side0","to":[10,2.5]},{"id":"step0","to":[5,2.5]},{"id":"top","to":[0,2.5]},{"id":"axis","to":[0,0]}]},"angle":180},
+              {"id":"knob1","type":"extrude","op":"join","plane":{"origin":[0,0,2.5],"x":[1,0,0],"normal":[0,0,1]},"profile":{"start":[-10.525,-3.5],"edges":[{"id":"a","to":[0,0],"bulge":1},{"id":"b","to":[-10.525,-3.5]}]},"start":0,"end":10}
+            ]
+            """);
+
+        (Reported(r) || r.Mesh!.IsWatertight()).Should().BeTrue();
+    }
+
+    /// <summary>F-rep only: a blended block joined against the side of a 270° revolve meshes with open edges.</summary>
+    [Fact(Skip = Open)]
+    public void Blended_block_on_a_partial_revolve_meshes_watertight()
+    {
+        var r = Regenerate("""
+            [
+              {"id":"body","type":"revolve","op":"new","plane":{"origin":[0,0,0],"x":[1,0,0],"normal":[0,-1,0]},"profile":{"start":[0,0],"edges":[{"id":"base","to":[10,0]},{"id":"side0","to":[10.5,10]},{"id":"step0","to":[6,10]},{"id":"top","to":[0,10]},{"id":"axis","to":[0,0]}]},"angle":270},
+              {"id":"boss1","type":"block","op":"join","origin":[-11,-11.5,3],"size":[7,1,5],"blend":2}
+            ]
+            """);
+
+        (Reported(r) || r.Mesh!.IsWatertight()).Should().BeTrue();
+    }
+}
