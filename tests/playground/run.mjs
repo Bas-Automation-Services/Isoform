@@ -1,0 +1,23 @@
+// The whole playground check in one command: optionally publish, then the kernel tests in Node, then the browser run.
+// node tests/playground/run.mjs [published wwwroot] [--publish]
+import { spawnSync } from 'node:child_process';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { publishedRoot, repo } from './published.mjs';
+
+const here = dirname(fileURLToPath(import.meta.url));
+const args = process.argv.slice(2);
+const run = (command, argv, env) => spawnSync(command, argv, { cwd: repo, stdio: 'inherit', env: { ...process.env, ...env } }).status === 0;
+
+if (args.includes('--publish') && !run('dotnet', ['publish', 'src/Isoform.Playground', '-c', 'Release', '-o', join('out', 'playground')])) {
+  console.error('dotnet publish failed');
+  process.exit(1);
+}
+const root = publishedRoot(args.find(a => !a.startsWith('--')));
+console.log(`Testing the playground in ${root}\n`);
+
+const kernel = run(process.execPath, ['--test', join(here, 'kernel.test.mjs')], { ISOFORM_PLAYGROUND: root });
+console.log();
+const browser = run(process.execPath, [join(here, 'e2e.mjs'), root]);
+console.log(`\nkernel tests ${kernel ? 'passed' : 'FAILED'}, browser run ${browser ? 'passed' : 'FAILED'}`);
+process.exitCode = kernel && browser ? 0 : 1;

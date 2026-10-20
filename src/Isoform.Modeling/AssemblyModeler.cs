@@ -9,6 +9,8 @@ namespace Isoform.Modeling;
 /// <summary>
 /// One placed part of an assembly. The part is regenerated once in its own coordinates; the instance only moves
 /// it. Its faces are named by occurrence: <c>left/plate/z+</c>, with the ids of the enclosing sub-assemblies first.
+/// <paramref name="Hash"/> is the content hash of the document regenerated: the part with the component's
+/// parameters applied and resolved (the stored part's hash when it has none).
 /// </summary>
 public sealed record Instance(string Id, string Part, string Hash, Frame Placement, FrepResult Result)
 {
@@ -81,7 +83,8 @@ public sealed class AssemblyResult(IReadOnlyList<Instance> instances, IReadOnlyL
 
 /// <summary>
 /// Regenerates an assembly: resolves each component's document by its path, regenerates every distinct part once
-/// (by content hash, so a hundred identical bolts cost one), and places it. Sub-assemblies nest their placements.
+/// (by content hash, so a hundred identical bolts cost one; a component's parameters make a variant, hashed once
+/// resolved), and places it. Sub-assemblies nest their placements.
 /// </summary>
 public sealed class AssemblyModeler(ModelingSettings settings)
 {
@@ -120,8 +123,17 @@ public sealed class AssemblyModeler(ModelingSettings settings)
                 return;
             }
             var doc = CanonicalFormat.Read(text);
+            Pinned(c, CanonicalFormat.Hash(doc), id);
+            try { doc = Parametric.Override(doc, c.Parameters); }
+            catch (ParameterException e)
+            {
+                diagnostics.Add(new Diagnostic(Diagnostic.InvalidParameter, id, $"'{c.Part}': {e.Message}"));
+                return;
+            }
+            // One regeneration per resolved document: ten bolts of two lengths cost two. A variant that does not
+            // resolve is regenerated as it is, which reports why.
+            doc = Parametric.TryResolve(doc) ?? doc;
             var hash = CanonicalFormat.Hash(doc);
-            Pinned(c, hash, id);
             if (!parts.TryGetValue(hash, out var result))
             {
                 result = parts[hash] = modeler.Regenerate(doc);

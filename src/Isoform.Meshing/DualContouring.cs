@@ -547,6 +547,9 @@ public static class DualContouring
                 Surfaces(l.Cap, owners);
                 Surfaces(l.Side, owners);
                 break;
+            case TapeField t:
+                t.Tape.Surfaces(owners);
+                break;
         }
     }
 

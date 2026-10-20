@@ -1,3 +1,5 @@
+using System.Collections.ObjectModel;
+using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Encodings.Web;
@@ -20,20 +22,17 @@ public static partial class CanonicalFormat
         Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
     };
 
+    /// <summary>
+    /// The stored text. Parameters and expressions are kept as written (they are the design intent), so the hash
+    /// covers them; a document without them has exactly the bytes it had before parameters existed.
+    /// </summary>
     public static string Write(PartDocument doc)
     {
-        using var stream = new MemoryStream();
-        using (var w = new Utf8JsonWriter(stream, WriterOptions))
-        {
-            w.WriteStartObject();
-            w.WriteString("format", PartDocument.FormatVersion);
-            w.WriteString("units", PartDocument.Units);
-            w.WriteStartArray("features");
-            foreach (var f in doc.Features) WriteFeature(w, f);
-            w.WriteEndArray();
-            w.WriteEndObject();
-        }
-        return Encoding.UTF8.GetString(stream.ToArray()) + "\n";
+        if (!Parametric.IsParametric(doc)) return Plain(doc);
+        // Read back first: fields with an expression then hold a placeholder that is never left out (as a 0 blend or
+        // bulge is), so each expression lands at its key's own place in the text.
+        var placed = FromNode(WithExpressions(doc));
+        return Text(w => WithExpressions(placed).WriteTo(w));
     }
 
     public static string Hash(PartDocument doc) =>
@@ -43,13 +42,87 @@ public static partial class CanonicalFormat
 
     public static JsonNode ToNode(PartDocument doc) => JsonNode.Parse(Write(doc))!;
 
+    /// <summary>
+    /// A document from its JSON. Any string starting with '=' in a feature is an expression (see
+    /// <see cref="PartDocument.Expressions"/>); it is not evaluated here, so a bad one still reads.
+    /// </summary>
     public static PartDocument FromNode(JsonNode root)
     {
         var format = (string?)root["format"];
         if (format != PartDocument.FormatVersion) throw new FormatException($"Unsupported format '{format}'.");
         if ((string?)root["units"] != PartDocument.Units) throw new FormatException("Units must be mm.");
-        return new PartDocument(root["features"]!.AsArray().Select(n => ReadFeature(n!)).ToList());
+        var features = root["features"]!.AsArray();
+        var expressions = new Dictionary<string, string>();
+        foreach (var f in features)
+        foreach (var (key, value) in f!.AsObject())
+            Collect(value, $"{(string?)f["id"]}.{key}", expressions);
+        if (expressions.Count > 0)
+        {
+            features = features.DeepClone().AsArray();
+            foreach (var path in expressions.Keys) DocumentEdits.Set(features, path, JsonNode.Parse("1"));
+        }
+        return new PartDocument(features.Select(n => ReadFeature(n!)).ToList())
+        {
+            Parameters = ReadParameters(root["parameters"]),
+            Expressions = expressions.Count > 0 ? expressions : ReadOnlyDictionary<string, string>.Empty,
+        };
     }
+
+    static string Plain(PartDocument doc) => Text(w =>
+    {
+        w.WriteStartObject();
+        w.WriteString("format", PartDocument.FormatVersion);
+        w.WriteString("units", PartDocument.Units);
+        w.WriteStartArray("features");
+        foreach (var f in doc.Features) WriteFeature(w, f);
+        w.WriteEndArray();
+        w.WriteEndObject();
+    });
+
+    // The parameter table goes between the units and the features, sorted by name.
+    static JsonObject WithExpressions(PartDocument doc)
+    {
+        var root = JsonNode.Parse(Plain(doc))!.AsObject();
+        var features = root["features"]!.AsArray();
+        foreach (var (path, expression) in doc.Expressions) DocumentEdits.Set(features, path, Scalar(expression));
+        if (doc.Parameters.Count > 0) root.Insert(2, "parameters", WriteParameters(doc.Parameters));
+        return root;
+    }
+
+    // Expressions are written "=text", so they are found anywhere without a schema; ids and names never start with '='.
+    static void Collect(JsonNode? node, string path, Dictionary<string, string> found)
+    {
+        switch (node)
+        {
+            case JsonObject o:
+                foreach (var (key, value) in o) Collect(value, $"{path}.{key}", found);
+                break;
+            case JsonArray a:
+                for (var i = 0; i < a.Count; i++) Collect(a[i], $"{path}.{i}", found);
+                break;
+            case JsonValue v when v.GetValueKind() == JsonValueKind.String && ((string)v!).StartsWith('='):
+                found[path] = ((string)v!)[1..];
+                break;
+        }
+    }
+
+    static JsonObject WriteParameters(IReadOnlyDictionary<string, string> parameters) =>
+        new(parameters.OrderBy(p => p.Key, StringComparer.Ordinal).Select(p => KeyValuePair.Create(p.Key, (JsonNode?)Scalar(p.Value))));
+
+    static IReadOnlyDictionary<string, string> ReadParameters(JsonNode? node) => node is null
+        ? ReadOnlyDictionary<string, string>.Empty
+        : node.AsObject().ToDictionary(p => p.Key, p => p.Value?.GetValueKind() switch
+        {
+            JsonValueKind.Number => ((double)p.Value!).ToString("R", CultureInfo.InvariantCulture),
+            JsonValueKind.String when ((string)p.Value!).StartsWith('=') => ((string)p.Value!)[1..],
+            _ => throw new FormatException($"Parameter '{p.Key}' must be a number or an expression starting with '=', got {p.Value?.ToJsonString() ?? "null"}."),
+        });
+
+    // A constant is stored as the number it is, anything else as "=expression".
+    static JsonNode Scalar(string expression) =>
+        double.TryParse(expression, NumberStyles.Float, CultureInfo.InvariantCulture, out var v) && double.IsFinite(v)
+            ? JsonValue.Create(Normalize(v))
+            : JsonValue.Create("=" + expression);
 
     static void WriteFeature(Utf8JsonWriter w, Feature f)
     {
