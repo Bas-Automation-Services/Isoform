@@ -1,0 +1,8 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="../Isoform.Document/Isoform.Document.csproj" />
+    <ProjectReference Include="../Isoform.Modeling/Isoform.Modeling.csproj" />
+  </ItemGroup>
+
+</Project>

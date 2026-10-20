@@ -1,0 +1,119 @@
+{
+  "base": {
+    "format": "isoform/0",
+    "units": "mm",
+    "features": [
+      { "id": "plate", "type": "block", "op": "new", "origin": [0, 0, 0], "size": [100, 50, 10] },
+      { "id": "hole", "type": "hole", "center": [30, 25], "diameter": 10 },
+      { "id": "fillet", "type": "fillet", "edge": ["plate/z+", "plate/x+"], "radius": 2 }
+    ]
+  },
+  "references": [
+    { "id": "top", "face": "plate/z+" },
+    { "id": "bottom", "face": "plate/z-" },
+    { "id": "side-x-", "face": "plate/x-" },
+    { "id": "side-x+", "face": "plate/x+" },
+    { "id": "side-y-", "face": "plate/y-" },
+    { "id": "side-y+", "face": "plate/y+" },
+    { "id": "hole-wall", "face": "hole/wall" },
+    { "id": "fillet-face", "face": "fillet/face" },
+    { "id": "hole-top-edge", "edge": ["plate/z+", "hole/wall"] },
+    { "id": "fillet-top-edge", "edge": ["fillet/face", "plate/z+"] },
+    { "id": "corner", "vertex": ["plate/x-", "plate/y-", "plate/z+"] }
+  ],
+  "cases": [
+    {
+      "id": "E01", "title": "Change W / L / T within valid values",
+      "edit": [{ "set": "plate.size", "value": [120, 60, 12] }],
+      "expect": {
+        "top": "resolved", "bottom": "resolved", "side-x-": "resolved", "side-x+": "resolved",
+        "side-y-": "resolved", "side-y+": "resolved", "hole-wall": "resolved", "fillet-face": "resolved",
+        "hole-top-edge": "resolved", "fillet-top-edge": "resolved", "corner": "resolved"
+      },
+      "diagnostics": []
+    },
+    {
+      "id": "E02", "title": "Move the hole inside the plate",
+      "edit": [{ "set": "hole.center", "value": [70, 30] }],
+      "expect": {
+        "top": "resolved", "bottom": "resolved", "hole-wall": "resolved", "side-y-": "resolved",
+        "hole-top-edge": "resolved", "corner": "resolved"
+      },
+      "diagnostics": []
+    },
+    {
+      "id": "E03", "title": "Hole touches a side face",
+      "edit": [{ "set": "hole.center", "value": [30, 5] }],
+      "expect": {},
+      "diagnostics": ["tangent-contact"]
+    },
+    {
+      "id": "E04", "title": "Hole crosses a side",
+      "edit": [{ "set": "hole.center", "value": [30, 2] }],
+      "expect": {
+        "side-y-": "split:2", "hole-wall": "resolved", "top": "resolved", "bottom": "resolved",
+        "hole-top-edge": "resolved", "corner": "resolved"
+      },
+      "diagnostics": []
+    },
+    {
+      "id": "E05", "title": "Hole fully off the plate",
+      "edit": [{ "set": "hole.center", "value": [30, -20] }],
+      "expect": { "hole-wall": "gone", "hole-top-edge": "gone", "top": "resolved", "side-y-": "resolved" },
+      "diagnostics": ["no-effect"]
+    },
+    {
+      "id": "E06", "title": "D > W splits the body",
+      "edit": [{ "set": "hole.center", "value": [40, 25] }, { "set": "hole.diameter", "value": 60 }],
+      "expect": {
+        "top": "split:2", "bottom": "split:2", "side-y-": "split:2", "side-y+": "split:2",
+        "hole-wall": "split:2", "hole-top-edge": "split:2",
+        "side-x-": "resolved", "side-x+": "resolved", "fillet-face": "resolved", "corner": "resolved"
+      },
+      "diagnostics": ["multiple-bodies"]
+    },
+    {
+      "id": "E07", "title": "Slot through a side",
+      "pieces": [{ "id": "y+piece", "face": "plate/y+", "near": [20, 50, 5] }],
+      "edit": [{ "insert": { "id": "slot", "type": "block", "op": "cut", "origin": [60, 30, -1], "size": [10, 30, 12] }, "before": "fillet" }],
+      "expect": {
+        "side-y+": "split:2", "y+piece": "ambiguous",
+        "top": "resolved", "bottom": "resolved", "hole-wall": "resolved", "fillet-face": "resolved", "corner": "resolved"
+      },
+      "diagnostics": []
+    },
+    {
+      "id": "E08", "title": "Boss flush with top face",
+      "edit": [{ "insert": { "id": "tab", "type": "block", "op": "join", "origin": [-20, 10, 0], "size": [30, 30, 10] }, "before": "fillet" }],
+      "expect": {
+        "top": "merged", "bottom": "merged", "side-x-": "split:2",
+        "hole-wall": "resolved", "fillet-face": "resolved", "corner": "resolved"
+      },
+      "diagnostics": []
+    },
+    {
+      "id": "E09", "title": "T <= 0",
+      "edit": [{ "set": "plate.size", "value": [100, 50, 0] }],
+      "noGeometry": true,
+      "expect": {},
+      "diagnostics": ["invalid-parameter"]
+    },
+    {
+      "id": "E10", "title": "Fillet radius larger than the neighbouring face",
+      "edit": [{ "set": "fillet.radius", "value": 12 }],
+      "expect": { "fillet-face": "gone", "fillet-top-edge": "gone", "top": "resolved", "side-x+": "resolved" },
+      "diagnostics": ["fillet-invalid"]
+    },
+    {
+      "id": "E11", "title": "Move the slot: pieces stay distinguishable",
+      "setup": [{ "insert": { "id": "slot", "type": "block", "op": "cut", "origin": [60, 30, -1], "size": [10, 30, 12] }, "before": "fillet" }],
+      "pieces": [
+        { "id": "y+left", "face": "plate/y+", "near": [20, 50, 5] },
+        { "id": "y+right", "face": "plate/y+", "near": [90, 50, 5] }
+      ],
+      "edit": [{ "set": "slot.origin", "value": [50, 30, -1] }],
+      "expect": { "side-y+": "split:2", "y+left": "resolved", "y+right": "resolved" },
+      "diagnostics": []
+    }
+  ]
+}

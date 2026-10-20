@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="coverlet.collector" />
+    <PackageReference Include="FluentAssertions" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Isoform.Document\Isoform.Document.csproj" />
+    <ProjectReference Include="..\..\src\Isoform.Geometry\Isoform.Geometry.csproj" />
+    <ProjectReference Include="..\..\src\Isoform.Meshing\Isoform.Meshing.csproj" />
+    <ProjectReference Include="..\..\src\Isoform.Modeling\Isoform.Modeling.csproj" />
+    <ProjectReference Include="..\..\src\Isoform.Occt\Isoform.Occt.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+    <Using Include="FluentAssertions" />
+    <None Include="Cases\**\*.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>
