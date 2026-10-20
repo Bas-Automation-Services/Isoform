@@ -11,11 +11,17 @@ vertices while producing exact output, and does it do better at this than a B-re
 | Project | What |
 |---|---|
 | `Isoform.Document` | Feature graph, canonical text format (git-diffable), content hash, edits as data |
-| `Isoform.Geometry` | Analytic surfaces, CSG fields with ownership, exact rolling-ball fillets |
-| `Isoform.Meshing` | Feature-preserving dual contouring |
+| `Isoform.Geometry` | Analytic surfaces (plane, cylinder, sphere, cone, torus), CSG fields with ownership, swept profiles, exact rolling-ball fillets, smooth blends |
+| `Isoform.Meshing` | Adaptive, feature-preserving dual contouring with a resolution guarantee |
 | `Isoform.Modeling` | Regeneration, topology, references, diagnostics: the backend-neutral API |
 | `Isoform.Occt` | OCCT B-rep baseline behind the same API |
 | `native/Isoform.Occt` | Small C ABI over OpenCASCADE used by `Isoform.Occt` |
+
+## Features
+
+Block, hole, plane cut; extrude and revolve of line-and-arc sketches; linear, circular and mirror patterns;
+fillet and chamfer (also on faces shared with earlier fillets, on swept edges and after a shell); shell; offset;
+smooth join and cut. Every face is named after the feature that made it, and keeps that name through edits.
 
 ## Build and test
 

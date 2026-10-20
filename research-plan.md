@@ -242,3 +242,22 @@ Still open: triangle count. Octree cells are isotropic, so a hole wall at chord 
 both directions where OCCT uses one strip along the axis. That gap closes with per-face tessellation from exact
 face boundaries (K6) or a bounded-error decimation pass, not with more octree work. Peak working set at 0.1 mm on
 20-op is ~670 MB.
+
+**K4 — breadth (done).** Every operation passes the K1 property tests (`FieldProperties`: 1-Lipschitz, Value =
+Sample, bounds enclose, simplification bit-exact) and keeps its face names under parameter edits.
+
+- *Sketches → extrude / revolve:* closed line-and-arc profiles, exact 2D signed distance. Revolved segments become
+  planes, cylinders or cones, arcs spheres or tori; partial angles add two flat ends. Seven test parts have their
+  exact volume and topology.
+- *Placement and patterns:* every solid feature compiles under a rigid placement; linear, circular and mirror
+  patterns name copy k of `hole/wall` as `row/k:hole/wall`. A mirrored part is symmetric to 1e-12.
+- *Edge features:* chamfers (a plane, or a 45° cone on a hole or boss edge); fillets sharing a face meet in a mitre;
+  fillets on swept edges where the profile lies behind the edge; a fillet after a shell rounds only the outside and
+  is rejected when it would cut through the wall. Vertices lie on the exact surfaces to 1e-7.
+- *Smooth blend and offset:* join or cut with a blend radius (quadratic smooth min, 1-Lipschitz); offset moves every
+  face and rebuilds real offset surfaces, so later features see true geometry; grown corners get faces of their own.
+
+Not yet: concave (material-adding) rolling-ball fillets, so only smooth blends add material in an inside corner; a
+spherical patch where three fillets meet (they mitre); fillets on cone, sphere and torus edges; a single-edge fillet
+on a swept edge the profile is not behind; offsetting a shell. The OCCT baseline does not run the new features, so
+they are checked against analytic answers only; cross-checking them is part of K7.
