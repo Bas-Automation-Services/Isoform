@@ -177,7 +177,10 @@ public sealed class Compiler(ModelingSettings settings)
                     if (FieldAlgebra.Descendants(solid).Any(n => n is ShellField))
                         diagnostics.Add(new Diagnostic(Diagnostic.InvalidParameter, sh.Id, "this body is already shelled; a body can be shelled once"));
                     else
+                    {
                         tree = ShellOf(sh, solid, Register);
+                        if (ThinCavity(sh, solid, min, max) is { } thin) diagnostics.Add(thin);
+                    }
                     break;
 
                 case Offset o:
@@ -217,6 +220,37 @@ public sealed class Compiler(ModelingSettings settings)
         foreach (var b in compiled)
             (lo, hi) = (new Point3D(Math.Min(lo.X, b.Min.X), Math.Min(lo.Y, b.Min.Y), Math.Min(lo.Z, b.Min.Z)), new Point3D(Math.Max(hi.X, b.Max.X), Math.Max(hi.Y, b.Max.Y), Math.Max(hi.Z, b.Max.Z)));
         return new CompiledPart(whole, surfaces, lo, hi, diagnostics, compiled);
+    }
+
+    /// <summary>
+    /// A cavity no grid edge may cross: the shell's inside lies where the solid is deeper than the thickness, and if
+    /// it never gets a cell size deeper (a cavity under 2 cells thick) the mesher can miss it, so it is reported.
+    /// Best-first over boxes by their lower bound until the deepest point is resolved, absent or proved shallow.
+    /// </summary>
+    Diagnostic? ThinCavity(Shell sh, Field solid, Point3D min, Point3D max)
+    {
+        var (cavity, resolved) = (-sh.Thickness - _tol, -sh.Thickness - settings.CellSize);
+        var root = new Box3D(min, max);
+        var best = solid.Value(root.Center);
+        var queue = new PriorityQueue<(Box3D Box, Field Field), double>();
+        queue.Enqueue((root, solid.Simplify(root)), solid.Bounds(root).Lo);
+        for (var budget = 100_000; queue.TryPeek(out _, out var lo) && budget > 0; budget--)
+        {
+            if (best <= resolved || lo >= cavity) return null;
+            if (lo > resolved && best < cavity) break;
+            var (box, f) = queue.Dequeue();
+            foreach (var child in Queries.Split(box))
+            {
+                var h = f.Simplify(child);
+                best = Math.Min(best, h.Value(child.Center));
+                if (h.Bounds(child).Lo is var low && low < cavity) queue.Enqueue((child, h), low);
+            }
+        }
+        if (queue.Count == 0) return null;
+        // Out of budget nothing is settled; the doubt is reported rather than dropped.
+        var size = best < cavity ? $"a cavity about {2 * (-best - sh.Thickness):G3} mm thick" : "a cavity too thin to measure, if any";
+        return new Diagnostic(Diagnostic.BelowResolution, sh.Id,
+            $"{sh.Id} leaves {size}, below the resolved size of {2 * settings.CellSize:G4} mm; use a smaller CellSize or a thinner shell");
     }
 
     /// <summary>
@@ -543,8 +577,13 @@ public sealed class Compiler(ModelingSettings settings)
         {
             var rounded = new RoundedEdgeField(a, b, size, register(new Surface(0, name0, SurfaceKind.Fillet, new Point3D(0, 0, 0), new Vector3D(0, 0, 1), size)));
             // On a face's own plane the solid field is ≥ 0, and 0 only on the face itself: a contact point with
-            // a positive value means the ball does not fit on that face.
-            if (onEdge.Select(rounded.Contacts).Any(c => tree.Value(c.OnA) > 10 * _tol || tree.Value(c.OnB) > 10 * _tol))
+            // a positive value means the ball does not fit on that face. A fillet on two other faces can have eaten
+            // the end of a face near a corner; the rounds then meet in a mitre, as fillets sharing a face do, so the
+            // ball must fit on the faces as they were before such rounds.
+            var mitred = FieldAlgebra.Descendants(tree).OfType<RoundedEdgeField>()
+                .Where(r => new[] { r.A, r.B }.All(l => l.Surface.Source != a.Surface.Source && l.Surface.Source != b.Surface.Source))
+                .Aggregate(tree, (t, r) => Replace(t, r, new MaxField([r.A, r.B])));
+            if (onEdge.Select(rounded.Contacts).Any(c => mitred.Value(c.OnA) > 10 * _tol || mitred.Value(c.OnB) > 10 * _tol))
                 return Fail(invalid, $"radius {size} does not fit between the faces next to the edge");
             // The arc's middle must stay outside the cavity, or the round cuts through the wall.
             if (shell is not null && onEdge.Select(rounded.Contacts).Any(c => -shell.Child.Value(Middle(c, size)) - shell.Thickness > -10 * _tol))
