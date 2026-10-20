@@ -80,7 +80,9 @@ function show(result, fit) {
     new THREE.Points(geometryOf(new Float32Array(info.thinSpots.flat())), spotMaterial));
   scene.add(group);
 
-  model = { group, mesh, faceOfTriangle: faces, trianglesOfFace, sources: info.faces };
+  const bodyOfFace = [];
+  info.bodies.forEach(b => b.faces.forEach(f => { bodyOfFace[f] = b.name; }));
+  model = { group, mesh, faceOfTriangle: faces, trianglesOfFace, sources: info.faces, bodyOfFace, bodies: info.bodies.length };
   hovered = -1;
   // Keep a selection whose faces still exist under the same names.
   picked = picked.filter(f => previous && same(previous.sources[f], info.faces[f]));
@@ -136,7 +138,7 @@ renderer.domElement.addEventListener('pointermove', event => {
   }
   if (face < 0) { tooltip.hidden = true; return; }
   const r = host.getBoundingClientRect();
-  tooltip.textContent = model.sources[face].join(' · ');
+  tooltip.textContent = (model.bodies > 1 ? `${model.bodyOfFace[face]}: ` : '') + model.sources[face].join(' · ');
   tooltip.style.left = `${event.clientX - r.left + 14}px`;
   tooltip.style.top = `${event.clientY - r.top + 12}px`;
   tooltip.hidden = false;
@@ -196,7 +198,8 @@ function received(result) {
     show(result, fitNext);
     fitNext = false;
     stats.textContent = `${info.ms.toFixed(0)} ms · ${info.triangles.toLocaleString()} triangles · `
-      + `${info.faces.length} faces, ${info.edges} edges, ${info.vertices} vertices · ${info.bodies} ${info.bodies === 1 ? 'body' : 'bodies'}`;
+      + `${info.faces.length} faces, ${info.edges} edges, ${info.vertices} vertices · `
+      + (info.bodies.length === 1 ? '1 body' : `${info.bodies.length} bodies: ${info.bodies.map(b => b.name).join(', ')}`);
     diagnostics.replaceChildren(...info.diagnostics.map(d => {
       const li = document.createElement('li');
       if (d.code === 'invalid-parameter') li.className = 'error';

@@ -3,7 +3,7 @@ using Isoform.Playground;
 
 namespace Isoform.Tests;
 
-/// <summary>Every playground example regenerates cleanly into one watertight body.</summary>
+/// <summary>Every playground example regenerates cleanly: each body one watertight solid.</summary>
 public class PlaygroundExampleTests
 {
     public static IEnumerable<object[]> Names => Examples.All.Select(e => new object[] { e.Name });
@@ -17,7 +17,7 @@ public class PlaygroundExampleTests
         var result = new FrepModeler(new ModelingSettings()).Regenerate(doc);
 
         result.Diagnostics.Should().BeEmpty();
-        result.Topology!.BodyCount.Should().Be(1);
+        result.Topology!.BodyCount.Should().Be(result.Bodies.Count);
         result.Mesh!.IsWatertight().Should().BeTrue();
     }
 }

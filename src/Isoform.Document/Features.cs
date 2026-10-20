@@ -7,7 +7,15 @@ public enum BooleanOp { New, Join, Cut }
 /// A node in the feature graph. Ids are assigned at creation and never derived from list position,
 /// so diffs and merges stay stable when features are inserted or reordered.
 /// </summary>
-public abstract record Feature(string Id);
+public abstract record Feature(string Id)
+{
+    /// <summary>
+    /// The body this feature works on. A feature with op <c>new</c> starts a body under this name (or its own id);
+    /// any other feature that names a body makes it the current one. Without it a feature works on the current
+    /// body: the one last started or named. Fillets and chamfers find their body from their faces.
+    /// </summary>
+    public string? Body { get; init; }
+}
 
 /// <summary>Axis-aligned block from <paramref name="Origin"/> with <paramref name="Size"/> (W, L, H) in mm.</summary>
 /// <remarks>A <paramref name="Blend"/> above 0 joins or cuts smoothly: the faces merge through an <c>id/blend</c> face about that wide.</remarks>
@@ -84,6 +92,12 @@ public sealed record MirrorMotion(double[] Point, double[] Normal) : PatternMoti
 /// count grows.
 /// </summary>
 public sealed record Pattern(string Id, string[] Features, PatternMotion Motion) : Feature(Id);
+
+/// <summary>
+/// Joins <paramref name="Tool"/> into the current body (or <see cref="Feature.Body"/>), or cuts it out of it. The tool
+/// body is used up unless <paramref name="Keep"/>; its faces keep their names.
+/// </summary>
+public sealed record CombineBodies(string Id, string Tool, BooleanOp Op, bool Keep = false) : Feature(Id);
 
 /// <summary>The stored model: the only thing that is versioned. Geometry is always regenerated from it.</summary>
 public sealed record PartDocument(IReadOnlyList<Feature> Features)

@@ -4,11 +4,18 @@ using Isoform.Geometry;
 
 namespace Isoform.Modeling;
 
-/// <summary>A document compiled to one implicit solid, plus the source surface behind every owner id.</summary>
-public sealed class CompiledPart(Field? field, IReadOnlyList<Surface> surfaces, Point3D min, Point3D max, IReadOnlyList<Diagnostic> diagnostics)
+/// <summary>One solid body of a part: its field and a box round it.</summary>
+public sealed record CompiledBody(string Name, Field Field, Point3D Min, Point3D Max);
+
+/// <summary>A document compiled to implicit solids, one per body, plus the source surface behind every owner id.</summary>
+public sealed class CompiledPart(Field? field, IReadOnlyList<Surface> surfaces, Point3D min, Point3D max, IReadOnlyList<Diagnostic> diagnostics,
+    IReadOnlyList<CompiledBody>? bodies = null)
 {
-    /// <summary>Null when a diagnostic made the document unbuildable.</summary>
+    /// <summary>The whole part: the one body, or the union of all bodies. Null when a diagnostic made the document unbuildable.</summary>
     public Field? Field { get; } = field;
+
+    /// <summary>Every body, in the order the document started them. Bodies may overlap: each is a solid of its own.</summary>
+    public IReadOnlyList<CompiledBody> Bodies { get; } = bodies ?? [];
     public IReadOnlyList<Surface> Surfaces { get; } = surfaces;
     public Point3D Min { get; } = min;
     public Point3D Max { get; } = max;
@@ -28,10 +35,35 @@ public sealed class Compiler(ModelingSettings settings)
         var min = new Point3D(double.MaxValue, double.MaxValue, double.MaxValue);
         var max = new Point3D(double.MinValue, double.MinValue, double.MinValue);
 
+        // Bodies: the current one lives in tree, min and max; the others wait here.
+        var bodies = new Dictionary<string, (Field? Tree, Point3D Min, Point3D Max)>();
+        var order = new List<string>();
+        var bodyOfSource = new Dictionary<string, string>();
+        var bodyOfFeature = new Dictionary<string, string>();
+        string? current = null;
+
+        void Switch(string name)
+        {
+            if (current == name) return;
+            if (current is not null) bodies[current] = (tree, min, max);
+            (tree, min, max) = bodies[name];
+            current = name;
+        }
+
+        void Start(string name)
+        {
+            if (current is not null) bodies[current] = (tree, min, max);
+            (tree, min, max) = (null, new Point3D(double.MaxValue, double.MaxValue, double.MaxValue), new Point3D(double.MinValue, double.MinValue, double.MinValue));
+            bodies[name] = (tree, min, max);
+            order.Add(name);
+            current = name;
+        }
+
         Surface Register(Surface template)
         {
             var s = template with { Id = surfaces.Count };
             surfaces.Add(s);
+            bodyOfSource[s.Source] = current!;
             return s;
         }
 
@@ -98,15 +130,40 @@ public sealed class Compiler(ModelingSettings settings)
 
         foreach (var feature in doc.Features)
         {
+            // Pick the body: a new one, the one the feature names, or for an edge the body that has its faces.
+            if (DocumentRules.StartsBody(feature)) Start(feature.Body ?? feature.Id);
+            else if (feature.Body is { } named) Switch(named);
+            else if (EdgeFace(feature) is { } face && bodyOfSource.TryGetValue(face, out var holder)) Switch(holder);
+            bodyOfFeature[feature.Id] = current!;
+
             switch (feature)
             {
                 case Pattern p:
+                    // Each copy goes into the body of the feature it copies.
                     var copies = p.Motion is MirrorMotion ? 1 : p.Motion switch { LinearMotion l => l.Count, CircularMotion c => c.Count, _ => 1 } - 1;
                     for (var k = 1; k <= copies; k++)
                     {
                         var motion = Motion(p.Motion, k);
                         var copy = k;
-                        foreach (var id in p.Features) Place(doc[id], motion, s => $"{p.Id}/{copy}:{s}", p.Id);
+                        foreach (var id in p.Features)
+                        {
+                            Switch(bodyOfFeature[id]);
+                            Place(doc[id], motion, s => $"{p.Id}/{copy}:{s}", p.Id);
+                        }
+                    }
+                    break;
+
+                case CombineBodies c:
+                    if (c.Body is { } target) Switch(target);
+                    var tool = bodies[c.Tool];
+                    var (into, toolTree) = (current!, FieldAlgebra.Normalize(tool.Tree!));
+                    tree = c.Op == BooleanOp.Join ? new MinField([tree!, toolTree]) : new MaxField([tree!, new NegateField(toolTree)]);
+                    if (c.Op == BooleanOp.Join) Grow([tool.Min, tool.Max]);
+                    if (!c.Keep)
+                    {
+                        bodies.Remove(c.Tool);
+                        order.Remove(c.Tool);
+                        foreach (var source in bodyOfSource.Where(kv => kv.Value == c.Tool).Select(kv => kv.Key).ToList()) bodyOfSource[source] = into;
                     }
                     break;
 
@@ -143,7 +200,13 @@ public sealed class Compiler(ModelingSettings settings)
             }
         }
 
-        return new CompiledPart(FieldAlgebra.Normalize(tree!), surfaces, min, max, diagnostics);
+        bodies[current!] = (tree, min, max);
+        var compiled = order.Select(n => new CompiledBody(n, FieldAlgebra.Normalize(bodies[n].Tree!), bodies[n].Min, bodies[n].Max)).ToList();
+        var whole = compiled.Count == 1 ? compiled[0].Field : new MinField(compiled.Select(b => b.Field).ToList());
+        var (lo, hi) = (compiled[0].Min, compiled[0].Max);
+        foreach (var b in compiled)
+            (lo, hi) = (new Point3D(Math.Min(lo.X, b.Min.X), Math.Min(lo.Y, b.Min.Y), Math.Min(lo.Z, b.Min.Z)), new Point3D(Math.Max(hi.X, b.Max.X), Math.Max(hi.Y, b.Max.Y), Math.Max(hi.Z, b.Max.Z)));
+        return new CompiledPart(whole, surfaces, lo, hi, diagnostics, compiled);
     }
 
     /// <summary>
@@ -233,6 +296,13 @@ public sealed class Compiler(ModelingSettings settings)
                 return null;
         }
     }
+
+    static string? EdgeFace(Feature f) => f switch
+    {
+        Fillet x => x.Loop ?? x.Edge.FirstOrDefault(),
+        Chamfer x => x.Loop ?? x.Edge.FirstOrDefault(),
+        _ => null,
+    };
 
     /// <summary>Copy k of a pattern: the motion applied k times.</summary>
     static Frame Motion(PatternMotion motion, int k)

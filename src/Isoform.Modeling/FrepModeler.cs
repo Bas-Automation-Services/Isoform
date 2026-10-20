@@ -15,26 +15,48 @@ public sealed class FrepModeler(ModelingSettings settings) : IModeler
     public FrepResult Regenerate(PartDocument document)
     {
         var part = new Compiler(Settings).Compile(document);
-        if (part.Field is null) return new FrepResult(part.Diagnostics, null, part, null, []);
-
-        var mesh = DualContouring.Build(part.Field, part.Min, part.Max, Settings.CellSize, Settings.ChordTolerance);
-        var built = TopologyBuilder.Build(mesh, part.Surfaces, Settings.Tolerance);
-        var topology = built.Topology;
+        if (part.Field is null) return new FrepResult(part.Diagnostics, null, part, null, [], []);
 
         var diagnostics = part.Diagnostics.ToList();
-        if (topology.BodyCount > 1)
-            diagnostics.Add(new Diagnostic(Diagnostic.MultipleBodies, null, $"the part falls apart into {topology.BodyCount} bodies"));
+        // Each body is a solid of its own, meshed and given topology alone, so overlapping bodies stay apart. The
+        // results are laid end to end: one mesh and one topology, with every face knowing its body.
+        var (vertices, quads, spots) = (new List<Point3D>(), new List<Quad>(), new List<ThinSpot>());
+        var (faces, edges, corners) = (new List<TopoFace>(), new List<TopoEdge>(), new List<TopoVertex>());
+        var faceOfQuad = new List<int>();
+        var bodies = new List<BodyResult>();
+        var pieces = 0;
+        foreach (var body in part.Bodies)
+        {
+            var bodyMesh = DualContouring.Build(body.Field, body.Min, body.Max, Settings.CellSize, Settings.ChordTolerance);
+            var built = TopologyBuilder.Build(bodyMesh, part.Surfaces, Settings.Tolerance);
+            var t = built.Topology;
+            if (t.BodyCount > 1)
+                diagnostics.Add(new Diagnostic(Diagnostic.MultipleBodies, part.Bodies.Count == 1 ? null : body.Name,
+                    part.Bodies.Count == 1 ? $"the part falls apart into {t.BodyCount} bodies" : $"body {body.Name} falls apart into {t.BodyCount} pieces"));
+            var (v0, f0, e0, c0) = (vertices.Count, faces.Count, edges.Count, corners.Count);
+            vertices.AddRange(bodyMesh.Vertices);
+            quads.AddRange(bodyMesh.Quads.Select(q => new Quad(q.A + v0, q.B + v0, q.C + v0, q.D + v0, q.Owner)));
+            spots.AddRange(bodyMesh.ThinSpots);
+            faceOfQuad.AddRange(built.FaceOfQuad.Select(f => f + f0));
+            faces.AddRange(t.Faces.Select(f => new TopoFace(f.Index + f0, f.Sources, f.Body + pieces)));
+            edges.AddRange(t.Edges.Select(e => new TopoEdge(e.Index + e0, e.FaceA + f0, e.FaceB + f0)));
+            corners.AddRange(t.Vertices.Select(v => new TopoVertex(v.Index + c0, v.Faces.Select(f => f + f0).ToList())));
+            bodies.Add(new BodyResult(body.Name, Enumerable.Range(f0, t.Faces.Count).ToList()));
+            pieces += t.BodyCount;
+        }
+        var mesh = new Mesh(vertices, quads, spots);
+        var topology = new Topology(faces, edges, corners, pieces);
 
         diagnostics.AddRange(Resolution(document, part, mesh, diagnostics));
 
         var present = topology.Faces.SelectMany(f => f.Sources).ToHashSet();
         var unresolved = diagnostics.Where(d => d.Code == Diagnostic.BelowResolution).Select(d => d.FeatureId).ToHashSet();
-        // An offset moves faces that keep their names; it has none of its own to look for.
-        foreach (var feature in document.Features.Where(f => f is not (Fillet or Offset) && !unresolved.Contains(f.Id)))
+        // An offset or a combine moves or merges faces that keep their names; it has none of its own to look for.
+        foreach (var feature in document.Features.Where(f => f is not (Fillet or Offset or CombineBodies) && !unresolved.Contains(f.Id)))
             if (!part.Surfaces.Any(s => s.Source.StartsWith(feature.Id + "/") && present.Contains(s.Source)))
                 diagnostics.Add(new Diagnostic(Diagnostic.NoEffect, feature.Id, $"{feature.Id} does not touch the part"));
 
-        return new FrepResult(diagnostics, topology, part, mesh, built.FaceOfQuad);
+        return new FrepResult(diagnostics, topology, part, mesh, faceOfQuad, bodies);
     }
 
     /// <summary>
@@ -84,9 +106,15 @@ public sealed class FrepModeler(ModelingSettings settings) : IModeler
     }
 }
 
-public sealed class FrepResult(IReadOnlyList<Diagnostic> diagnostics, Topology? topology, CompiledPart part, Mesh? mesh, int[] faceOfQuad)
+/// <summary>A body of the result and the indices of its faces in the part's topology.</summary>
+public sealed record BodyResult(string Name, IReadOnlyList<int> Faces);
+
+public sealed class FrepResult(IReadOnlyList<Diagnostic> diagnostics, Topology? topology, CompiledPart part, Mesh? mesh, IReadOnlyList<int> faceOfQuad,
+    IReadOnlyList<BodyResult> bodies)
     : ModelResult(diagnostics, topology)
 {
+    public IReadOnlyList<BodyResult> Bodies { get; } = bodies;
+
     public CompiledPart Part { get; } = part;
     public Mesh? Mesh { get; } = mesh;
     public IReadOnlyList<int> FaceOfQuad { get; } = faceOfQuad;

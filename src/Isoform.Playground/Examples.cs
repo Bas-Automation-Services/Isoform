@@ -93,6 +93,16 @@ public static class Examples
             new Block("groove", BooleanOp.Cut, [60, -1, 6], [12, 52, 10], Blend: 3),
             new Shell("shell", 1.5),
         ])),
+        ("Two bodies: a base and a clamp that cuts its own seat", new(
+        [
+            Plate,
+            new Hole("mount", [10, 25], 6),
+            new Pattern("mounts", ["mount"], new MirrorMotion([50, 0, 0], [1, 0, 0])),
+            new Extrude("clamp", BooleanOp.New, new SketchPlane([0, 0, 6], [1, 0, 0], [0, 0, 1]), Circle(50, 25, 12), 0, 14),
+            new Hole("bore", [50, 25], 10),
+            new Fillet("lip", [], 1.5, Loop: "clamp/end"),
+            new CombineBodies("seat", "clamp", BooleanOp.Cut, Keep: true) { Body = "plate" },
+        ])),
         ("Mirror and offset", new(
         [
             Plate,

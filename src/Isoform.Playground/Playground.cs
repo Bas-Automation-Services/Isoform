@@ -58,6 +58,17 @@ public static partial class Playground
                 w.WriteEndArray();
             }
             w.WriteEndArray();
+            w.WriteStartArray("bodies");
+            foreach (var b in result.Bodies)
+            {
+                w.WriteStartObject();
+                w.WriteString("name", b.Name);
+                w.WriteStartArray("faces");
+                foreach (var f in b.Faces) w.WriteNumberValue(f);
+                w.WriteEndArray();
+                w.WriteEndObject();
+            }
+            w.WriteEndArray();
             w.WriteStartArray("diagnostics");
             foreach (var d in result.Diagnostics)
             {

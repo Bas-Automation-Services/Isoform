@@ -137,13 +137,23 @@ public static class CanonicalFormat
                 w.WriteString("type", "offset");
                 Number(w, "distance", o.Distance);
                 break;
+            case CombineBodies cb:
+                w.WriteString("type", "combine");
+                w.WriteString("tool", cb.Tool);
+                w.WriteString("op", cb.Op.ToString().ToLowerInvariant());
+                if (cb.Keep) w.WriteBoolean("keep", true);
+                break;
             default:
                 throw new NotSupportedException(f.GetType().Name);
         }
+        // Only written when used, so single-body documents keep their bytes and hash.
+        if (f.Body is { } body) w.WriteString("body", body);
         w.WriteEndObject();
     }
 
-    static Feature ReadFeature(JsonNode n)
+    static Feature ReadFeature(JsonNode n) => ReadFeatureOnly(n) with { Body = (string?)n["body"] };
+
+    static Feature ReadFeatureOnly(JsonNode n)
     {
         var id = (string)n["id"]!;
         return (string)n["type"]! switch
@@ -157,6 +167,7 @@ public static class CanonicalFormat
             "chamfer" => new Chamfer(id, Edge(n), (double)n["distance"]!, (string?)n["loop"]),
             "extrude" => new Extrude(id, Op(n), ReadPlane(n["plane"]!), ReadProfile(n["profile"]!), (double)n["start"]!, (double)n["end"]!, (double?)n["blend"] ?? 0),
             "revolve" => new Revolve(id, Op(n), ReadPlane(n["plane"]!), ReadProfile(n["profile"]!), (double)n["angle"]!, (double?)n["blend"] ?? 0),
+            "combine" => new CombineBodies(id, (string)n["tool"]!, Op(n), (bool?)n["keep"] ?? false),
             "pattern" => new Pattern(id, n["features"]!.AsArray().Select(f => (string)f!).ToArray(), ReadMotion(n)),
             var t => throw new FormatException($"Unknown feature type '{t}'."),
         };

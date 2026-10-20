@@ -7,12 +7,17 @@ public static class DocumentRules
 {
     public static Diagnostic? FirstProblem(PartDocument doc, double tolerance)
     {
+        var bodies = new List<string>();
         for (var i = 0; i < doc.Features.Count; i++)
         {
             var feature = doc.Features[i];
             string? problem = feature switch
             {
-                _ when i > 0 && StartsBody(feature) => "only the first feature may start a new body",
+                _ when StartsBody(feature) && bodies.Contains(feature.Body ?? feature.Id) => $"there already is a body named '{feature.Body ?? feature.Id}'",
+                _ when !StartsBody(feature) && feature.Body is { } b && !bodies.Contains(b) => $"there is no body named '{b}'",
+                CombineBodies c when !bodies.Contains(c.Tool) => $"there is no body named '{c.Tool}'",
+                CombineBodies c when c.Op == BooleanOp.New => "combine joins or cuts a body, it does not start one",
+                CombineBodies c when bodies.Count < 2 => "combine needs a second body to use as the tool",
                 Block b when b.Size.Any(s => s <= tolerance) => $"block size must be positive, got [{string.Join(", ", b.Size)}]",
                 Hole h when h.Diameter <= tolerance => $"hole diameter must be positive, got {h.Diameter}",
                 PlaneCut c when Math.Sqrt(c.Normal.Sum(x => x * x)) <= tolerance => "plane-cut normal must not be zero",
@@ -33,6 +38,8 @@ public static class DocumentRules
                 _ => null,
             };
             if (problem is not null) return new Diagnostic(Diagnostic.InvalidParameter, feature.Id, problem);
+            if (StartsBody(feature)) bodies.Add(feature.Body ?? feature.Id);
+            if (feature is CombineBodies { Keep: false } used) bodies.Remove(used.Tool);
         }
         return null;
     }
@@ -67,5 +74,5 @@ public static class DocumentRules
         _ => (BooleanOp.Join, 0),
     };
 
-    static bool StartsBody(Feature f) => f is Block { Op: BooleanOp.New } or Extrude { Op: BooleanOp.New } or Revolve { Op: BooleanOp.New };
+    public static bool StartsBody(Feature f) => f is Block { Op: BooleanOp.New } or Extrude { Op: BooleanOp.New } or Revolve { Op: BooleanOp.New };
 }
