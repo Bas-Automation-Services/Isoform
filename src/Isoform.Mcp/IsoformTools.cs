@@ -51,45 +51,66 @@ public static class IsoformTools
     });
 
     [McpServerTool(Name = "apply_edits", Idempotent = true)]
-    [Description("Applies edits to a part and returns the new document (compact JSON, same content and hash as the canonical " +
-                 "text), its hash, a regeneration summary and reference stability: which face names appeared, disappeared or " +
-                 "changed (split, merged) against the old document. " +
-                 "Edits: {\"set\": \"hole.diameter\", \"value\": 12}, {\"set\": \"parameters.width\", \"value\": 120}, " +
-                 "{\"insert\": {feature}, \"before\": \"fillet\"}, {\"remove\": \"slot\"}.")]
+    [Description("Applies edits to a part, assembly or bundle and returns the new document (compact JSON, same content and " +
+                 "hash as the canonical text), its hash and a regeneration summary; for a part also reference stability: " +
+                 "which face names appeared, disappeared or changed (split, merged) against the old document. " +
+                 "Part edits: {\"set\": \"hole.diameter\", \"value\": 12}, {\"set\": \"parameters.width\", \"value\": 120}, " +
+                 "{\"insert\": {feature}, \"before\": \"fillet\"}, {\"remove\": \"slot\"}. Assembly edits address " +
+                 "components.<id>... and mates.<id>...; in a bundle, \"document\": \"<path>\" on an edit changes that part. " +
+                 "An edit that cannot be applied is a tool error naming it, and nothing is changed.")]
     public static string ApplyEdits(
-        [Description(DocumentHelp)] string document,
+        [Description("A part, assembly or bundle: JSON text or a path. An assembly is regenerated with the parts in its " +
+                     "folder, so given as text it gets no summary.")] string document,
         [Description("Edits applied in order. set: \"<featureId>.<field>[.<field or index>...]\" with a JSON value; " +
-                     "insert: a feature object, before an id (or appended); remove: a feature id.")] JsonElement[] edits,
-        [Description("Regenerate old and new document for the summary and reference stability (default true).")] bool regenerate = true,
+                     "insert: a feature object, before an id (or appended); remove: a feature id. See describe_format.")] JsonElement[] edits,
+        [Description("Regenerate for the summary and, for a part, reference stability (default true).")] bool regenerate = true,
         [Description("Write the new document here as canonical text (may be the input path) instead of returning it.")] string? outputPath = null,
         [Description(CellHelp)] double cellSize = 0.5,
         [Description(ChordHelp)] double chordTolerance = 0.01) => Run(() =>
     {
-        var before = Part(document);
-        var after = DocumentEdits.Apply(before, edits.Select(e => JsonNode.Parse(e.ValueKind == JsonValueKind.String ? e.GetString()! : e.GetRawText())!));
-        var o = new JsonObject { ["hash"] = CanonicalFormat.Hash(after), ["previousHash"] = CanonicalFormat.Hash(before) };
+        var before = Text(document);
+        var edited = DocumentEdits.TryApply(before, edits.Select(e => JsonNode.Parse(e.ValueKind == JsonValueKind.String ? e.GetString()! : e.GetRawText())!));
+        // The problem names the edit and why: "edit 2 {...}: 'slot' is not a feature id in the document".
+        if (edited.Problem is { } problem) throw new McpException(problem);
+        var text = edited.Text!;
+        var o = new JsonObject { ["hash"] = edited.Hash, ["previousHash"] = DocumentEdits.TryApply(before, []).Hash };
         // As an object, not the indented text: a third of the tokens, and it reads back to the same hash.
-        if (outputPath is null) o["document"] = CanonicalFormat.ToNode(after);
+        if (outputPath is null) o["document"] = JsonNode.Parse(text);
         else
         {
-            File.WriteAllText(outputPath, CanonicalFormat.Write(after));
+            File.WriteAllText(outputPath, text);
             o["path"] = Path.GetFullPath(outputPath);
         }
         if (!regenerate) return o;
 
-        var modeler = new FrepModeler(Settings(cellSize, chordTolerance));
-        var (old, now) = (modeler.Regenerate(before), modeler.Regenerate(after));
-        var summary = new JsonObject();
-        Summarize(summary, now, full: false, density: null, certifyCell: null);
-        o["result"] = summary;
-        o["references"] = Stability(old.Topology, now.Topology);
+        var settings = Settings(cellSize, chordTolerance);
+        if (CanonicalFormat.FormatOf(text) == PartDocument.FormatVersion)
+        {
+            var modeler = new FrepModeler(settings);
+            var (old, now) = (modeler.Regenerate(CanonicalFormat.Read(before)), modeler.Regenerate(CanonicalFormat.Read(text)));
+            var summary = new JsonObject();
+            Summarize(summary, now, full: false, density: null, certifyCell: null);
+            o["result"] = summary;
+            o["references"] = Stability(old.Topology, now.Topology);
+        }
+        // The parts come from the original file's folder: the edited assembly still names them from there.
+        else if (Assembled(document, text) is var (assembly, load))
+        {
+            var r = new AssemblyModeler(settings).Regenerate(assembly, load);
+            o["result"] = new JsonObject
+            {
+                ["ok"] = r.Diagnostics.Count == 0, ["diagnostics"] = Diagnostics(r.Diagnostics),
+                ["instances"] = r.Instances.Count, ["freeDegrees"] = r.FreeDegrees,
+            };
+        }
         return o;
     });
 
     [McpServerTool(Name = "query", ReadOnly = true, Idempotent = true)]
     [Description("Geometric queries on a part, several per call: ray (first boundary hit: point, distance, face, normal), " +
                  "distance (certified [lower, upper] to the boundary, closest point, face, inside), clearance (certified gap or " +
-                 "interference between two bodies of the part) and wall (minimum wall thickness, as a caliper square to the face).")]
+                 "interference between two bodies of the part) and wall (minimum wall thickness, as a caliper square to the face). " +
+                 "A query the kernel cannot settle is answered {\"kind\", \"error\"}; the others still stand.")]
     public static string Query(
         [Description(DocumentHelp)] string document,
         [Description("The queries, answered in order.")] QuerySpec[] queries,
@@ -113,40 +134,49 @@ public static class IsoformTools
             var field = body?.Field ?? part.Field;
             var (min, max) = body is null ? (part.Min, part.Max) : (body.Min, body.Max);
             JsonObject a;
-            switch (q.Kind)
+            try
             {
-                case "ray":
-                    var origin = Point(q.Origin, "origin");
-                    // As far as the ray can still meet the box round the solid.
-                    var reach = Corners(min, max).Max(c => (c - origin).Length) + 1;
-                    a = Queries.Raycast(field, origin, Vector(q.Direction, "direction"), reach) is { } hit
-                        ? new JsonObject { ["hit"] = true, ["point"] = V(hit.Point), ["distance"] = N(hit.Distance), ["face"] = Face(hit.Owner), ["normal"] = V(hit.Normal) }
-                        : new JsonObject { ["hit"] = false };
-                    break;
-                case "distance":
-                    var d = Queries.Distance(field, Point(q.Point, "point"));
-                    a = new JsonObject { ["lower"] = N(d.Lower), ["upper"] = N(d.Upper), ["closest"] = V(d.Closest), ["face"] = Face(d.Owner), ["inside"] = d.Inside };
-                    break;
-                case "clearance":
-                    var names = (q.A, q.B) is ({ } x, { } y) ? (x, y)
-                        : part.Bodies.Count == 2 ? (part.Bodies[0].Name, part.Bodies[1].Name)
-                        : throw new McpException("a clearance names two bodies, a and b");
-                    var (ba, bb) = (BodyOf(names.Item1)!, BodyOf(names.Item2)!);
-                    var c = Queries.Clearance(ba.Field, Grown(ba.Min, ba.Max), bb.Field, Grown(bb.Min, bb.Max), 1e-4, 20_000);
-                    a = new JsonObject
-                    {
-                        ["a"] = ba.Name, ["b"] = bb.Name, ["lower"] = N(c.Lower), ["upper"] = N(c.Upper),
-                        ["onA"] = V(c.OnA), ["onB"] = V(c.OnB), ["interferes"] = c.Interferes,
-                    };
-                    break;
-                case "wall":
-                    var r = regenerated.Value;
-                    a = Queries.MinimumWall(r) is { } w
-                        ? new JsonObject { ["thickness"] = N(w.Thickness), ["from"] = V(w.From), ["to"] = V(w.To), ["fromFace"] = Face(w.FromOwner), ["toFace"] = Face(w.ToOwner) }
-                        : new JsonObject { ["thickness"] = null };
-                    break;
-                default:
-                    throw new McpException($"unknown query kind '{q.Kind}'; use ray, distance, clearance or wall");
+                switch (q.Kind)
+                {
+                    case "ray":
+                        var origin = Point(q.Origin, "origin");
+                        // As far as the ray can still meet the box round the solid.
+                        var reach = Corners(min, max).Max(c => (c - origin).Length) + 1;
+                        a = Queries.Raycast(field, origin, Vector(q.Direction, "direction"), reach) is { } hit
+                            ? new JsonObject { ["hit"] = true, ["point"] = V(hit.Point), ["distance"] = N(hit.Distance), ["face"] = Face(hit.Owner), ["normal"] = V(hit.Normal) }
+                            : new JsonObject { ["hit"] = false };
+                        break;
+                    case "distance":
+                        var d = Queries.Distance(field, Point(q.Point, "point"));
+                        a = new JsonObject { ["lower"] = N(d.Lower), ["upper"] = N(d.Upper), ["closest"] = V(d.Closest), ["face"] = Face(d.Owner), ["inside"] = d.Inside };
+                        break;
+                    case "clearance":
+                        var names = (q.A, q.B) is ({ } x, { } y) ? (x, y)
+                            : part.Bodies.Count == 2 ? (part.Bodies[0].Name, part.Bodies[1].Name)
+                            : throw new McpException("a clearance names two bodies, a and b");
+                        var (ba, bb) = (BodyOf(names.Item1)!, BodyOf(names.Item2)!);
+                        var c = Queries.Clearance(ba.Field, Grown(ba.Min, ba.Max), bb.Field, Grown(bb.Min, bb.Max), 1e-4, 20_000);
+                        a = new JsonObject
+                        {
+                            ["a"] = ba.Name, ["b"] = bb.Name, ["lower"] = N(c.Lower), ["upper"] = N(c.Upper),
+                            ["onA"] = V(c.OnA), ["onB"] = V(c.OnB), ["interferes"] = c.Interferes,
+                        };
+                        break;
+                    case "wall":
+                        var r = regenerated.Value;
+                        a = Queries.MinimumWall(r) is { } w
+                            ? new JsonObject { ["thickness"] = N(w.Thickness), ["from"] = V(w.From), ["to"] = V(w.To), ["fromFace"] = Face(w.FromOwner), ["toFace"] = Face(w.ToOwner) }
+                            : new JsonObject { ["thickness"] = null };
+                        break;
+                    default:
+                        throw new McpException($"unknown query kind '{q.Kind}'; use ray, distance, clearance or wall");
+                }
+            }
+            // The kernel declining one query (a ray march that does not settle, a distance search out of budget) is
+            // that query's answer, not the call's failure: the other answers stand.
+            catch (InvalidOperationException e)
+            {
+                a = new JsonObject { ["error"] = e.Message };
             }
             a.Insert(0, "kind", q.Kind);
             answers.Add(a);
@@ -179,40 +209,58 @@ public static class IsoformTools
     });
 
     [McpServerTool(Name = "export_step")]
-    [Description("Exports a part as exact STEP (AP214): analytic faces, closed-form edges and vertices. Writes to outputPath, " +
-                 "or returns the STEP text. Faces without a closed form (smooth blends, some fillets) are named in 'unsupported'.")]
+    [Description("Exports a part, assembly or bundle as exact STEP (AP214): analytic faces (fillets, chamfers, loop fillets, " +
+                 "shell cavities as voids), closed-form edges and vertices, one solid per body; an assembly as one product per " +
+                 "distinct part, placed by its instances. Writes to outputPath, or returns the STEP text. Faces without a closed " +
+                 "form (smooth blends) are named in 'unsupported'.")]
     public static string ExportStep(
-        [Description(DocumentHelp)] string document,
+        [Description(DocumentHelp + " Or an assembly or bundle, as for the assembly tool.")] string document,
         [Description("Write the STEP file here; without it the STEP text is returned.")] string? outputPath = null,
-        [Description("Product name in the file (default: part).")] string name = "part",
+        [Description("Product name in the file (default: part, or assembly).")] string? name = null,
         [Description(CellHelp)] double cellSize = 0.5,
         [Description(ChordHelp)] double chordTolerance = 0.01) => Run(() =>
     {
         var settings = Settings(cellSize, chordTolerance);
-        var result = new FrepModeler(settings).Regenerate(Part(document));
-        var o = new JsonObject { ["diagnostics"] = Diagnostics(result.Diagnostics) };
-        if (result.Topology is null)
-        {
-            o["ok"] = false;
-            return o;
-        }
-        Brep brep;
+        var text = Text(document);
+        var o = new JsonObject();
+        string step;
         try
         {
-            brep = ExactBrep.Build(result, settings);
+            if (CanonicalFormat.FormatOf(text) is Bundle.FormatVersion or AssemblyDocument.FormatVersion)
+            {
+                var (assembly, load) = Assembled(document, text) ?? throw new McpException(AssemblyTextHelp);
+                var result = new AssemblyModeler(settings).Regenerate(assembly, load);
+                o["diagnostics"] = Diagnostics(result.Diagnostics);
+                step = StepWriter.Write(result, settings, name ?? "assembly");
+                o["ok"] = true;
+                o["instances"] = result.Instances.Count;
+                o["parts"] = result.Instances.Select(i => i.Hash).Distinct().Count();
+            }
+            else
+            {
+                var result = new FrepModeler(settings).Regenerate(CanonicalFormat.Read(text));
+                o["diagnostics"] = Diagnostics(result.Diagnostics);
+                if (result.Topology is null)
+                {
+                    o["ok"] = false;
+                    return o;
+                }
+                var brep = ExactBrep.Build(result, settings);
+                step = StepWriter.Write(brep, name ?? "part");
+                o["ok"] = true;
+                o["solids"] = brep.Solids.Count;
+                o["faces"] = brep.Solids.Sum(s => s.Faces.Count);
+                o["edges"] = brep.Edges.Count;
+                o["vertices"] = brep.Vertices.Count;
+            }
         }
+        // A face with no closed form, an instance without geometry, a mirrored placement: named, not a crash.
         catch (NotSupportedException e)
         {
             o["ok"] = false;
             o["unsupported"] = e.Message;
             return o;
         }
-        var step = StepWriter.Write(brep, name);
-        o["ok"] = true;
-        o["solids"] = brep.Solids.Count;
-        o["faces"] = brep.Solids.Sum(s => s.Faces.Count);
-        o["edges"] = brep.Edges.Count;
-        o["vertices"] = brep.Vertices.Count;
         if (outputPath is null) o["step"] = step;
         else
         {
@@ -234,14 +282,7 @@ public static class IsoformTools
         [Description(CellHelp)] double cellSize = 0.5,
         [Description(ChordHelp)] double chordTolerance = 0.01) => Run(() =>
     {
-        var text = Text(document);
-        var (assembly, load) = CanonicalFormat.FormatOf(text) switch
-        {
-            Bundle.FormatVersion => CanonicalFormat.ReadBundle(text) is var b ? (b.Assembly, (Func<string, string?>)(p => b.Documents.GetValueOrDefault(p))) : default,
-            AssemblyDocument.FormatVersion when !LooksLikeText(document) => (CanonicalFormat.ReadAssembly(text), Resolver(Path.GetDirectoryName(Path.GetFullPath(document))!)),
-            AssemblyDocument.FormatVersion => throw new McpException("an assembly given as text has no folder to find its parts in; pass a bundle or a path"),
-            var f => throw new McpException($"expected a bundle or an assembly, got '{f}'"),
-        };
+        var (assembly, load) = Assembled(document, Text(document)) ?? throw new McpException(AssemblyTextHelp);
         var clock = Stopwatch.StartNew();
         var result = new AssemblyModeler(Settings(cellSize, chordTolerance)).Regenerate(assembly, load);
         var o = new JsonObject
@@ -296,12 +337,7 @@ public static class IsoformTools
         }
     }
 
-    static string Message(Exception e) => e switch
-    {
-        NullReferenceException or ArgumentNullException => "a required field is missing (see describe_format)",
-        InvalidOperationException { Message: "Sequence contains no matching element" } => "an edit or pattern names a feature id the document does not have",
-        _ => e.Message,
-    };
+    static string Message(Exception e) => e is NullReferenceException or ArgumentNullException ? "a required field is missing (see describe_format)" : e.Message;
 
     static bool LooksLikeText(string document) => document.TrimStart().StartsWith('{');
 
@@ -314,6 +350,27 @@ public static class IsoformTools
         if (format is Bundle.FormatVersion or AssemblyDocument.FormatVersion)
             throw new McpException($"this is an {format} document; use the assembly tool");
         return CanonicalFormat.Read(text);
+    }
+
+    const string AssemblyTextHelp = "an assembly given as text has no folder to find its parts in; pass a bundle or a path";
+
+    /// <summary>
+    /// An assembly and where its parts come from: a bundle's own documents, or the folder of the assembly file named by
+    /// <paramref name="document"/>. <paramref name="text"/> is the assembly or bundle itself (perhaps edited). Null for
+    /// an assembly given as text, which has no folder.
+    /// </summary>
+    static (AssemblyDocument Assembly, Func<string, string?> Load)? Assembled(string document, string text)
+    {
+        switch (CanonicalFormat.FormatOf(text))
+        {
+            case Bundle.FormatVersion:
+                var b = CanonicalFormat.ReadBundle(text);
+                return (b.Assembly, p => b.Documents.GetValueOrDefault(p));
+            case AssemblyDocument.FormatVersion:
+                return LooksLikeText(document) ? null : (CanonicalFormat.ReadAssembly(text), Resolver(Path.GetDirectoryName(Path.GetFullPath(document))!));
+            case var f:
+                throw new McpException($"expected a bundle or an assembly, got '{f}'");
+        }
     }
 
     static Func<string, string?> Resolver(string folder) => p =>

@@ -46,6 +46,18 @@ public class FormatGuideTests
     }
 
     [Fact]
+    public void Every_assembly_edit_example_applies_and_regenerates()
+    {
+        foreach (var edit in FormatGuide.AssemblyEditExamples)
+        {
+            var r = JsonNode.Parse(IsoformTools.ApplyEdits(CanonicalFormat.Write(FormatGuide.BundleExample), [JsonDocument.Parse(edit).RootElement]))!;
+
+            r["result"]!["ok"]!.GetValue<bool>().Should().BeTrue(r.ToJsonString());
+            r["hash"]!.GetValue<string>().Should().NotBe(r["previousHash"]!.GetValue<string>(), edit);
+        }
+    }
+
+    [Fact]
     public void The_parametric_example_follows_its_parameters()
     {
         var doc = CanonicalFormat.Write(FormatGuide.EditTarget);
@@ -64,6 +76,7 @@ public class FormatGuideTests
 
         foreach (var e in FormatGuide.Examples) text.Should().Contain(FormatGuide.Feature(e.Feature).ToJsonString(IsoformTools.Compact));
         foreach (var code in FormatGuide.DiagnosticCodes()) text.Should().Contain(code);
+        foreach (var edit in FormatGuide.EditExamples.Concat(FormatGuide.AssemblyEditExamples)) text.Should().Contain(edit);
         text.Should().Contain(PartDocument.FormatVersion).And.Contain(AssemblyDocument.FormatVersion).And.Contain(Bundle.FormatVersion);
         // Short enough to read once per session.
         text.Length.Should().BeLessThan(12_000);
