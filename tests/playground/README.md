@@ -13,7 +13,7 @@ node tests/playground/run.mjs path/to/wwwroot      # or any other published wwwr
 The parts on their own:
 
 ```sh
-node --test tests/playground/kernel-client.test.mjs tests/playground/store.test.mjs   # front end only, no publish
+node --test tests/playground/kernel-client.test.mjs tests/playground/store.test.mjs tests/playground/dragmath.test.mjs   # front end only, no publish
 node --test tests/playground/kernel.test.mjs       # kernel only; ISOFORM_PLAYGROUND=<wwwroot> to point elsewhere
 node tests/playground/e2e.mjs [wwwroot]            # browser only
 node tests/playground/serve.mjs [wwwroot] [port]   # serve the page to look at it yourself (default port 8137)
@@ -34,6 +34,12 @@ helpers to the primary; `adaptResult` keeps result v2 as written and adds the me
 a document that does not read keeps the last result; history gets one entry per changed document; the status line has
 the form `e2e.mjs` reads.
 
+**`dragmath.test.mjs`** drives `wwwroot/js/lib/dragmath.js` with the handles in `handles.fixture.json` (the C#
+contract of `docs/playground-plan.md`, one of each kind): the pointer ray gives `t` as the closest point to a linear
+handle's axis, the hit on a planar handle's plane, or the angle about an angle handle's axis; a drag counts from where
+it was grabbed and an angle keeps turning past half a turn; the value snaps to `step` and stays within `min`/`max`; the
+edits are `{set, value: base + per·t}`; a selected face shows its feature's handles and never an assembly frame.
+
 **`kernel.test.mjs`** loads `_framework/dotnet.js` from the published folder in Node and calls the same exports the
 page's worker calls. For every example from `Examples()`, at the page's default settings (0.5 mm cells, 0.05 mm chord):
 
@@ -50,7 +56,8 @@ stats line under the editor (`#stats`) to show a result. An example passes when 
 does not start with `Error:` or say the document does not parse, and the page logged no uncaught exception or console
 error. Per example it prints the kernel time from the stats line and the page time (navigation to result, including
 loading the runtime). Then it clicks a face of example 0, regenerates at another cell size and checks that the same
-face names are still selected.
+face names are still selected. Last it selects `plate/x+` on example 0, drags its handle 40 px outwards with mouse
+events, and checks that `plate.size.0` grew and the hash changed (skipped while the kernel has no `Handles` export).
 
 ## Screenshots
 
@@ -58,7 +65,8 @@ face names are still selected.
 taken two frames after the result arrived. Each shows the editor on the left with the stats line at the bottom, and
 the part on the right, framed to fit, one colour per face, sharp edges dark and tangent edges faint. Things to look
 for: a part missing or cut off (framing), faces that share a colour where they should not (face naming), holes in the
-mesh, stray triangles, and red diagnostics under the stats line.
+mesh, stray triangles, and red diagnostics under the stats line. `handle-drag.png` is example 0 in the handle drag, just
+before the release: the plate tinted, its handles drawn over it, and the dragged arrow's label with the live width.
 
 ## Writing browser tests
 
@@ -71,14 +79,17 @@ mesh, stray triangles, and red diagnostics under the stats line.
 - `frames(n)` before a screenshot, `screenshot(file)`, and `errors` (exceptions and console errors since `open`).
 
 Coordinates are CSS pixels in the viewport. The page exposes `window.isoform`: `ready` (a result is shown),
-`document()`, `hash()`, `selection()` (face names), `faces()` (each face's names), `select(names)` and `edit(text)`
-(resolves once that text has regenerated). Later tasks add to it, for example handles:
+`document()`, `hash()`, `selection()` (face names), `faces()` (each face's names), `select(names)`, `edit(text)`
+(resolves once that text has regenerated) and `handles()`: the shown handles (those of the selected face's feature),
+each `{id, feature, kind, label, value, faces, readOnly, screen, direction}` with `screen` the point to grab it by and
+`direction` the unit screen direction of its axis (where `t` grows). Later tasks add to it. For example:
 
 ```js
 const page = await browser.newPage();
 await page.open(`${site.url}?example=0`);
 await page.waitFor('window.isoform?.ready');
-const [h] = await page.evaluate('window.isoform.handles()');   // assumed to include screen positions
-await page.drag(h.screen, [h.screen[0] + 40, h.screen[1]]);
-await page.waitFor(`window.isoform.document().includes('"end": 10')`);
+await page.evaluate(`window.isoform.select(['plate/x+'])`);
+const h = await page.waitFor(`window.isoform.handles().find(h => h.id === 'plate:x+')`);
+await page.drag(h.screen, [h.screen[0] + 40 * h.direction[0], h.screen[1] + 40 * h.direction[1]]);
+await page.waitFor(`!window.isoform.document().includes('"size": [100, 50, 10]')`);
 ```

@@ -133,6 +133,21 @@ select, textarea {
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
 }
 
+/* A handle's label and value while it is hovered or dragged. */
+.handle-label {
+  position: absolute;
+  pointer-events: none;
+  background: var(--panel);
+  border: 1px solid var(--accent);
+  border-radius: 5px;
+  padding: 3px 7px;
+  font: 12px ui-monospace, Consolas, monospace;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+}
+.handle-label[hidden] { display: none; }
+
 @media (max-width: 800px) {
   body { flex-direction: column; }
   #panel { width: auto; min-width: 0; max-height: 55vh; border-right: none; border-bottom: 1px solid var(--line); }

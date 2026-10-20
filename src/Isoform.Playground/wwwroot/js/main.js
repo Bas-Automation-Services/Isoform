@@ -3,7 +3,8 @@ import { adaptResult, createClient } from './kernel-client.js';
 import { createStore } from './store.js';
 import { createViewer } from './viewer.js';
 import { createPicking } from './picking.js';
-import { createEditor } from './panels/editor.js';
+import { createHandles } from './handles.js';
+import { createEditor, pretty } from './panels/editor.js';
 import { createDiagnostics } from './panels/diagnostics.js';
 import { createSelection } from './panels/selection.js';
 
@@ -60,6 +61,19 @@ window.isoform = {
     return regenerate();
   },
 };
+
+// Handles (J1): the selected feature's handles. A released drag applies its edits to the text, which then regenerates
+// as typing does; J2 replaces commit with the preview/commit pipeline.
+const handles = createHandles(viewer, store, {
+  fetch: () => client.call('handles', { slot: 'main' }).then(r => r.result),
+  async commit(edits) {
+    const { result } = await client.call('apply', { document: store.state.text, edits });
+    if (result.problem) return store.set({ problem: result.problem });
+    store.set({ text: pretty(JSON.parse(result.text)) });
+    await regenerate();
+  },
+});
+window.isoform.handles = handles.list;
 
 await client.start();
 editor.load((await client.call('examples')).result);
