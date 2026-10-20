@@ -5,8 +5,14 @@ namespace Isoform.Modeling;
 /// <summary>Backend-independent checks: a document that fails them produces no geometry on any backend.</summary>
 public static class DocumentRules
 {
+    /// <summary>
+    /// The first problem, or null. Parameters and expressions are resolved first (failing as an invalid-parameter
+    /// diagnostic), so every rule sees the numbers; a caller that goes on builds <see cref="Parametric.Resolve"/>'s document.
+    /// </summary>
     public static Diagnostic? FirstProblem(PartDocument doc, double tolerance)
     {
+        try { doc = Parametric.Resolve(doc); }
+        catch (ParameterException e) { return new Diagnostic(Diagnostic.InvalidParameter, e.FeatureId, e.Message); }
         var bodies = new List<string>();
         var ids = new HashSet<string>();
         string? current = null;

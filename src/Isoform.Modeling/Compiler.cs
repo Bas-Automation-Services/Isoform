@@ -88,6 +88,7 @@ public sealed class Compiler(ModelingSettings settings)
 
         if (DocumentRules.FirstProblem(doc, _tol) is { } invalid)
             return new CompiledPart(null, surfaces, min, max, [invalid]);
+        doc = Parametric.Resolve(doc);
 
         // A solid-making feature placed by a rigid motion. Pattern copies rename their surfaces, join where the
         // original starts the body, and report as the pattern.

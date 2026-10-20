@@ -12,3 +12,6 @@ out/
 
 # Agent worktrees
 .claude/worktrees/
+
+# Playground test screenshots
+tests/playground/out/
