@@ -80,6 +80,13 @@ public static class CanonicalFormat
                 w.WriteEndArray();
                 Number(w, "radius", fl.Radius);
                 break;
+            case Chamfer ch:
+                w.WriteString("type", "chamfer");
+                w.WriteStartArray("edge");
+                foreach (var s in ch.Edge) w.WriteStringValue(s);
+                w.WriteEndArray();
+                Number(w, "distance", ch.Distance);
+                break;
             case Shell sh:
                 w.WriteString("type", "shell");
                 Number(w, "thickness", sh.Thickness);
@@ -143,6 +150,7 @@ public static class CanonicalFormat
             "plane-cut" => new PlaneCut(id, Arr(n["point"], 3), Arr(n["normal"], 3)),
             "shell" => new Shell(id, (double)n["thickness"]!),
             "fillet" => new Fillet(id, n["edge"]!.AsArray().Select(e => (string)e!).ToArray(), (double)n["radius"]!),
+            "chamfer" => new Chamfer(id, n["edge"]!.AsArray().Select(e => (string)e!).ToArray(), (double)n["distance"]!),
             "extrude" => new Extrude(id, Op(n), ReadPlane(n["plane"]!), ReadProfile(n["profile"]!), (double)n["start"]!, (double)n["end"]!),
             "revolve" => new Revolve(id, Op(n), ReadPlane(n["plane"]!), ReadProfile(n["profile"]!), (double)n["angle"]!),
             "pattern" => new Pattern(id, n["features"]!.AsArray().Select(f => (string)f!).ToArray(), ReadMotion(n)),

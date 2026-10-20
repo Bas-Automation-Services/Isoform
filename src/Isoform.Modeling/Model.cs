@@ -26,6 +26,8 @@ public sealed record Diagnostic(string Code, string? FeatureId, string Message)
     public const string MultipleBodies = "multiple-bodies";
     public const string FilletInvalid = "fillet-invalid";
     public const string UnsupportedFillet = "unsupported-fillet";
+    public const string ChamferInvalid = "chamfer-invalid";
+    public const string UnsupportedChamfer = "unsupported-chamfer";
     public const string BelowResolution = "below-resolution";
     public const string BackendFailed = "backend-failed";
 }

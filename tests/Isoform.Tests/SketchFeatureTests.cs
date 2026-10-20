@@ -75,40 +75,8 @@ public class SketchFeatureTests(ITestOutputHelper output)
 
     [Theory]
     [MemberData(nameof(PartNames))]
-    public void Field_is_1_lipschitz_bounded_and_simplifies_exactly(string name)
-    {
-        var part = new Compiler(new ModelingSettings()).Compile(Get(name).Doc);
-        var field = part.Field!;
-        var (lo, hi) = (part.Min - new Vector3D(5, 5, 5), part.Max + new Vector3D(5, 5, 5));
-        var rng = new Random(3);
-        Point3D Random() => new(lo.X + rng.NextDouble() * (hi.X - lo.X), lo.Y + rng.NextDouble() * (hi.Y - lo.Y), lo.Z + rng.NextDouble() * (hi.Z - lo.Z));
-
-        for (var i = 0; i < 50_000; i++)
-        {
-            var p = Random();
-            var q = rng.NextDouble() < 0.5 ? Random() : p + new Vector3D(rng.NextDouble() - 0.5, rng.NextDouble() - 0.5, rng.NextDouble() - 0.5);
-            Math.Abs(field.Value(p) - field.Value(q)).Should().BeLessThanOrEqualTo((p - q).Length * (1 + 1e-12) + 1e-12);
-            field.Value(p).Should().Be(field.Sample(p).Value);
-        }
-
-        for (var b = 0; b < 2000; b++)
-        {
-            var size = Math.Pow(10, rng.NextDouble() * 3 - 1.5);
-            var min = Random();
-            var box = new Box3D(min, new Point3D(min.X + size, min.Y + size, min.Z + size));
-            var bounds = field.Bounds(box);
-            var simple = field.Simplify(box);
-            for (var i = 0; i < 20; i++)
-            {
-                var p = new Point3D(min.X + size * rng.NextDouble(), min.Y + size * rng.NextDouble(), min.Z + size * rng.NextDouble());
-                var (full, reduced) = (field.Sample(p), simple.Sample(p));
-                full.Value.Should().BeInRange(bounds.Lo - 1e-12, bounds.Hi + 1e-12);
-                reduced.Value.Should().Be(full.Value);
-                reduced.Owner.Should().Be(full.Owner);
-                (reduced.Gradient - full.Gradient).Length.Should().Be(0);
-            }
-        }
-    }
+    public void Field_is_1_lipschitz_bounded_and_simplifies_exactly(string name) =>
+        FieldProperties.Check(new Compiler(new ModelingSettings()).Compile(Get(name).Doc));
 
     [Fact]
     public void Faces_keep_their_names_when_the_profile_changes()

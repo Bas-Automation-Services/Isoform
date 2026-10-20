@@ -378,7 +378,8 @@ public sealed class RoundedEdgeField : Field
 /// <summary>
 /// Closed shell of wall t: max(f, −f − t). The inner surface {f = −t} is owned by an inner surface per outer
 /// owner. Because f is 1-Lipschitz, every point of the cavity is more than t from the outer boundary, so the
-/// wall is never thinner than t; at sharp edges it is thicker, like a CAD shell.
+/// wall is never thinner than t; at sharp edges it is thicker, like a CAD shell. Edge features after the shell
+/// reshape only <see cref="Outer"/>: max(outer, −f − t) rounds the outside and leaves the cavity as it was.
 /// </summary>
 public sealed class ShellField : Field
 {
@@ -386,57 +387,71 @@ public sealed class ShellField : Field
     readonly IReadOnlyDictionary<int, int> _outerOf;
 
     public ShellField(Field child, double thickness, IReadOnlyDictionary<int, int> innerOf)
-        : this(child, thickness, innerOf, innerOf.ToDictionary(kv => kv.Value, kv => kv.Key)) { }
+        : this(child, thickness, innerOf, innerOf.ToDictionary(kv => kv.Value, kv => kv.Key), child) { }
 
-    ShellField(Field child, double thickness, IReadOnlyDictionary<int, int> innerOf, IReadOnlyDictionary<int, int> outerOf)
+    ShellField(Field child, double thickness, IReadOnlyDictionary<int, int> innerOf, IReadOnlyDictionary<int, int> outerOf, Field outer)
     {
-        (Child, Thickness, _innerOf, _outerOf) = (child, thickness, innerOf, outerOf);
+        (Child, Thickness, _innerOf, _outerOf, Outer) = (child, thickness, innerOf, outerOf, outer);
     }
 
+    /// <summary>The solid whose offset is the cavity.</summary>
     public Field Child { get; }
+
+    /// <summary>The outside: the child itself, unless a later edge feature reshaped it.</summary>
+    public Field Outer { get; }
+
     public double Thickness { get; }
+
+    bool Plain => ReferenceEquals(Outer, Child);
+
+    public ShellField WithOuter(Field outer) => new(Child, Thickness, _innerOf, _outerOf, outer);
 
     public override FieldSample Sample(Point3D p)
     {
-        var s = Child.Sample(p);
-        var inner = -s.Value - Thickness;
-        return s.Value >= inner ? s : new(inner, _innerOf[s.Owner], -s.Gradient);
+        var c = Child.Sample(p);
+        var inner = -c.Value - Thickness;
+        var o = Plain ? c : Outer.Sample(p);
+        return o.Value >= inner ? o : new(inner, _innerOf[c.Owner], -c.Gradient);
     }
 
     public override double Value(Point3D p)
     {
         var v = Child.Value(p);
-        return Math.Max(v, -v - Thickness);
+        return Math.Max(Plain ? v : Outer.Value(p), -v - Thickness);
     }
 
     public override FieldSample? SampleSurface(int owner, Point3D p)
     {
-        if (!_outerOf.TryGetValue(owner, out var outer)) return Child.SampleSurface(owner, p);
+        if (!_outerOf.TryGetValue(owner, out var outer)) return Outer.SampleSurface(owner, p);
         return Child.SampleSurface(outer, p) is { } s ? new(-s.Value - Thickness, owner, -s.Gradient) : null;
     }
 
     public override Interval Bounds(Box3D box)
     {
         var c = Child.Bounds(box);
-        return Interval.Max(c, new Interval(-c.Hi - Thickness, -c.Lo - Thickness));
+        return Interval.Max(Plain ? c : Outer.Bounds(box), new Interval(-c.Hi - Thickness, -c.Lo - Thickness));
     }
 
     /// <summary>Where only the inner surface can win, it is the offset of a single child surface or unknown.</summary>
     public override double? SinglePatch(Box3D box)
     {
-        if (Child.Bounds(box).Hi >= -Thickness / 2 - 1e-9 || Child.Simplify(box) is not LeafField leaf) return null;
+        var c = Child.Bounds(box);
+        var o = Plain ? c : Outer.Bounds(box);
+        if (-c.Hi - Thickness <= o.Hi + 1e-9 || Child.Simplify(box) is not LeafField leaf) return null;
         if (leaf.Surface.Kind == SurfaceKind.Plane) return double.PositiveInfinity;
         var r = leaf.Complement ? leaf.Surface.Radius + Thickness : leaf.Surface.Radius - Thickness;
         return r > 0 ? r : null;
     }
 
-    // Where the cavity cannot reach, the shell is just its child.
+    // Where the cavity cannot reach, the shell is just its outside.
     public override Field Simplify(Box3D box)
     {
         var c = Child.Bounds(box);
-        if (-c.Lo - Thickness < c.Lo) return Child.Simplify(box);
+        var o = Plain ? c : Outer.Bounds(box);
+        if (-c.Lo - Thickness < o.Lo) return Outer.Simplify(box);
         var child = Child.Simplify(box);
-        return ReferenceEquals(child, Child) ? this : new ShellField(child, Thickness, _innerOf, _outerOf);
+        var outer = Plain ? child : Outer.Simplify(box);
+        return ReferenceEquals(child, Child) && ReferenceEquals(outer, Outer) ? this : new ShellField(child, Thickness, _innerOf, _outerOf, outer);
     }
 }
 
@@ -470,6 +485,10 @@ public static class FieldAlgebra
             if (keep) kept?.Add(simple!);
         }
         if (kept is null) return self;
+        // A face that a rounded edge in the same intersection holds is never above it: the rounded edge is at least
+        // the face's own value, and equal to it with the face's own sample. Fillets sharing a face leave such pairs.
+        if (intersection)
+            kept.RemoveAll(c => c is LeafField l && kept.Any(k => k is RoundedEdgeField r && (r.A == l || r.B == l)));
         return kept.Count == 1 ? kept[0] : intersection ? new MaxField(kept) : new MinField(kept);
     }
 

@@ -21,6 +21,9 @@ public sealed record PlaneCut(string Id, double[] Point, double[] Normal) : Feat
 /// <summary>Constant-radius fillet on the edge between two source faces, e.g. ["plate/z+", "plate/x+"].</summary>
 public sealed record Fillet(string Id, string[] Edge, double Radius) : Feature(Id);
 
+/// <summary>Equal-distance chamfer on the edge between two source faces: a plane, or a cone on a hole or boss edge.</summary>
+public sealed record Chamfer(string Id, string[] Edge, double Distance) : Feature(Id);
+
 /// <summary>Hollows the solid into a closed skin of wall <paramref name="Thickness"/>; inner faces are named after their outer face.</summary>
 public sealed record Shell(string Id, double Thickness) : Feature(Id);
 

@@ -46,7 +46,7 @@ public sealed class FrepModeler(ModelingSettings settings) : IModeler
         var smallest = 2 * Settings.CellSize;
         foreach (var feature in document.Features)
         {
-            var size = feature switch { Hole x => x.Diameter, Shell x => x.Thickness, Fillet x => 2 * x.Radius, _ => double.PositiveInfinity };
+            var size = feature switch { Hole x => x.Diameter, Shell x => x.Thickness, Fillet x => 2 * x.Radius, Chamfer x => Math.Sqrt(2) * x.Distance, _ => double.PositiveInfinity };
             if (size < smallest)
                 yield return new Diagnostic(Diagnostic.BelowResolution, feature.Id, $"{feature.Id} ({size:G4} mm) is below the resolved size of {smallest:G4} mm; use a smaller CellSize");
             // A profile edge sweeps a face as wide as the edge is long.

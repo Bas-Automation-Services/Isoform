@@ -19,6 +19,8 @@ public static class DocumentRules
                 Shell sh when sh.Thickness <= tolerance => $"shell thickness must be positive, got {sh.Thickness}",
                 Fillet f when f.Radius <= tolerance => $"fillet radius must be positive, got {f.Radius}",
                 Fillet f when f.Edge.Length != 2 => "a fillet edge names exactly two source faces",
+                Chamfer c when c.Distance <= tolerance => $"chamfer distance must be positive, got {c.Distance}",
+                Chamfer c when c.Edge.Length != 2 => "a chamfer edge names exactly two source faces",
                 Extrude e when e.End - e.Start <= tolerance => $"extrude end must be beyond its start, got {e.Start} to {e.End}",
                 Extrude e => Profiles.Problem(e.Plane, e.Profile, tolerance, revolve: false),
                 Revolve r when !(r.Angle > tolerance && r.Angle <= 360) => $"revolve angle must be in (0, 360], got {r.Angle}",

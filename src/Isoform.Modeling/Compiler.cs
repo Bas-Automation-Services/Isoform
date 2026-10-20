@@ -114,9 +114,8 @@ public sealed class Compiler(ModelingSettings settings)
                     tree = ShellOf(sh, FieldAlgebra.Normalize(tree!), Register);
                     break;
 
-                case Fillet f:
-                    var fillet = Add($"{f.Id}/face", SurfaceKind.Fillet, new Point3D(0, 0, 0), new Vector3D(0, 0, 1), f.Radius);
-                    tree = ApplyFillet(f, fillet, FieldAlgebra.Normalize(tree!), surfaces, min, max, diagnostics);
+                case Fillet or Chamfer:
+                    tree = ApplyEdge(feature, FieldAlgebra.Normalize(tree!), Register, min, max, diagnostics);
                     break;
 
                 default:
@@ -259,43 +258,136 @@ public sealed class Compiler(ModelingSettings settings)
         }
     }
 
-    Field ApplyFillet(Fillet f, Surface fillet, Field tree, List<Surface> surfaces, Point3D min, Point3D max, List<Diagnostic> diagnostics)
+    /// <summary>
+    /// A fillet or chamfer on the edge between two faces of one intersection. A face may sit in the intersection
+    /// directly, inside an earlier fillet (fillets sharing a face), or as the side of a swept profile that lies
+    /// wholly on its material side. Inside a shell the feature reshapes only the shell's outside.
+    /// </summary>
+    Field ApplyEdge(Feature feature, Field tree, Func<Surface, Surface> register, Point3D min, Point3D max, List<Diagnostic> diagnostics)
     {
-        void Fail(string code, string message) => diagnostics.Add(new Diagnostic(code, f.Id, message));
-
-        var host = FieldAlgebra.Descendants(tree).OfType<MaxField>().FirstOrDefault(m =>
-            f.Edge.All(src => m.Children.OfType<LeafField>().Any(l => l.Surface.Source == src)));
-        if (host is null)
+        var (edge, size, fillet) = feature switch
         {
-            Fail(Diagnostic.UnsupportedFillet,
-                $"edge [{string.Join(", ", f.Edge)}] is not a convex edge between two faces of one intersection");
+            Fillet x => (x.Edge, x.Radius, true),
+            Chamfer x => (x.Edge, x.Distance, false),
+            _ => throw new NotSupportedException(feature.GetType().Name),
+        };
+        var (unsupported, invalid) = fillet ? (Diagnostic.UnsupportedFillet, Diagnostic.FilletInvalid) : (Diagnostic.UnsupportedChamfer, Diagnostic.ChamferInvalid);
+        Field Fail(string code, string message)
+        {
+            diagnostics.Add(new Diagnostic(code, feature.Id, message));
             return tree;
         }
+        var name = $"[{string.Join(", ", edge)}]";
 
-        var a = host.Children.OfType<LeafField>().First(l => l.Surface.Source == f.Edge[0]);
-        var b = host.Children.OfType<LeafField>().First(l => l.Surface.Source == f.Edge[1]);
+        var found = Intersections(tree, null)
+            .Select(x => (x.Host, x.Shell, A: Held(x.Host, edge[0]), B: Held(x.Host, edge[1])))
+            .FirstOrDefault(x => x.A is not null && x.B is not null);
+        if (found.Host is null) return Fail(unsupported, $"edge {name} is not a convex edge between two faces of one intersection");
+        var (host, shell, a, b) = (found.Host, found.Shell, found.A!, found.B!);
+
         if (EdgeSamples(a.Surface, b.Surface, min, max) is not { } samples)
-        {
-            Fail(Diagnostic.UnsupportedFillet, $"no exact rolling-ball fillet for {a.Surface.Kind}–{b.Surface.Kind} in this orientation");
-            return tree;
-        }
-
-        var rounded = new RoundedEdgeField(a, b, f.Radius, fillet);
+            return Fail(unsupported, $"no exact {feature.GetType().Name.ToLowerInvariant()} for {a.Surface.Kind}–{b.Surface.Kind} in this orientation");
         var onEdge = samples.Where(q => Math.Abs(tree.Value(q)) <= 10 * _tol).ToList();
-        if (onEdge.Count == 0)
+        if (onEdge.Count == 0) return Fail(invalid, $"edge {name} does not exist on the part");
+
+        Field addition;
+        if (fillet)
         {
-            Fail(Diagnostic.FilletInvalid, $"edge [{string.Join(", ", f.Edge)}] does not exist on the part");
-            return tree;
+            var rounded = new RoundedEdgeField(a, b, size, register(new Surface(0, $"{feature.Id}/face", SurfaceKind.Fillet, new Point3D(0, 0, 0), new Vector3D(0, 0, 1), size)));
+            // On a face's own plane the solid field is ≥ 0, and 0 only on the face itself: a contact point with
+            // a positive value means the ball does not fit on that face.
+            if (onEdge.Select(rounded.Contacts).Any(c => tree.Value(c.OnA) > 10 * _tol || tree.Value(c.OnB) > 10 * _tol))
+                return Fail(invalid, $"radius {size} does not fit between the faces next to the edge");
+            // The arc's middle must stay outside the cavity, or the round cuts through the wall.
+            if (shell is not null && onEdge.Select(rounded.Contacts).Any(c => -shell.Child.Value(Middle(c, size)) - shell.Thickness > -10 * _tol))
+                return Fail(invalid, $"radius {size} cuts through the shell wall");
+            addition = rounded;
         }
-        // On a face's own plane the solid field is ≥ 0, and 0 only on the face itself: a contact point with
-        // a positive value means the ball does not fit on that face.
-        if (onEdge.Select(rounded.Contacts).Any(c => tree.Value(c.OnA) > 10 * _tol || tree.Value(c.OnB) > 10 * _tol))
+        else
         {
-            Fail(Diagnostic.FilletInvalid, $"radius {f.Radius} does not fit between the faces next to the edge");
-            return tree;
+            if (onEdge.Select(q => Setback(a, b, q, size)).Any(c => tree.Value(c.OnA) > 10 * _tol || tree.Value(c.OnB) > 10 * _tol))
+                return Fail(invalid, $"distance {size} does not fit between the faces next to the edge");
+            addition = ChamferLeaf(feature.Id, a, b, onEdge[0], size, register);
         }
 
-        return Replace(tree, host, new MaxField(host.Children.Where(c => c != a && c != b).Append(rounded).ToList()));
+        // A face held directly is now inside the fillet; a chamfer only adds its own face.
+        var children = host.Children.Where(c => !fillet || (c != a && c != b)).Append(addition).ToList();
+        return Replace(tree, host, new MaxField(children));
+    }
+
+    static Point3D Middle((Point3D Centre, Point3D OnA, Point3D OnB) c, double r)
+    {
+        var bisector = (c.OnA - c.Centre) + (c.OnB - c.Centre);
+        return c.Centre + bisector.Normalized() * r;
+    }
+
+    /// <summary>The points at distance d from the edge point q, along each face away from the edge.</summary>
+    static (Point3D OnA, Point3D OnB) Setback(LeafField a, LeafField b, Point3D q, double d)
+    {
+        var (ga, gb) = (a.Sample(q).Gradient, b.Sample(q).Gradient);
+        var c = ga.Dot(gb);
+        return (q + (ga * c - gb).Normalized() * d, q + (gb * c - ga).Normalized() * d);
+    }
+
+    /// <summary>
+    /// The equal-distance chamfer face: a plane between two planes, a 45° cone on the edge of a hole or boss.
+    /// Its material side is the one that leaves the sharp edge outside.
+    /// </summary>
+    static LeafField ChamferLeaf(string id, LeafField a, LeafField b, Point3D q, double d, Func<Surface, Surface> register)
+    {
+        var (onA, onB) = Setback(a, b, q, d);
+        Surface template;
+        if (a.Surface.Kind == SurfaceKind.Plane && b.Surface.Kind == SurfaceKind.Plane)
+        {
+            var along = a.Sample(q).Gradient.Cross(b.Sample(q).Gradient).Normalized();
+            template = new Surface(0, $"{id}/face", SurfaceKind.Plane, onA, (onB - onA).Cross(along).Normalized());
+        }
+        else
+        {
+            var (plane, wall, onPlane) = a.Surface.Kind == SurfaceKind.Plane ? (a, b, onA) : (b, a, onB);
+            var up = plane.Sample(q).Gradient;
+            var axis = wall.Surface.Axis;
+            var foot = wall.Surface.Origin + axis * axis.Dot(q - wall.Surface.Origin);
+            // In (ρ, z) round the axis, z out of the face: the chamfer runs from (R, −d) to (ρ on the face, 0).
+            var r = wall.Surface.Radius;
+            var slope = (onPlane - (foot + axis * axis.Dot(onPlane - foot))).Length - r;
+            slope /= d;
+            template = new Surface(0, $"{id}/face", SurfaceKind.Cone, foot + up * (-d - r / slope), slope > 0 ? up : -up, Angle: Math.Atan(Math.Abs(slope)));
+        }
+        var s = register(template);
+        var leaf = new LeafField(s);
+        return leaf.Value(q) > 0 ? leaf : new LeafField(s, complement: true);
+    }
+
+    /// <summary>Every intersection node, also inside a shell's outside, with the shell it sits in.</summary>
+    static IEnumerable<(MaxField Host, ShellField? Shell)> Intersections(Field tree, ShellField? shell)
+    {
+        foreach (var node in FieldAlgebra.Descendants(tree))
+        {
+            if (node is MaxField m) yield return (m, shell);
+            if (node is ShellField s)
+                foreach (var inner in Intersections(s.Outer, s)) yield return inner;
+        }
+    }
+
+    /// <summary>The leaf of a source face as the intersection holds it, or null.</summary>
+    static LeafField? Held(MaxField m, string source)
+    {
+        foreach (var c in m.Children)
+        {
+            switch (c)
+            {
+                case LeafField l when l.Surface.Source == source:
+                    return l;
+                case RoundedEdgeField r when r.A.Surface.Source == source:
+                    return r.A;
+                case RoundedEdgeField r when r.B.Surface.Source == source:
+                    return r.B;
+                case ProfileField p when p.Leaves.FirstOrDefault(l => l.Surface.Source == source) is { } side && p.Supports(side):
+                    return side;
+            }
+        }
+        return null;
     }
 
     /// <summary>Points on the sharp edge between two leaf surfaces, or null when the pair is not supported exactly.</summary>
@@ -341,12 +433,25 @@ public sealed class Compiler(ModelingSettings settings)
             yield return new Point3D(x, y, z);
     }
 
-    static Field Replace(Field field, Field target, Field replacement) => field == target ? replacement : field switch
+    /// <summary>The tree with one node swapped; untouched branches stay the same objects.</summary>
+    static Field Replace(Field field, Field target, Field replacement)
     {
-        MaxField m => new MaxField(m.Children.Select(c => Replace(c, target, replacement)).ToList()),
-        MinField m => new MinField(m.Children.Select(c => Replace(c, target, replacement)).ToList()),
-        _ => field,
-    };
+        if (field == target) return replacement;
+        switch (field)
+        {
+            case MaxField m:
+                var max = m.Children.Select(c => Replace(c, target, replacement)).ToList();
+                return max.SequenceEqual(m.Children) ? m : new MaxField(max);
+            case MinField m:
+                var min = m.Children.Select(c => Replace(c, target, replacement)).ToList();
+                return min.SequenceEqual(m.Children) ? m : new MinField(min);
+            case ShellField s:
+                var outer = Replace(s.Outer, target, replacement);
+                return outer == s.Outer ? s : s.WithOuter(outer);
+            default:
+                return field;
+        }
+    }
 
     static Point3D P(double[] v) => new(v[0], v[1], v[2]);
     static Vector3D V(double[] v) => new(v[0], v[1], v[2]);

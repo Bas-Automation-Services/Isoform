@@ -200,6 +200,27 @@ public sealed class ProfileField : Field
         return new LeafField(add(SurfaceKind.Cone, OnAxis(apex), opening, 0, 0, Math.Atan(Math.Abs(du / dv))), complement: nRho < 0);
     }
 
+    /// <summary>
+    /// True when the whole profile lies on the material side of this leaf's edge: then the edge's surface bounds
+    /// the swept solid everywhere, and an edge feature can use it as if it were a face of an intersection.
+    /// </summary>
+    public bool Supports(LeafField leaf)
+    {
+        var i = Array.IndexOf(_leaves, leaf);
+        if (i < 0) return false;
+        var e = _edges[i];
+        const double tol = 1e-9;
+        foreach (var other in _edges)
+        foreach (var (u, v) in other.Points(32))
+        {
+            var outside = e.IsArc
+                ? (Math.Sqrt((u - e.Cu) * (u - e.Cu) + (v - e.Cv) * (v - e.Cv)) - e.R) * Math.Sign(e.Sweep)
+                : ((e.U1 - e.U0) * (v - e.V0) - (e.V1 - e.V0) * (u - e.U0)) / -Math.Sqrt((e.U1 - e.U0) * (e.U1 - e.U0) + (e.V1 - e.V0) * (e.V1 - e.V0));
+            if (outside > tol) return false;
+        }
+        return true;
+    }
+
     public override FieldSample Sample(Point3D p)
     {
         var (u, v, radial) = Map(p);
