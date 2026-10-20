@@ -35,9 +35,6 @@ public sealed class Compiler(ModelingSettings settings)
             return s;
         }
 
-        Surface Add(string source, SurfaceKind kind, Point3D origin, Vector3D axis, double radius = 0) =>
-            Register(new Surface(0, source, kind, origin, axis, radius));
-
         void Grow(IEnumerable<Point3D> points)
         {
             foreach (var p in points)
@@ -353,9 +350,17 @@ public sealed class Compiler(ModelingSettings settings)
                 : Replace(tree, p, rebuilt);
         }
 
-        var found = Intersections(tree, null)
+        (MaxField Host, ShellField? Shell, LeafField? A, LeafField? B) Find() => Intersections(tree, null)
             .Select(x => (x.Host, x.Shell, A: Held(x.Host, edge[0]), B: Held(x.Host, edge[1])))
             .FirstOrDefault(x => x.A is not null && x.B is not null);
+        var found = Find();
+        // A face cut after a join (a hole drilled through a joined boss) meets the boss in no single intersection
+        // until it is pushed into the union: max(min(X, Y), b) = min(max(X, b), max(Y, b)), exactly.
+        while (found.Host is null && Distribute(tree, edge) is { } spread)
+        {
+            tree = spread;
+            found = Find();
+        }
         if (found.Host is null)
             return fillet
                 ? ConcaveFillet(feature.Id, edge, size, tree, register, min, max, Fail)
@@ -447,6 +452,25 @@ public sealed class Compiler(ModelingSettings settings)
             return Replace(tree, union, new MinField([.. union.Children, filler]));
         }
         return fail(Diagnostic.UnsupportedFillet, $"edge {name} is neither a convex edge of one intersection nor an inside corner of a cut or a join");
+    }
+
+    /// <summary>
+    /// One step of pushing a face that an intersection holds directly into a union beside it whose solids hold the
+    /// edge's other face. Null when there is no such pair.
+    /// </summary>
+    static Field? Distribute(Field tree, string[] edge)
+    {
+        foreach (var (m, _) in Intersections(tree, null))
+        for (var s = 0; s < 2; s++)
+        {
+            if (m.Children.OfType<LeafField>().FirstOrDefault(l => l.Surface.Source == edge[s]) is not { } leaf) continue;
+            var other = edge[1 - s];
+            if (m.Children.OfType<MinField>().FirstOrDefault(u => Intersections(u, null).Any(x => Held(x.Host, other) is not null)) is not { } union) continue;
+            Field Push(Field c) => c is MaxField mx ? new MaxField([.. mx.Children, leaf]) : new MaxField([c, leaf]);
+            var pushed = new MinField(union.Children.Select(Push).ToList());
+            return Replace(tree, m, new MaxField([.. m.Children.Where(c => c != leaf && c != union), pushed]));
+        }
+        return null;
     }
 
     static Surface FilletSurface(string id, double r) => new(0, $"{id}/face", SurfaceKind.Fillet, new Point3D(0, 0, 0), new Vector3D(0, 0, 1), r);

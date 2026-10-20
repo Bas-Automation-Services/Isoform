@@ -109,6 +109,26 @@ public class EdgeFeatureTests(ITestOutputHelper output)
     }
 
     [Fact]
+    public void Hole_drilled_through_a_joined_boss_can_be_chamfered_at_the_boss_top()
+    {
+        // The hole comes after the join, so its wall and the boss top share no intersection until the wall is
+        // pushed into the union.
+        var result = Modeler.Regenerate(new PartDocument(
+        [
+            Plate,
+            new Block("boss", BooleanOp.Join, [40, 15, 10], [20, 20, 10]),
+            new Hole("hole", [50, 25], 8),
+            new Chamfer("sink", ["boss/z+", "hole/wall"], 1),
+        ]));
+
+        result.Diagnostics.Should().BeEmpty();
+        Deviation(result, "sink/face", p => (Math.Sqrt(Sq(p.X - 50) + Sq(p.Y - 25)) - p.Z + 15) / Math.Sqrt(2)).Should().BeLessThan(1e-7);
+        var sink = Math.PI * 1.0 / 3 * (16 + 20 + 25) - Math.PI * 16;
+        var exact = 100 * 50 * 10 + 20 * 20 * 10 - Math.PI * 16 * 20 - sink;
+        SignedVolume(result.Mesh!).Should().BeApproximately(exact, exact * VolumeTolerance);
+    }
+
+    [Fact]
     public void Fillet_on_a_swept_profile_edge_the_profile_lies_behind()
     {
         var result = Modeler.Regenerate(BracketFillet("bottom"));
