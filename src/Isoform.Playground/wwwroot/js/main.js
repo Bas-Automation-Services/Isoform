@@ -6,6 +6,9 @@ import { createPicking } from './picking.js';
 import { createEditor } from './panels/editor.js';
 import { createDiagnostics } from './panels/diagnostics.js';
 import { createSelection } from './panels/selection.js';
+import { pretty } from './panels/editor.js';
+import { createTree } from './panels/tree.js';
+import { createInspector } from './panels/inspector.js';
 
 const $ = id => document.getElementById(id);
 const store = createStore();
@@ -43,6 +46,21 @@ async function regenerate({ fit: refit = false } = {}) {
   if (reply) store.committed(adaptResult(reply.result, reply.ms));
 }
 
+// --- Feature tree and inspector (J4) ---
+// Every inspector change is an edit list and goes through commit, the one place to swap for J3's
+// applyEdits(edits, label, origin): the kernel applies the edits, regenerates, and returns the edited canonical text.
+async function commit(edits, label) {
+  store.set({ regenerating: true });
+  const reply = await client.latest('regenerate', 'regenerate', { document: store.state.text, edits, cell: +$('cell').value, chord: +$('chord').value });
+  if (!reply) return;
+  const result = adaptResult(reply.result, reply.ms);
+  if (!result.error) store.set({ text: pretty(JSON.parse(result.text)) });
+  store.committed(result, 'inspector');
+}
+createTree(store, viewer, $('tree'));
+createInspector(store, $('inspector'), commit);
+// --- end J4 ---
+
 const editor = createEditor(store, { editor: $('editor'), parse: $('parse'), examplesBox: $('examples'), regenerate });
 $('cell').addEventListener('change', () => regenerate());
 $('chord').addEventListener('change', () => regenerate());
@@ -60,6 +78,8 @@ window.isoform = {
     return regenerate();
   },
 };
+
+Object.assign(window.isoform, { feature: () => store.state.feature }); // J4: the selected tree item's key
 
 await client.start();
 editor.load((await client.call('examples')).result);

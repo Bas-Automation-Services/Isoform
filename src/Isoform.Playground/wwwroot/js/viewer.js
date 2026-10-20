@@ -4,6 +4,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
 const faceColor = (i, lit) => new THREE.Color().setHSL((i * 0.61803398875) % 1, 0.38, lit ? 0.78 : 0.64);
+const tintColor = new THREE.Color(0x2f6fdb); // the page's accent: the selected feature's faces
 
 function geometryOf(positions) {
   const g = new THREE.BufferGeometry();
@@ -36,10 +37,12 @@ export function createViewer(host) {
 
   let model = null; // { group, mesh, faceOfTriangle, trianglesOfFace }
   let lit = new Set();
+  let tinted = new Set();
 
   function paint(face) {
     const colors = model.mesh.geometry.attributes.color;
     const c = faceColor(face, lit.has(face));
+    if (tinted.has(face)) c.lerp(tintColor, 0.6);
     for (const t of model.trianglesOfFace[face] ?? [])
       for (let k = 0; k < 3; k++) colors.setXYZ(t * 3 + k, c.r, c.g, c.b);
     colors.needsUpdate = true;
@@ -50,7 +53,9 @@ export function createViewer(host) {
     const { center, radius } = geometry.boundingSphere;
     if (!radius) return;
     controls.target.copy(center);
-    camera.position.copy(center).add(new THREE.Vector3(1.1, -1.6, 1.0).normalize().multiplyScalar(radius * 2.6));
+    // Further back when the view is narrower than tall: the horizontal field of view is then the smaller one.
+    const narrow = Math.max(1, 1 / camera.aspect);
+    camera.position.copy(center).add(new THREE.Vector3(1.1, -1.6, 1.0).normalize().multiplyScalar(radius * 2.6 * narrow));
     camera.near = radius / 100;
     camera.far = radius * 100;
     camera.updateProjectionMatrix();
@@ -98,6 +103,7 @@ export function createViewer(host) {
 
       model = { group, mesh, faceOfTriangle, trianglesOfFace };
       lit = new Set();
+      tinted = new Set();
       trianglesOfFace.forEach((_, f) => paint(f));
       if (fit) frame(geometry);
     },
@@ -109,6 +115,15 @@ export function createViewer(host) {
       lit = new Set(faces);
       for (const f of before) if (!lit.has(f)) paint(f);
       for (const f of lit) if (!before.has(f)) paint(f);
+    },
+
+    /** Tints exactly these faces (mesh indices): a feature's faces, under the lit ones. */
+    tint(faces) {
+      if (!model) return;
+      const before = tinted;
+      tinted = new Set(faces);
+      for (const f of before) if (!tinted.has(f)) paint(f);
+      for (const f of tinted) if (!before.has(f)) paint(f);
     },
 
     /** The mesh index of the face under a client (CSS pixel) point, or -1. */

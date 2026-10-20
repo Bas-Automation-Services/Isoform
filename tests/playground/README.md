@@ -13,7 +13,7 @@ node tests/playground/run.mjs path/to/wwwroot      # or any other published wwwr
 The parts on their own:
 
 ```sh
-node --test tests/playground/kernel-client.test.mjs tests/playground/store.test.mjs   # front end only, no publish
+node --test tests/playground/kernel-client.test.mjs tests/playground/store.test.mjs tests/playground/features.test.mjs   # front end only
 node --test tests/playground/kernel.test.mjs       # kernel only; ISOFORM_PLAYGROUND=<wwwroot> to point elsewhere
 node tests/playground/e2e.mjs [wwwroot]            # browser only
 node tests/playground/serve.mjs [wwwroot] [port]   # serve the page to look at it yourself (default port 8137)
@@ -34,6 +34,12 @@ helpers to the primary; `adaptResult` keeps result v2 as written and adds the me
 a document that does not read keeps the last result; history gets one entry per changed document; the status line has
 the form `e2e.mjs` reads.
 
+**`features.test.mjs`** (`wwwroot/js/lib/features.js`, the tree and inspector model): the tree lists a part's
+features in order, grouped by the body each works on when there are several, and a bundle's components and mates; a
+face belongs to the item its name starts with; the inspector's fields come from the feature JSON, each with the
+`DocumentEdits` path it sets (`rib.profile.edges.0.to.1`, `components.pin.placement.origin.2`, `parameters.width`);
+typed values and scrubbing give numbers or `=expressions`.
+
 **`kernel.test.mjs`** loads `_framework/dotnet.js` from the published folder in Node and calls the same exports the
 page's worker calls. For every example from `Examples()`, at the page's default settings (0.5 mm cells, 0.05 mm chord):
 
@@ -50,7 +56,9 @@ stats line under the editor (`#stats`) to show a result. An example passes when 
 does not start with `Error:` or say the document does not parse, and the page logged no uncaught exception or console
 error. Per example it prints the kernel time from the stats line and the page time (navigation to result, including
 loading the runtime). Then it clicks a face of example 0, regenerates at another cell size and checks that the same
-face names are still selected.
+face names are still selected. Last, the tree and inspector: it selects `hole` in the tree, types a diameter and
+scrubs it (each must change the document and its hash, and keep `hole` selected), re-picks the fillet's edge, and
+checks that selecting a face selects its feature in the tree.
 
 ## Screenshots
 
@@ -71,8 +79,8 @@ mesh, stray triangles, and red diagnostics under the stats line.
 - `frames(n)` before a screenshot, `screenshot(file)`, and `errors` (exceptions and console errors since `open`).
 
 Coordinates are CSS pixels in the viewport. The page exposes `window.isoform`: `ready` (a result is shown),
-`document()`, `hash()`, `selection()` (face names), `faces()` (each face's names), `select(names)` and `edit(text)`
-(resolves once that text has regenerated). Later tasks add to it, for example handles:
+`document()`, `hash()`, `selection()` (face names), `faces()` (each face's names), `select(names)`, `edit(text)`
+(resolves once that text has regenerated) and `feature()` (the selected tree item's key). Later tasks add to it, for example handles:
 
 ```js
 const page = await browser.newPage();

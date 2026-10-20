@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Isoform Playground</title>
   <link rel="stylesheet" href="playground.css">
+  <link rel="stylesheet" href="model.css">
   <!-- three r0.160.0, vendored (MIT, vendor/three/LICENSE): pinned, and the page works offline. -->
   <script type="importmap">
     {
@@ -61,6 +62,13 @@
     <div id="tooltip" hidden></div>
     <div class="hint">Drag to orbit · right-drag to pan · scroll to zoom · click a face for its name · shift+click a second face for an edge</div>
   </main>
+
+  <!-- Feature tree and inspector (J4) -->
+  <aside id="model">
+    <div class="model-head">Features</div>
+    <ul id="tree" class="tree"></ul>
+    <div id="inspector" class="inspector"></div>
+  </aside>
 
   <script type="module" src="js/main.js"></script>
 </body>

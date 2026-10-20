@@ -1,0 +1,83 @@
+/* The feature tree and the inspector (js/panels/tree.js, inspector.js): a column to the right of the view. */
+
+/* With a column on each side the view must be able to shrink below its canvas's last size. */
+#view { min-width: 0; overflow: hidden; }
+
+#model {
+  width: 290px;
+  min-width: 240px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 12px;
+  background: var(--panel);
+  border-left: 1px solid var(--line);
+  overflow: auto;
+}
+
+.model-head { color: var(--muted); }
+
+.tree { flex: none; list-style: none; margin: 0; padding: 0; max-height: 40vh; overflow: auto; }
+.tree li[data-key] {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 6px;
+  border-radius: 5px;
+  cursor: pointer;
+  user-select: none;
+}
+.tree li.group { margin-top: 6px; padding: 2px 6px; color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; }
+.tree li.hovered { background: var(--code); }
+.tree li.selected { background: color-mix(in srgb, var(--accent) 18%, transparent); }
+.tree .icon { width: 16px; text-align: center; color: var(--muted); }
+.tree .name { font: 12px ui-monospace, "Cascadia Code", Consolas, monospace; }
+.tree .type { flex: 1; color: var(--muted); font-size: 12px; }
+.tree .badge {
+  min-width: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  background: var(--warn);
+  color: var(--panel);
+  font-size: 11px;
+  text-align: center;
+}
+.tree .badge.error { background: var(--error); }
+
+.inspector { display: flex; flex-direction: column; gap: 4px; border-top: 1px solid var(--line); padding-top: 8px; }
+.inspector-head { display: flex; gap: 8px; align-items: baseline; margin-bottom: 4px; }
+.inspector p { margin: 0; }
+
+.inspector .field { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.inspector .scrub { width: 64px; flex: none; color: var(--muted); user-select: none; }
+.inspector .scrub.live { cursor: ew-resize; text-decoration: underline dotted; text-underline-offset: 3px; }
+.inspector .entries { flex: 1; display: flex; gap: 4px; min-width: 0; }
+.inspector .entry { flex: 1; display: flex; align-items: center; gap: 3px; min-width: 0; }
+.inspector .entry .scrub { width: auto; }
+
+.inspector input, .inspector select, .inspector button {
+  font: 12px ui-monospace, "Cascadia Code", Consolas, monospace;
+  color: var(--ink);
+  background: var(--code);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 2px 5px;
+}
+.inspector input.value { flex: 1; min-width: 0; width: 40px; }
+.inspector input.name { width: 64px; }
+.inspector button { color: var(--accent); background: none; cursor: pointer; }
+.inspector button.active { border-color: var(--accent); }
+.inspector select { flex: 1; }
+
+.inspector fieldset { border: 1px solid var(--line); border-radius: 6px; margin: 2px 0; padding: 4px 8px 6px; display: flex; flex-direction: column; gap: 4px; }
+.inspector legend { color: var(--muted); padding: 0 4px; }
+
+.inspector .chips { flex: 1; display: flex; flex-wrap: wrap; gap: 4px; }
+.inspector .chip { padding: 1px 6px; border-radius: 9px; background: var(--code); border: 1px solid var(--line); font-size: 11px; }
+.inspector .repick-hint { width: 100%; color: var(--muted); font-size: 12px; }
+
+.inspector .parameters { display: flex; flex-direction: column; gap: 4px; }
+
+@media (max-width: 800px) {
+  #model { width: auto; min-width: 0; border-left: none; border-top: 1px solid var(--line); }
+}

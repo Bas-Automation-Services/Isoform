@@ -9,6 +9,8 @@
 //   failure    an error of the page or a worker, shown until the next regeneration comes back
 //   selection  face names, not mesh indices: names stay stable across regenerations, indices do not
 //   history    {text, hash, origin} per committed document, oldest first: the hook for undo/redo
+//   feature    the key of the selected tree item (lib/features.js: "hole", "components.pin", "parameters"), or null
+//   repick     {path, count} while the inspector waits for the face(s) to put in a field, else null
 
 /** The name a document refers to a face by: its first source. */
 export const faceName = face => face[0];
@@ -31,7 +33,7 @@ export function pick(selection, name, extend = false) {
 export const surviving = (selection, result) => selection.filter(name => result.faces.some(face => faceName(face) === name));
 
 export function createStore(initial = {}) {
-  let state = { text: '', result: null, hash: null, problem: null, regenerating: false, failure: null, selection: [], history: [], ...initial };
+  let state = { text: '', result: null, hash: null, problem: null, regenerating: false, failure: null, selection: [], history: [], feature: null, repick: null, ...initial };
   const listeners = new Set();
 
   /** Replaces the given fields and tells every listener (state, previous state). */
