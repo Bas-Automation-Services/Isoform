@@ -258,6 +258,24 @@ public sealed class ProfileField : Field
     }
 
     /// <summary>
+    /// Where the edges of two leaves meet tangentially (a line running into an arc, two arcs; a circle of two arcs
+    /// at both its joints), on the sketch plane and moved out by the offset with the faces.
+    /// </summary>
+    public IEnumerable<Point3D> TangentJunctions(LeafField a, LeafField b)
+    {
+        var (i, j) = (Array.IndexOf(_leaves, a), Array.IndexOf(_leaves, b));
+        if (i < 0 || j < 0) yield break;
+        var n = _edges.Length;
+        foreach (var (k, next) in new[] { (i, j), (j, i) })
+        {
+            if ((k + 1) % n != next || _vertexSign[k] != 0) continue;
+            var (tu, tv) = _edges[k].EndTangent;
+            // The outward normal is right of travel round the counter-clockwise profile.
+            yield return _frame.ToWorld(new Point3D(_edges[k].U1 + tv * _offset, _edges[k].V1 - tu * _offset, 0));
+        }
+    }
+
+    /// <summary>
     /// The profile with corner k (between two straight edges) rounded by a tangent arc of radius
     /// <paramref name="size"/>, or cut by a straight chamfer at that distance along both edges. Works on convex and
     /// reflex corners alike. The trimmed edges keep their faces; <paramref name="newLeaf"/> makes the new edge's face.
@@ -380,7 +398,10 @@ public sealed class ProfileField : Field
     /// <summary>The leaf of the one edge certainly nearest to every point of the box, from its inside.</summary>
     public override Field Simplify(Box3D box) => (Field?)Single(box) ?? this;
 
-    LeafField? Single(Box3D box)
+    LeafField? Single(Box3D box) => SingleEdge(box) is var k and >= 0 ? _leaves[k] : null;
+
+    /// <summary>The edge whose leaf <see cref="Simplify"/> gives for the box, or −1; the tape decides by it too.</summary>
+    internal int SingleEdge(Box3D box)
     {
         var (u0, v0, u1, v1) = Region(box);
         var (cu, cv) = ((u0 + u1) / 2, (v0 + v1) / 2);
@@ -397,21 +418,20 @@ public sealed class ProfileField : Field
         for (var i = 0; i < _edges.Length; i++)
         {
             if (centre[i] - reach > ceiling + 1e-12) continue;
-            if (only >= 0) return null;
+            if (only >= 0) return -1;
             only = i;
         }
-        return only >= 0 && _edges[only].InteriorCovers(u0, v0, u1, v1) ? _leaves[only] : null;
+        return only >= 0 && _edges[only].InteriorCovers(u0, v0, u1, v1) ? only : -1;
     }
 
     /// <summary>A 2D box holding every profile coordinate of the 3D box.</summary>
     (double U0, double V0, double U1, double V1) Region(Box3D box)
     {
         double u0 = double.MaxValue, v0 = double.MaxValue, u1 = double.MinValue, v1 = double.MinValue;
-        foreach (var x in new[] { box.Min.X, box.Max.X })
-        foreach (var y in new[] { box.Min.Y, box.Max.Y })
-        foreach (var z in new[] { box.Min.Z, box.Max.Z })
+        // The eight corners, x slowest and z fastest, without arrays: the mesher asks this for every cell.
+        for (var c = 0; c < 8; c++)
         {
-            var d = new Point3D(x, y, z) - _frame.Origin;
+            var d = new Point3D((c & 4) == 0 ? box.Min.X : box.Max.X, (c & 2) == 0 ? box.Min.Y : box.Max.Y, (c & 1) == 0 ? box.Min.Z : box.Max.Z) - _frame.Origin;
             var (u, v) = (d.Dot(_frame.X), d.Dot(_frame.Y));
             (u0, u1, v0, v1) = (Math.Min(u0, u), Math.Max(u1, u), Math.Min(v0, v), Math.Max(v1, v));
         }
@@ -461,11 +481,14 @@ public sealed class ProfileField : Field
     /// Nearest to a tangent junction, which only rounding can make happen: both edges share the normal there, so the
     /// edge's own surface gives the value, and a true normal instead of the direction of a vanishing vector.
     /// </summary>
-    bool Tangent(int i, int where)
-    {
-        var k = where == 1 ? i : (i - 1 + _edges.Length) % _edges.Length;
-        return _vertexSign[k] == 0 || OnAxis(k);
-    }
+    bool Tangent(int i, int where) => Smooth(where == 1 ? i : (i - 1 + _edges.Length) % _edges.Length);
+
+    /// <summary>A point nearest to the corner at the end of edge k takes the edge's own surface (see <see cref="Tangent"/>).</summary>
+    internal bool Smooth(int k) => _vertexSign[k] == 0 || OnAxis(k);
+
+    /// <summary>The profile as plain data, for the compiled tape.</summary>
+    internal (ProfileEdge2D[] Edges, LeafField?[] Leaves, LeafField?[] Corners, int[] VertexSign, double Offset) Parts =>
+        (_edges, _leaves, _corners, _vertexSign, _offset);
 
     /// <summary>
     /// The corner at the end of edge k touches an edge on the revolve axis. Its corner region lies across the axis,

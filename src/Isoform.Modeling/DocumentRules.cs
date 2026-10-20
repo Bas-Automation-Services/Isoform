@@ -5,8 +5,14 @@ namespace Isoform.Modeling;
 /// <summary>Backend-independent checks: a document that fails them produces no geometry on any backend.</summary>
 public static class DocumentRules
 {
+    /// <summary>
+    /// The first problem, or null. Parameters and expressions are resolved first (failing as an invalid-parameter
+    /// diagnostic), so every rule sees the numbers; a caller that goes on builds <see cref="Parametric.Resolve"/>'s document.
+    /// </summary>
     public static Diagnostic? FirstProblem(PartDocument doc, double tolerance)
     {
+        try { doc = Parametric.Resolve(doc); }
+        catch (ParameterException e) { return new Diagnostic(Diagnostic.InvalidParameter, e.FeatureId, e.Message); }
         var bodies = new List<string>();
         var ids = new HashSet<string>();
         string? current = null;
@@ -16,6 +22,8 @@ public static class DocumentRules
             string? problem = feature switch
             {
                 _ when feature.Id.Length == 0 || feature.Id.Contains('/') => $"feature ids may not be empty or contain '/', got '{feature.Id}'",
+                // Edit paths start with the id and split at '.'; "parameters." is the parameter table.
+                _ when feature.Id == "parameters" || feature.Id.Contains('.') => $"edit paths could not reach a feature with the id '{feature.Id}': ids may not contain '.' or be 'parameters'",
                 _ when !ids.Add(feature.Id) => $"the feature id '{feature.Id}' is used twice",
                 CombineBodies c when c.Tool == (c.Body ?? current) => $"body '{c.Tool}' cannot be combined with itself",
                 _ when StartsBody(feature) && bodies.Contains(feature.Body ?? feature.Id) => $"there already is a body named '{feature.Body ?? feature.Id}'",

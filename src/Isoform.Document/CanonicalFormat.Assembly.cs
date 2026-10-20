@@ -56,6 +56,11 @@ public static partial class CanonicalFormat
             w.WriteString("part", c.Part);
             if (c.Hash is { } hash) w.WriteString("hash", hash);
             if (c.Grounded) w.WriteBoolean("grounded", true);
+            if (c.Parameters is { Count: > 0 } parameters)
+            {
+                w.WritePropertyName("parameters");
+                WriteParameters(parameters).WriteTo(w);
+            }
             w.WriteStartObject("placement");
             Numbers(w, "origin", c.Placement.Origin);
             Numbers(w, "x", c.Placement.X);
@@ -91,7 +96,8 @@ public static partial class CanonicalFormat
         {
             var p = n["placement"];
             var placement = p is null ? Placement.Identity : new Placement(Arr(p["origin"], 3), Arr(p["x"], 3), Arr(p["normal"], 3));
-            return new Component((string)n["id"]!, (string)n["part"]!, placement, (string?)n["hash"], (bool?)n["grounded"] ?? false);
+            var parameters = n["parameters"] is { } values ? ReadParameters(values) : null;
+            return new Component((string)n["id"]!, (string)n["part"]!, placement, (string?)n["hash"], (bool?)n["grounded"] ?? false, parameters);
         }).ToList(), root["mates"]?.AsArray().Select(n => n!).Select(n => new Mate((string)n["id"]!,
             Enum.Parse<MateKind>((string)n["kind"]!, ignoreCase: true), (string)n["a"]!, (string)n["b"]!, (double?)n["offset"] ?? 0)).ToList());
     }

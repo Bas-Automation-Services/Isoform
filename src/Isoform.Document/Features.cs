@@ -1,3 +1,5 @@
+using System.Collections.ObjectModel;
+
 namespace Isoform.Document;
 
 /// <summary>How a feature's solid combines with the part so far.</summary>
@@ -104,6 +106,21 @@ public sealed record PartDocument(IReadOnlyList<Feature> Features)
 {
     public const string FormatVersion = "isoform/0";
     public const string Units = "mm";
+
+    /// <summary>
+    /// Named parameters, each an expression over the others: <c>"100"</c>, <c>"width / 2"</c> (see
+    /// <see cref="Expression"/>). The text keeps them sorted by name, a constant as a number and any other expression
+    /// as a string starting with '=': <c>"depth": "=width / 2"</c>.
+    /// </summary>
+    public IReadOnlyDictionary<string, string> Parameters { get; init; } = ReadOnlyDictionary<string, string>.Empty;
+
+    /// <summary>
+    /// Expressions in feature fields, by edit path and without the '=': <c>"hole.diameter"</c> → <c>"width / 2"</c>,
+    /// <c>"rib.profile.edges.1.to.0"</c> → <c>"depth"</c>. The expression is the design intent, so the text and the
+    /// hash keep it; the typed field under such a path only holds a placeholder. <see cref="Parametric.Resolve"/>
+    /// gives the values.
+    /// </summary>
+    public IReadOnlyDictionary<string, string> Expressions { get; init; } = ReadOnlyDictionary<string, string>.Empty;
 
     public Feature this[string id] => Features.Single(f => f.Id == id);
 }

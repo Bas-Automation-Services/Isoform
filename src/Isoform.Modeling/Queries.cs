@@ -27,18 +27,37 @@ public static partial class Queries
     /// which never passes the boundary because the field is 1-Lipschitz; within <paramref name="tolerance"/> of it the
     /// crossing is bracketed and found by root finding, so the point lies on the boundary to ~1e-12. A ray that only grazes
     /// the boundary within the tolerance reports the grazing point. Null if nothing is hit within <paramref name="maxDistance"/>.
+    /// <para>
+    /// A ray running along a face just inside or outside it would crawl, |f| staying small without dropping. There it
+    /// takes longer steps, each only once the segment is proven free of boundary (<see cref="Clear"/>), doubling them
+    /// while that holds. Throws if the march still does not settle, rather than report a miss it has not shown.
+    /// </para>
     /// </summary>
     public static RayHit? Raycast(Field field, Point3D origin, Vector3D direction, double maxDistance, double tolerance = 1e-7)
     {
         var d = direction.Normalized();
         var side = Math.Sign(field.Value(origin));
         var t = 0.0;
-        for (var it = 0; it < 1_000_000 && t <= maxDistance; it++)
+        var (last, jump) = (double.PositiveInfinity, 0.0);
+        for (var it = 0; t <= maxDistance; it++)
         {
+            if (it == 1_000_000) throw new InvalidOperationException($"the ray march from {origin} did not settle");
             var p = origin + d * t;
             var v = field.Value(p);
             if (v == 0) return Hit(field, t, p);
-            if (Math.Abs(v) < tolerance)
+            var a = Math.Abs(v);
+            // |f| neither halving towards a hit nor doubling away from the faces: try a step longer than |f|, proven clear.
+            if (a > last / 2 && a < 2 * last && a >= tolerance)
+            {
+                var s = Math.Max(4 * a, 2 * jump);
+                if (Clear(field, p, origin + d * (t + s), side))
+                {
+                    (t, last, jump) = (t + s, a, s);
+                    continue;
+                }
+            }
+            (last, jump) = (a, 0);
+            if (a < tolerance)
             {
                 // Predict the crossing from the slope along the ray and bracket it; overshoot twice the prediction.
                 var slope = field.Sample(p).Gradient.Dot(d) * side;
@@ -55,7 +74,7 @@ public static partial class Queries
                 }
                 return Hit(field, t, p);
             }
-            t += Math.Abs(v);
+            t += a;
         }
         return null;
     }
@@ -119,6 +138,35 @@ public static partial class Queries
         var point = closest ?? throw new InvalidOperationException("no boundary found near the point within the budget");
         return new(Math.Min(lower, upper), upper, point, field.Sample(point).Owner, inside);
     }
+
+    /// <summary>
+    /// True if the field provably keeps the sign <paramref name="side"/> all along the segment a→b: its bounds over the
+    /// segment's box exclude zero, or, simplified for that box, its structure does. Planes are linear along a segment,
+    /// a solid ball, rod or cone convex (below zero at both ends, below all along) and their complements concave; an
+    /// intersection is negative where all its parts are, positive where one is, a union the other way round. The
+    /// structure covers rays along a face that is not square to the axes, where the box bounds cannot tell.
+    /// </summary>
+    static bool Clear(Field field, Point3D a, Point3D b, int side)
+    {
+        var box = new Box3D(new(Math.Min(a.X, b.X), Math.Min(a.Y, b.Y), Math.Min(a.Z, b.Z)), new(Math.Max(a.X, b.X), Math.Max(a.Y, b.Y), Math.Max(a.Z, b.Z)));
+        return Keeps(field.Bounds(box), side) || Keeps(field.Simplify(box), a, b, side, box);
+    }
+
+    static bool Keeps(Interval i, int side) => side < 0 ? i.Hi < 0 : i.Lo > 0;
+
+    static bool Keeps(Field h, Point3D a, Point3D b, int side, Box3D box) => h switch
+    {
+        LeafField { Surface.Kind: SurfaceKind.Plane } l => side * l.Value(a) > 0 && side * l.Value(b) > 0,
+        LeafField { Surface.Kind: SurfaceKind.Sphere or SurfaceKind.Cylinder or SurfaceKind.Cone } l when l.Complement == side > 0 =>
+            side * l.Value(a) > 0 && side * l.Value(b) > 0,
+        MaxField m => side < 0 ? m.Children.All(c => Keeps(c, a, b, side, box)) : m.Children.Any(c => Keeps(c, a, b, side, box)),
+        MinField m => side < 0 ? m.Children.Any(c => Keeps(c, a, b, side, box)) : m.Children.All(c => Keeps(c, a, b, side, box)),
+        NegateField n => Keeps(n.Child, a, b, -side, box),
+        // Rounding only removes material: the field is never below either face.
+        RoundedEdgeField r when side > 0 => Keeps(r.A, a, b, side, box) || Keeps(r.B, a, b, side, box),
+        PlacedField p => Keeps(p.Child, p.Placement.ToLocal(a), p.Placement.ToLocal(b), side, p.LocalBox(box)),
+        _ => Keeps(h.Bounds(box), side),
+    };
 
     static RayHit Hit(Field field, double t, Point3D p)
     {

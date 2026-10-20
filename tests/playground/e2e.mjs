@@ -1,0 +1,53 @@
+// Opens every example in headless Edge or Chrome, waits for the part to regenerate, checks the stats line and
+// saves a screenshot to tests/playground/out/screenshots. Exits non-zero if any example fails.
+// node tests/playground/e2e.mjs [published wwwroot]      (env: ISOFORM_BROWSER, ISOFORM_TIMEOUT in ms)
+import { dirname, join, relative } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { launch } from './browser.mjs';
+import { loadKernel, publishedRoot, repo } from './published.mjs';
+import { serve } from './serve.mjs';
+
+const root = publishedRoot(process.argv[2]);
+const shots = join(dirname(fileURLToPath(import.meta.url)), 'out', 'screenshots');
+const timeout = +(process.env.ISOFORM_TIMEOUT ?? 120000);
+
+// The example list from the kernel itself, so it does not depend on how the page shows it.
+const names = Object.keys(JSON.parse((await loadKernel(root)).Examples()));
+
+// The stats line once the page has a result: "812 ms · 19,598 triangles · 8 faces, ..." or an error.
+const settled = `(s => /\\d ms ·|Error:|does not parse/.test(s) && s)(document.getElementById('stats')?.textContent ?? '')`;
+
+const site = await serve(root);
+const browser = await launch();
+let failures = 0;
+try {
+  const page = await browser.newPage();
+  for (const [i, name] of names.entries()) {
+    const start = performance.now();
+    const problems = [];
+    let stats = '';
+    try {
+      await page.open(`${site.url}?example=${i}`);
+      stats = await page.waitFor(settled, { timeout });
+      await page.frames();
+      await page.screenshot(join(shots, `example-${i}.png`));
+    } catch (e) {
+      problems.push(e.message);
+    }
+    if (/Error:|does not parse/.test(stats)) problems.push(stats);
+    else if (stats && !/\b[1-9]\d* faces/.test(stats)) problems.push(`no faces: ${stats}`);
+    problems.push(...page.errors);
+
+    const page_s = ((performance.now() - start) / 1000).toFixed(1);
+    const kernel_ms = stats.match(/^(\d+) ms/)?.[1] ?? '-';
+    const faces = stats.match(/(\d+) faces/)?.[1] ?? '-';
+    console.log(`${problems.length ? 'FAIL' : 'pass'}  ${String(i).padStart(2)}  kernel ${kernel_ms.padStart(5)} ms  page ${page_s.padStart(5)} s  ${faces.padStart(3)} faces  ${name}`);
+    for (const p of problems) console.log(`        ${p}`);
+    if (problems.length) failures++;
+  }
+} finally {
+  await browser.close();
+  await site.close();
+}
+console.log(`\n${names.length - failures}/${names.length} examples passed; screenshots in ${relative(repo, shots)}`);
+process.exitCode = failures ? 1 : 0;
