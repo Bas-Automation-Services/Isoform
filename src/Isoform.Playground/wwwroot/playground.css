@@ -109,6 +109,30 @@ select, textarea {
 .diagnostics li.error { border-left-color: var(--error); }
 .diagnostics b { font-weight: 600; }
 
+/* Pinned references (panels/references.js): one row per pin, its status as a chip. */
+.references-head { display: flex; justify-content: space-between; align-items: center; color: var(--muted); }
+.references button {
+  font: inherit;
+  color: var(--accent);
+  background: none;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 1px 7px;
+  cursor: pointer;
+}
+.references button:disabled { color: var(--muted); cursor: default; }
+.references ul { list-style: none; margin: 6px 0 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.references li { display: flex; align-items: center; gap: 8px; padding: 3px 6px; border-radius: 5px; cursor: pointer; }
+.references li:hover, .references li.lit { background: var(--code); }
+.references li code { flex: 1; font: 12px ui-monospace, Consolas, monospace; }
+.references li button { border: none; color: var(--muted); padding: 0 4px; }
+.chip { font-size: 11px; padding: 0 7px; border-radius: 9px; color: #fff; background: var(--muted); }
+.chip.resolved { background: #2e8b57; }
+.chip.split { background: var(--accent); }
+.chip.merged { background: #7c4dcc; }
+.chip.ambiguous { background: var(--warn); }
+.chip.gone { background: var(--error); }
+
 #view { position: relative; flex: 1; background: var(--view); }
 #view canvas { display: block; }
 

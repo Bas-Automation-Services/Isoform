@@ -1,5 +1,6 @@
 // Opens every example in headless Edge or Chrome, waits for the part to regenerate, checks the stats line and
-// saves a screenshot to tests/playground/out/screenshots; then picks a face. Exits non-zero if anything fails.
+// saves a screenshot to tests/playground/out/screenshots; then picks a face and pins one. Exits non-zero if anything
+// fails.
 // node tests/playground/e2e.mjs [published wwwroot]      (env: ISOFORM_BROWSER, ISOFORM_TIMEOUT in ms)
 import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -12,14 +13,15 @@ const shots = join(dirname(fileURLToPath(import.meta.url)), 'out', 'screenshots'
 const timeout = +(process.env.ISOFORM_TIMEOUT ?? 120000);
 
 // The example list from the kernel itself, so it does not depend on how the page shows it.
-const names = Object.keys(JSON.parse((await loadKernel(root)).Examples()));
+const kernel = await loadKernel(root);
+const names = Object.keys(JSON.parse(kernel.Examples()));
 
 // The stats line once the page has a result: "812 ms · 19,598 triangles · 8 faces, ..." or an error.
 const settled = `(s => /\\d ms ·|Error:|does not parse/.test(s) && s)(document.getElementById('stats')?.textContent ?? '')`;
 
 const site = await serve(root);
 const browser = await launch();
-let failures = 0, picking = false;
+let failures = 0, picking = false, pins = false;
 try {
   const page = await browser.newPage();
   for (const [i, name] of names.entries()) {
@@ -72,9 +74,33 @@ try {
   console.log(`${problems.length ? 'FAIL' : 'pass'}  picking: ${JSON.stringify(selected)} kept across a regeneration`);
   for (const p of problems) console.log(`        ${p}`);
   picking = !problems.length;
+
+  // Reference pins: pin plate/z+ on example 0, cut a slot across it, and the pin reports it split in two.
+  const pinProblems = [];
+  try {
+    await page.open(`${site.url}?example=0`);
+    await page.waitFor(settled, { timeout });
+    const pinned = await page.evaluate(`window.isoform.pin('plate/z+')`);
+    if (pinned?.status !== 'resolved') pinProblems.push(`pinned as ${JSON.stringify(pinned)}`);
+    const slot = { insert: { id: 'slot', type: 'block', op: 'cut', origin: [60, -1, 5], size: [5, 52, 10] }, before: 'fillet' };
+    const { text } = JSON.parse(kernel.Apply(await page.evaluate('window.isoform.document()'), JSON.stringify(slot)));
+    await page.evaluate(`window.isoform.edit(${JSON.stringify(text)})`);
+    await page.waitFor(`(p => p?.status === 'split' && p.faces.length === 2)(window.isoform.pins()[0])`, { timeout });
+    await page.evaluate(`document.querySelector('#references li').click()`);
+    const shown = await page.evaluate(`(li => [li.querySelector('.chip').textContent, li.classList.contains('lit')])(document.querySelector('#references li'))`);
+    if (shown.join() !== 'split,true') pinProblems.push(`the pin shows ${JSON.stringify(shown)}`);
+    await page.frames();
+    await page.screenshot(join(shots, 'pins.png'));
+  } catch (e) {
+    pinProblems.push(e.message);
+  }
+  pinProblems.push(...page.errors);
+  console.log(`${pinProblems.length ? 'FAIL' : 'pass'}  pins: plate/z+ pinned, split by a slot across it`);
+  for (const p of pinProblems) console.log(`        ${p}`);
+  pins = !pinProblems.length;
 } finally {
   await browser.close();
   await site.close();
 }
-console.log(`\n${names.length - failures}/${names.length} examples passed, picking ${picking ? 'passed' : 'FAILED'}; screenshots in ${relative(repo, shots)}`);
-process.exitCode = failures || !picking ? 1 : 0;
+console.log(`\n${names.length - failures}/${names.length} examples passed, picking ${picking ? 'passed' : 'FAILED'}, pins ${pins ? 'passed' : 'FAILED'}; screenshots in ${relative(repo, shots)}`);
+process.exitCode = failures || !picking || !pins ? 1 : 0;

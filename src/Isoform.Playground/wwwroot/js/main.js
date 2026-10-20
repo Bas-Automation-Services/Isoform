@@ -6,6 +6,7 @@ import { createPicking } from './picking.js';
 import { createEditor } from './panels/editor.js';
 import { createDiagnostics } from './panels/diagnostics.js';
 import { createSelection } from './panels/selection.js';
+import { createReferences } from './panels/references.js';
 
 const $ = id => document.getElementById(id);
 const store = createStore();
@@ -33,6 +34,7 @@ store.subscribe((s, before) => {
 createPicking(viewer, store, $('tooltip'));
 createSelection(store, $('selection'));
 createDiagnostics(store, { stats: $('stats'), list: $('diagnostics'), workers: workers.length });
+const references = createReferences(store, { box: $('references'), viewer, resolve: refs => client.call('resolve', { refs }).then(r => r.result) });
 
 /** Regenerates the document in the store; latest wins, so edits made meanwhile fold into one next run. */
 async function regenerate({ fit: refit = false } = {}) {
@@ -60,6 +62,13 @@ window.isoform = {
     return regenerate();
   },
 };
+
+// Reference pins: pins() as the store keeps them; pin(target) pins a face name, an edge [a, b], or (no target) the
+// selection, and resolves to the pin.
+Object.assign(window.isoform, {
+  pins: () => store.state.pins ?? [],
+  pin: target => references.pin(typeof target === 'string' ? { face: target } : Array.isArray(target) ? { edge: target } : undefined),
+});
 
 await client.start();
 editor.load((await client.call('examples')).result);
