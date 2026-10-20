@@ -12,6 +12,8 @@ import { createCommits } from './lib/commit.js';
 import { createAgent } from './panels/agent.js';
 import { createHistory } from './panels/history.js';
 import { createFlash } from './panels/flash.js';
+import { createTree } from './panels/tree.js';
+import { createInspector } from './panels/inspector.js';
 
 const $ = id => document.getElementById(id);
 const store = createStore();
@@ -79,6 +81,10 @@ const commits = createCommits(store, { call: client.call, regenerate, flash: cre
 createAgent(store, $('agent'), commits);
 createHistory(store, $('history'), commits);
 
+// Feature tree and inspector (J4): every inspector change is an edit list, committed as one history entry.
+createTree(store, viewer, $('tree'));
+createInspector(store, $('inspector'), (edits, label) => commits.applyEdits(edits, label, 'inspector'));
+
 // For the browser tests and the console: plain data out, a promise per regeneration.
 window.isoform = {
   get ready() { return !!store.state.result; },
@@ -112,6 +118,7 @@ Object.assign(window.isoform, {
   target: () => viewer.target(),
   resolve: cell => useCell(cell),
 });
+Object.assign(window.isoform, { feature: () => store.state.feature }); // J4: the selected tree item's key
 
 // Reference pins: pins() as the store keeps them; pin(target) pins a face name, an edge [a, b], or (no target) the
 // selection, and resolves to the pin.

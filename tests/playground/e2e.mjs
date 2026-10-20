@@ -61,7 +61,7 @@ async function dragHandle(page) {
 
 const site = await serve(root);
 const browser = await launch();
-let failures = 0, picking = false, diagnosing = false, pinning = false, committing = false, handles = 'skipped';
+let failures = 0, picking = false, diagnosing = false, pinning = false, committing = false, handles = 'skipped', inspector = false;
 try {
   const page = await browser.newPage();
   for (const [i, name] of names.entries()) {
@@ -119,13 +119,14 @@ try {
   pinning = await pins(page);
   committing = await commits(page);
   handles = await dragHandle(page);
+  inspector = await inspecting(page);
 } finally {
   await browser.close();
   await site.close();
 }
 console.log(`\n${names.length - failures}/${names.length} examples passed, picking ${picking ? 'passed' : 'FAILED'}, `
-  + `diagnostics ${diagnosing ? 'passed' : 'FAILED'}, pins ${pinning ? 'passed' : 'FAILED'}, history ${committing ? 'passed' : 'FAILED'}, handles ${handles}; screenshots in ${relative(repo, shots)}`);
-process.exitCode = failures || !picking || !diagnosing || !pinning || !committing || handles === 'FAILED' ? 1 : 0;
+  + `diagnostics ${diagnosing ? 'passed' : 'FAILED'}, pins ${pinning ? 'passed' : 'FAILED'}, history ${committing ? 'passed' : 'FAILED'}, handles ${handles}, inspector ${inspector ? 'passed' : 'FAILED'}; screenshots in ${relative(repo, shots)}`);
+process.exitCode = failures || !picking || !diagnosing || !pinning || !committing || handles === 'FAILED' || !inspector ? 1 : 0;
 
 /**
  * Diagnostics in place: example 0 with its hole moved to leave a 0.6 mm wall gives a below-resolution thin spot at
@@ -259,4 +260,43 @@ async function commits(page) {
   console.log(`${steps.length ? 'FAIL' : 'pass'}  history: apply, reject, undo to the original hash, redo`);
   for (const p of steps) console.log(`        ${p}`);
   return !steps.length;
+}
+
+/**
+ * Tree and inspector: select a feature in the tree, type a number, scrub it (the document and its hash follow, the
+ * feature stays selected), re-pick a fillet's edge, and pick a face to select its feature.
+ */
+async function inspecting(page) {
+  const problems = [];
+  const diameter = `JSON.parse(window.isoform.document()).features.find(f => f.id === 'hole').diameter`;
+  const field = `document.querySelector('#inspector [data-path="hole.diameter"]')`;
+  const seen = [];
+  try {
+    await page.open(`${site.url}?example=0`);
+    await page.waitFor(settled, { timeout });
+    const hash = await page.evaluate('window.isoform.hash()');
+    await page.click(await page.center('#tree li[data-key="hole"]'));
+    await page.waitFor(`window.isoform.feature() === 'hole' && !!${field}`);
+    await page.evaluate(`(i => { i.value = '12'; i.dispatchEvent(new Event('change')); })(${field})`);
+    await page.waitFor(`${diameter} === 12 && window.isoform.hash() !== ${JSON.stringify(hash)} && !!${field}`, { timeout });
+    seen.push(12);
+    const label = await page.center('#inspector [data-scrub="hole.diameter"]');
+    await page.drag(label, [label[0] + 40, label[1]]);
+    seen.push(await page.waitFor(`(d => d > 12 && d)(${diameter})`, { timeout }));
+    if (await page.evaluate('window.isoform.feature()') !== 'hole') problems.push('the feature is no longer selected after the edit');
+    // Re-pick the fillet's edge: the next two faces picked (as a shift+click would) replace it.
+    await page.click(await page.center('#tree li[data-key="fillet"]'));
+    await page.waitFor(`!!document.querySelector('#inspector .repick')`);
+    await page.evaluate(`document.querySelector('#inspector .repick').click()`);
+    await page.evaluate(`window.isoform.select(['plate/z+', 'plate/y-'])`);
+    await page.waitFor(`JSON.parse(window.isoform.document()).features.find(f => f.id === 'fillet').edge.join() === 'plate/z+,plate/y-'`, { timeout });
+    await page.evaluate(`window.isoform.select(['plate/z+'])`);
+    await page.waitFor(`window.isoform.feature() === 'plate' && document.querySelector('#tree li.selected')?.dataset.key === 'plate'`);
+  } catch (e) {
+    problems.push(e.message);
+  }
+  problems.push(...page.errors);
+  console.log(`${problems.length ? 'FAIL' : 'pass'}  inspector: hole.diameter set to ${seen.join(', then scrubbed to ')}; fillet edge re-picked; a face selects its feature`);
+  for (const p of problems) console.log(`        ${p}`);
+  return !problems.length;
 }

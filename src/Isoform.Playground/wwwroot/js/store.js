@@ -12,6 +12,8 @@ import { recorded } from './lib/history.js';
 //   history    {text, hash, edits, label, origin} per committed document, oldest first (lib/history.js)
 //   historyAt  the index in history of the document shown; undo/redo move it (lib/commit.js)
 //   rejected   the last edit list that did not apply: {edits, label, origin, problem, failedEdit?}, or null
+//   feature    the key of the selected tree item (lib/features.js: "hole", "components.pin", "parameters"), or null
+//   repick     {path, count} while the inspector waits for the face(s) to put in a field, else null
 
 /** The name a document refers to a face by: its first source. */
 export const faceName = face => face[0];
@@ -34,7 +36,7 @@ export function pick(selection, name, extend = false) {
 export const surviving = (selection, result) => selection.filter(name => result.faces.some(face => faceName(face) === name));
 
 export function createStore(initial = {}) {
-  let state = { text: '', result: null, hash: null, problem: null, regenerating: false, failure: null, selection: [], history: [], historyAt: -1, rejected: null, ...initial };
+  let state = { text: '', result: null, hash: null, problem: null, regenerating: false, failure: null, selection: [], history: [], historyAt: -1, rejected: null, feature: null, repick: null, ...initial };
   const listeners = new Set();
 
   /** Replaces the given fields and tells every listener (state, previous state). */
