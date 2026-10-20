@@ -60,6 +60,7 @@ const ops = {
   examples: () => JSON.parse(kernel.Examples()),
   apply: ({ document, edits }) => JSON.parse(kernel.Apply(document, JSON.stringify(edits))),
   diff: ({ before, after }) => JSON.parse(kernel.Diff(before, after)),
+  handles: ({ slot = 'main' } = {}) => JSON.parse(kernel.Handles(slot)),
 
   pool(args) {
     ({ index, count } = args);
