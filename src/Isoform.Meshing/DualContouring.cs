@@ -536,6 +536,9 @@ public static class DualContouring
             case ShellField s:
                 Surfaces(s.Child, owners);
                 break;
+            case ProfileField p:
+                foreach (var l in p.Leaves) Surfaces(l, owners);
+                break;
         }
     }
 

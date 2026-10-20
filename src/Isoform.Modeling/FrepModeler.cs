@@ -49,7 +49,15 @@ public sealed class FrepModeler(ModelingSettings settings) : IModeler
             var size = feature switch { Hole x => x.Diameter, Shell x => x.Thickness, Fillet x => 2 * x.Radius, _ => double.PositiveInfinity };
             if (size < smallest)
                 yield return new Diagnostic(Diagnostic.BelowResolution, feature.Id, $"{feature.Id} ({size:G4} mm) is below the resolved size of {smallest:G4} mm; use a smaller CellSize");
+            // A profile edge sweeps a face as wide as the edge is long.
+            var profile = feature switch { Extrude e => e.Profile, Revolve r => r.Profile, _ => null };
+            if (profile is not null && Profiles.CounterClockwise(profile).FirstOrDefault(x => Width(x.Edge) < smallest) is { Id: { } edge } narrow)
+                yield return new Diagnostic(Diagnostic.BelowResolution, feature.Id, $"{feature.Id}/{edge} ({Width(narrow.Edge):G4} mm) is below the resolved size of {smallest:G4} mm; use a smaller CellSize");
         }
+
+        static double Width(ProfileEdge2D e) => e.IsArc
+            ? Math.Min(2 * e.R, e.R * Math.Abs(e.Sweep))
+            : Math.Sqrt((e.U1 - e.U0) * (e.U1 - e.U0) + (e.V1 - e.V0) * (e.V1 - e.V0));
 
         var tangent = earlier.Where(d => d.Code == Diagnostic.TangentContact).Select(d => d.FeatureId).ToHashSet();
         string FeatureOf(int owner) => part.Surfaces[owner].Source.Split('/')[0];

@@ -54,7 +54,7 @@ public abstract class Field
         return new(v - h, v + h);
     }
 
-    protected static double HalfDiagonal(Box3D box) =>
+    internal static double HalfDiagonal(Box3D box) =>
         Math.Sqrt(Sq(box.Max.X - box.Min.X) + Sq(box.Max.Y - box.Min.Y) + Sq(box.Max.Z - box.Min.Z)) / 2;
 
     static double Sq(double x) => x * x;
@@ -82,7 +82,25 @@ public sealed class LeafField(Surface surface, bool complement = false) : Field
 
     public override FieldSample? SampleSurface(int owner, Point3D p) => owner == Surface.Id ? Sample(p) : null;
 
-    public override double? SinglePatch(Box3D box) => Surface.Kind == SurfaceKind.Plane ? double.PositiveInfinity : Surface.Radius;
+    public override double? SinglePatch(Box3D box)
+    {
+        var s = Surface;
+        switch (s.Kind)
+        {
+            case SurfaceKind.Plane:
+                return double.PositiveInfinity;
+            case SurfaceKind.Torus:
+                var r = Math.Min(s.Minor, Math.Abs(s.Radius - s.Minor));
+                return r > 1e-9 ? r : null;
+            case SurfaceKind.Cone:
+                // Curvature radius ρ / cos α across the cone: unbounded towards the apex.
+                var axial = s.Axis.Dot(box.Center - s.Origin);
+                var rho = ((box.Center - s.Origin) - s.Axis * axial).Length - HalfDiagonal(box);
+                return rho > 1e-9 ? rho / Math.Cos(s.Angle) : null;
+            default:
+                return s.Radius;
+        }
+    }
 
     public override Interval Bounds(Box3D box)
     {
@@ -94,6 +112,15 @@ public sealed class LeafField(Surface surface, bool complement = false) : Field
             double Far(int a) => Math.Max(Math.Abs(At(box.Min, a) - At(Surface.Origin, a)), Math.Abs(At(box.Max, a) - At(Surface.Origin, a)));
             var radial = new Interval(Math.Sqrt(Gap(u) * Gap(u) + Gap(v) * Gap(v)) - Surface.Radius, Math.Sqrt(Far(u) * Far(u) + Far(v) * Far(v)) - Surface.Radius);
             return Complement ? radial.Negate() : radial;
+        }
+        if (Surface.Kind == SurfaceKind.Sphere)
+        {
+            // Nearest and farthest distance from the centre over the box are exact.
+            double Gap(int a) => Math.Max(0, Math.Max(At(box.Min, a) - At(Surface.Origin, a), At(Surface.Origin, a) - At(box.Max, a)));
+            double Far(int a) => Math.Max(Math.Abs(At(box.Min, a) - At(Surface.Origin, a)), Math.Abs(At(box.Max, a) - At(Surface.Origin, a)));
+            var ball = new Interval(Math.Sqrt(Gap(0) * Gap(0) + Gap(1) * Gap(1) + Gap(2) * Gap(2)) - Surface.Radius,
+                Math.Sqrt(Far(0) * Far(0) + Far(1) * Far(1) + Far(2) * Far(2)) - Surface.Radius);
+            return Complement ? ball.Negate() : ball;
         }
         if (Surface.Kind != SurfaceKind.Plane) return LipschitzBounds(box);
         // Linear: exact over the box.
@@ -481,6 +508,7 @@ public static class FieldAlgebra
             MinField m => m.Children,
             NegateField n => [n.Child],
             RoundedEdgeField r => [r.A, r.B],
+            ProfileField p => p.Leaves,
             _ => [],
         };
         foreach (var c in children)

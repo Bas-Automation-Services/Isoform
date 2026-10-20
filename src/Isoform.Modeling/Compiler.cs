@@ -28,12 +28,31 @@ public sealed class Compiler(ModelingSettings settings)
         var min = new Point3D(double.MaxValue, double.MaxValue, double.MaxValue);
         var max = new Point3D(double.MinValue, double.MinValue, double.MinValue);
 
-        Surface Add(string source, SurfaceKind kind, Point3D origin, Vector3D axis, double radius = 0)
+        Surface Register(Surface template)
         {
-            var s = new Surface(surfaces.Count, source, kind, origin, axis, radius);
+            var s = template with { Id = surfaces.Count };
             surfaces.Add(s);
             return s;
         }
+
+        Surface Add(string source, SurfaceKind kind, Point3D origin, Vector3D axis, double radius = 0) =>
+            Register(new Surface(0, source, kind, origin, axis, radius));
+
+        void Grow(IEnumerable<Point3D> points)
+        {
+            foreach (var p in points)
+            {
+                min = new(Math.Min(min.X, p.X), Math.Min(min.Y, p.Y), Math.Min(min.Z, p.Z));
+                max = new(Math.Max(max.X, p.X), Math.Max(max.Y, p.Y), Math.Max(max.Z, p.Z));
+            }
+        }
+
+        Field Combine(BooleanOp op, Field solid) => op switch
+        {
+            BooleanOp.New => solid,
+            BooleanOp.Join => new MinField([tree!, solid]),
+            _ => new MaxField([tree!, new NegateField(solid)]),
+        };
 
         if (DocumentRules.FirstProblem(doc, _tol) is { } invalid)
             return new CompiledPart(null, surfaces, min, max, [invalid]);
@@ -44,17 +63,20 @@ public sealed class Compiler(ModelingSettings settings)
             {
                 case Block b:
                     var block = BlockField(b, Add);
-                    if (b.Op != BooleanOp.Cut)
-                    {
-                        min = new(Math.Min(min.X, b.Origin[0]), Math.Min(min.Y, b.Origin[1]), Math.Min(min.Z, b.Origin[2]));
-                        max = new(Math.Max(max.X, b.Origin[0] + b.Size[0]), Math.Max(max.Y, b.Origin[1] + b.Size[1]), Math.Max(max.Z, b.Origin[2] + b.Size[2]));
-                    }
-                    tree = b.Op switch
-                    {
-                        BooleanOp.New => block,
-                        BooleanOp.Join => new MinField([tree!, block]),
-                        _ => new MaxField([tree!, new NegateField(block)]),
-                    };
+                    if (b.Op != BooleanOp.Cut) Grow([P(b.Origin), new Point3D(b.Origin[0] + b.Size[0], b.Origin[1] + b.Size[1], b.Origin[2] + b.Size[2])]);
+                    tree = Combine(b.Op, block);
+                    break;
+
+                case Extrude e:
+                    var (extruded, extrudedBox) = ExtrudeField(e, Register);
+                    if (e.Op != BooleanOp.Cut) Grow(extrudedBox);
+                    tree = Combine(e.Op, extruded);
+                    break;
+
+                case Revolve r:
+                    var (revolved, revolvedBox) = RevolveField(r, Register);
+                    if (r.Op != BooleanOp.Cut) Grow(revolvedBox);
+                    tree = Combine(r.Op, revolved);
                     break;
 
                 case Hole h:
@@ -69,7 +91,7 @@ public sealed class Compiler(ModelingSettings settings)
                     break;
 
                 case Shell sh:
-                    tree = ShellOf(sh, FieldAlgebra.Normalize(tree!), Add);
+                    tree = ShellOf(sh, FieldAlgebra.Normalize(tree!), Register);
                     break;
 
                 case Fillet f:
@@ -86,27 +108,70 @@ public sealed class Compiler(ModelingSettings settings)
     /// Inner surfaces get real geometry where it exists: an offset plane is a plane, an offset hole wall a larger
     /// cylinder. So coplanar outer faces give one merged inner face, as on the outside.
     /// </summary>
-    static ShellField ShellOf(Shell sh, Field tree, Func<string, SurfaceKind, Point3D, Vector3D, double, Surface> add)
+    static ShellField ShellOf(Shell sh, Field tree, Func<Surface, Surface> register)
     {
         var t = sh.Thickness;
         var innerOf = new Dictionary<int, int>();
         foreach (var node in FieldAlgebra.Descendants(tree))
         {
-            if (node is LeafField leaf && !innerOf.ContainsKey(leaf.Surface.Id))
+            var (s, complement) = node switch
             {
-                var s = leaf.Surface;
-                var outward = leaf.Complement ? -1.0 : 1.0;
-                var inner = s.Kind == SurfaceKind.Plane
-                    ? add($"{sh.Id}/inner:{s.Source}", SurfaceKind.Plane, s.Origin - s.Axis * (outward * t), s.Axis * -outward, 0)
-                    : add($"{sh.Id}/inner:{s.Source}", SurfaceKind.Cylinder, s.Origin, s.Axis, s.Radius - outward * t);
-                innerOf[s.Id] = inner.Id;
-            }
-            else if (node is RoundedEdgeField r && !innerOf.ContainsKey(r.Fillet.Id))
-            {
-                innerOf[r.Fillet.Id] = add($"{sh.Id}/inner:{r.Fillet.Source}", SurfaceKind.Fillet, r.Fillet.Origin, r.Fillet.Axis, r.Radius - t).Id;
-            }
+                LeafField leaf => (leaf.Surface, leaf.Complement),
+                RoundedEdgeField r => (r.Fillet, false),
+                _ => (null, false),
+            };
+            if (s is null || innerOf.ContainsKey(s.Id)) continue;
+            // The material shrinks by t; a complemented surface has its material outside, so it grows the other way.
+            var inner = s.Offset(0, $"{sh.Id}/inner:{s.Source}", complement ? t : -t);
+            // A flat inner face looks back at its outer face: it keeps the outer face's sense only if complemented.
+            if (s.Kind == SurfaceKind.Plane && !complement) inner = inner with { Axis = -inner.Axis };
+            innerOf[s.Id] = register(inner).Id;
         }
         return new ShellField(tree, t, innerOf);
+    }
+
+    /// <summary>The profile swept between two caps, and the corners of a box round it.</summary>
+    static (Field, Point3D[]) ExtrudeField(Extrude e, Func<Surface, Surface> register)
+    {
+        var frame = Profiles.FrameOf(e.Plane);
+        var edges = Profiles.CounterClockwise(e.Profile);
+        var leaves = edges.Select(x => ProfileField.EdgeLeaf(x.Edge, frame, revolve: false,
+            (k, o, a, r, m, ang) => register(new Surface(0, $"{e.Id}/{x.Id}", k, o, a, r, m, ang)))).ToList();
+        var start = register(new Surface(0, $"{e.Id}/start", SurfaceKind.Plane, frame.Origin + frame.Z * e.Start, -frame.Z));
+        var end = register(new Surface(0, $"{e.Id}/end", SurfaceKind.Plane, frame.Origin + frame.Z * e.End, frame.Z));
+        var field = new MaxField([new ProfileField(edges.Select(x => x.Edge).ToList(), leaves, frame, revolve: false), new LeafField(start), new LeafField(end)]);
+
+        var (u0, v0, u1, v1) = Profiles.Bounds(e.Profile);
+        var corners = from u in new[] { u0, u1 } from v in new[] { v0, v1 } from w in new[] { e.Start, e.End }
+                      select frame.ToWorld(new Point3D(u, v, w));
+        return (field, corners.ToArray());
+    }
+
+    /// <summary>The profile revolved round the sketch's y axis, cut to the swept angle by two half-planes below 360°.</summary>
+    static (Field, Point3D[]) RevolveField(Revolve r, Func<Surface, Surface> register)
+    {
+        var frame = Profiles.FrameOf(r.Plane);
+        var edges = Profiles.CounterClockwise(r.Profile);
+        var leaves = edges.Select(x => ProfileField.EdgeLeaf(x.Edge, frame, revolve: true,
+            (k, o, a, rad, m, ang) => register(new Surface(0, $"{r.Id}/{x.Id}", k, o, a, rad, m, ang)))).ToList();
+        Field field = new ProfileField(edges.Select(x => x.Edge).ToList(), leaves, frame, revolve: true);
+        if (r.Angle < 360)
+        {
+            // θ runs from the sketch's x (U) towards W = axis × U.
+            var (u, w) = (frame.X, frame.Y.Cross(frame.X));
+            var phi = r.Angle * Math.PI / 180;
+            var start = new LeafField(register(new Surface(0, $"{r.Id}/start", SurfaceKind.Plane, frame.Origin, -w)));
+            var end = new LeafField(register(new Surface(0, $"{r.Id}/end", SurfaceKind.Plane, frame.Origin, u * -Math.Sin(phi) + w * Math.Cos(phi))));
+            Field wedge = phi <= Math.PI ? new MaxField([start, end]) : new MinField([start, end]);
+            field = new MaxField([field, wedge]);
+        }
+
+        // A box round the full revolution: discs of the largest radius at both ends of the height range.
+        var (_, v0, u1, v1) = Profiles.Bounds(r.Profile);
+        var a = frame.Y;
+        var extent = new Vector3D(u1 * Math.Sqrt(Math.Max(0, 1 - a.X * a.X)), u1 * Math.Sqrt(Math.Max(0, 1 - a.Y * a.Y)), u1 * Math.Sqrt(Math.Max(0, 1 - a.Z * a.Z)));
+        var ends = new[] { frame.Origin + a * v0, frame.Origin + a * v1 };
+        return (field, ends.SelectMany(c => new[] { c - extent, c + extent }).ToArray());
     }
 
     static Field BlockField(Block b, Func<string, SurfaceKind, Point3D, Vector3D, double, Surface> add)

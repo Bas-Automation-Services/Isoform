@@ -84,6 +84,21 @@ public static class CanonicalFormat
                 w.WriteString("type", "shell");
                 Number(w, "thickness", sh.Thickness);
                 break;
+            case Extrude e:
+                w.WriteString("type", "extrude");
+                w.WriteString("op", e.Op.ToString().ToLowerInvariant());
+                WritePlane(w, e.Plane);
+                WriteProfile(w, e.Profile);
+                Number(w, "start", e.Start);
+                Number(w, "end", e.End);
+                break;
+            case Revolve r:
+                w.WriteString("type", "revolve");
+                w.WriteString("op", r.Op.ToString().ToLowerInvariant());
+                WritePlane(w, r.Plane);
+                WriteProfile(w, r.Profile);
+                Number(w, "angle", r.Angle);
+                break;
             default:
                 throw new NotSupportedException(f.GetType().Name);
         }
@@ -100,8 +115,44 @@ public static class CanonicalFormat
             "plane-cut" => new PlaneCut(id, Arr(n["point"], 3), Arr(n["normal"], 3)),
             "shell" => new Shell(id, (double)n["thickness"]!),
             "fillet" => new Fillet(id, n["edge"]!.AsArray().Select(e => (string)e!).ToArray(), (double)n["radius"]!),
+            "extrude" => new Extrude(id, Op(n), ReadPlane(n["plane"]!), ReadProfile(n["profile"]!), (double)n["start"]!, (double)n["end"]!),
+            "revolve" => new Revolve(id, Op(n), ReadPlane(n["plane"]!), ReadProfile(n["profile"]!), (double)n["angle"]!),
             var t => throw new FormatException($"Unknown feature type '{t}'."),
         };
+    }
+
+    static BooleanOp Op(JsonNode n) => Enum.Parse<BooleanOp>((string)n["op"]!, ignoreCase: true);
+
+    static SketchPlane ReadPlane(JsonNode n) => new(Arr(n["origin"], 3), Arr(n["x"], 3), Arr(n["normal"], 3));
+
+    static Profile ReadProfile(JsonNode n) => new(Arr(n["start"], 2), n["edges"]!.AsArray()
+        .Select(e => new ProfileEdge((string)e!["id"]!, Arr(e["to"], 2), (double?)e["bulge"] ?? 0)).ToList());
+
+    static void WritePlane(Utf8JsonWriter w, SketchPlane p)
+    {
+        w.WriteStartObject("plane");
+        Numbers(w, "origin", p.Origin);
+        Numbers(w, "x", p.X);
+        Numbers(w, "normal", p.Normal);
+        w.WriteEndObject();
+    }
+
+    // A line has no bulge key, so documents without arcs stay as short as possible.
+    static void WriteProfile(Utf8JsonWriter w, Profile p)
+    {
+        w.WriteStartObject("profile");
+        Numbers(w, "start", p.Start);
+        w.WriteStartArray("edges");
+        foreach (var e in p.Edges)
+        {
+            w.WriteStartObject();
+            w.WriteString("id", e.Id);
+            Numbers(w, "to", e.To);
+            if (e.Bulge != 0) Number(w, "bulge", e.Bulge);
+            w.WriteEndObject();
+        }
+        w.WriteEndArray();
+        w.WriteEndObject();
     }
 
     static double[] Arr(JsonNode? n, int length)
