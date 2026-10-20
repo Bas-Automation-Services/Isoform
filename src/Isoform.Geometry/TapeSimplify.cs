@@ -12,17 +12,29 @@ public sealed partial class Tape
     {
         var n = _code.Length;
         Span<Interval> iv = n <= 256 ? stackalloc Interval[n] : new Interval[n];
-        Intervals(box, iv);
+        Intervals(box, iv, default);
         return iv[n - 1];
     }
 
-    /// <summary>Bounds of every register over the box.</summary>
-    void Intervals(Box3D box, Span<Interval> iv)
+    /// <summary>
+    /// Bounds of every register over the box, and in <paramref name="single"/> (when given) each profile's single
+    /// edge there or −1, which simplifying then uses instead of deciding again.
+    /// </summary>
+    void Intervals(Box3D box, Span<Interval> iv, Span<int> single)
     {
         var n = _code.Length;
-        // A loop edge's Lipschitz bound needs its value at the centre, which needs its subtrees' gradients there.
-        Span<double> centre = _sampled is null ? default : n <= 256 ? stackalloc double[n] : new double[n];
-        if (_sampled is not null) Run(box.Center, centre, n <= 128 ? stackalloc FieldSample[n] : new FieldSample[n]);
+        // A loop edge's Lipschitz bound needs its value at the centre, which needs its subtrees' gradients there:
+        // those registers only, as Run computes them.
+        var sampled = _sampled;
+        Span<double> centre = sampled is null ? default : n <= 256 ? stackalloc double[n] : new double[n];
+        if (sampled is not null)
+        {
+            Span<FieldSample> s = n <= 128 ? stackalloc FieldSample[n] : new FieldSample[n];
+            var c = box.Center;
+            for (var i = 0; i < n; i++)
+                if (sampled[i]) centre[i] = (s[i] = SampleAt(i, s, c)).Value;
+                else if (_code[i].Op == TapeOp.Loop) centre[i] = LoopSample(_loops[_code[i].Data], s[_code[i].A], s[_code[i].B]).Value;
+        }
         var b = new BoxData(box);
         for (var i = 0; i < n; i++)
         {
@@ -60,6 +72,23 @@ public sealed partial class Tape
                 case TapeOp.Loop:
                     iv[i] = LoopBounds(_loops[ins.Data], iv[ins.A], iv[ins.B], centre[i], b.H);
                     break;
+                case TapeOp.Profile:
+                {
+                    var pd = _profiles[ins.Data];
+                    var k = pd.Field.SingleEdge(box);
+                    if (!single.IsEmpty) single[i] = k;
+                    if (k >= 0)
+                    {
+                        // ProfileField.Bounds: the single edge's leaf bounds, or Lipschitz from the centre.
+                        ref readonly var e = ref pd.Edges[k];
+                        iv[i] = LeafBounds(in _leaves[e.Leaf], e.Op, in b);
+                        break;
+                    }
+                    // Inside a loop edge its value at the centre is already there.
+                    var (v, h) = (sampled is not null && sampled[i] ? centre[i] : ProfileValue(pd, b.Centre), b.H);
+                    iv[i] = new(v - h, v + h);
+                    break;
+                }
                 case TapeOp.Call:
                     iv[i] = _objects[ins.Data].Bounds(box);
                     break;
@@ -184,8 +213,9 @@ public sealed partial class Tape
         if (_settled) return this;
         var (n, a) = (_code.Length, _args.Length + 2 * _code.Length);
         Span<Interval> iv = n <= 256 ? stackalloc Interval[n] : new Interval[n];
-        Intervals(box, iv);
-        var s = new Simplifier(this, iv, box, n <= 256 ? stackalloc int[n] : new int[n],
+        Span<int> single = n <= 256 ? stackalloc int[n] : new int[n];
+        Intervals(box, iv, single);
+        var s = new Simplifier(this, iv, single, box, n <= 256 ? stackalloc int[n] : new int[n],
             n <= 128 ? stackalloc TapeInstr[n] : new TapeInstr[n], a <= 512 ? stackalloc int[a] : new int[a]);
         return s.Visit(n - 1).Changed ? s.Result() : this;
     }
@@ -195,6 +225,7 @@ public sealed partial class Tape
     {
         readonly Tape _tape;
         readonly ReadOnlySpan<Interval> _iv;
+        readonly ReadOnlySpan<int> _single;
         readonly Box3D _box;
         readonly Span<int> _memo; // new register + 1, negated when it changed; 0 when not visited
         readonly Span<TapeInstr> _code;
@@ -204,10 +235,11 @@ public sealed partial class Tape
 
         /// <param name="code">Room for the new tape: nothing grows, each instruction gives at most one.</param>
         /// <param name="args">Room for its arguments: the old ones plus two for each edge or blend that collapses.</param>
-        public Simplifier(Tape tape, ReadOnlySpan<Interval> iv, Box3D box, Span<int> memo, Span<TapeInstr> code, Span<int> args)
+        public Simplifier(Tape tape, ReadOnlySpan<Interval> iv, ReadOnlySpan<int> single, Box3D box, Span<int> memo, Span<TapeInstr> code, Span<int> args)
         {
             _tape = tape;
             _iv = iv;
+            _single = single;
             _box = box;
             _memo = memo;
             _memo.Clear();
@@ -291,6 +323,18 @@ public sealed partial class Tape
                     var cap = Visit(ins.A).Register;
                     var (side, changed) = Visit(ins.B);
                     result = (Emit(ins with { A = cap, B = side }), changed);
+                    break;
+                }
+                case TapeOp.Profile:
+                {
+                    // ProfileField.Simplify: the leaf of the one edge nearest to the whole box, else the profile.
+                    var k = _single[i];
+                    if (k < 0) result = (Emit(ins), false);
+                    else
+                    {
+                        ref readonly var e = ref t._profiles[ins.Data].Edges[k];
+                        result = (Emit(new(e.Op, 0, 0, e.Leaf)), true);
+                    }
                     break;
                 }
                 case TapeOp.Call:
@@ -408,11 +452,12 @@ public sealed partial class Tape
                 // Where only the inner surface can win, it is the offset of a single child surface or unknown.
                 var n = _code.Length;
                 Span<Interval> iv = n <= 256 ? stackalloc Interval[n] : new Interval[n];
-                Intervals(box, iv);
+                Span<int> single = n <= 256 ? stackalloc int[n] : new int[n];
+                Intervals(box, iv, single);
                 var t = _shells[ins.Data].Thickness;
                 if (-iv[ins.A].Hi - t <= iv[ins.B].Hi + 1e-9) return null;
                 var a = _args.Length + 2 * n;
-                var s = new Simplifier(this, iv, box, n <= 256 ? stackalloc int[n] : new int[n],
+                var s = new Simplifier(this, iv, single, box, n <= 256 ? stackalloc int[n] : new int[n],
                     n <= 128 ? stackalloc TapeInstr[n] : new TapeInstr[n], a <= 512 ? stackalloc int[a] : new int[a]);
                 var leaf = s.Out(s.Visit(ins.A).Register);
                 if (!leaf.IsLeaf) return null;
@@ -494,6 +539,8 @@ public sealed partial class Tape
                 if (!l.SideOf.TryGetValue(owner, out var side)) return Surface(ins.A, owner, s, p) ?? Surface(ins.B, owner, s, p);
                 return Surface(ins.B, side, s, p) is { } sb ? Edge(l, s[ins.A], sb, owner, always: true) : null;
             }
+            case TapeOp.Profile:
+                return ProfileSurface(_profiles[ins.Data], owner, p);
             case TapeOp.Call:
                 return _objects[ins.Data].SampleSurface(owner, p);
             default:
@@ -528,10 +575,11 @@ public sealed partial class Tape
                 Surfaces(ins.A, owners);
                 Surfaces(ins.B, owners);
                 break;
+            case TapeOp.Profile:
+                foreach (var (data, _) in _profiles[ins.Data].Leaves)
+                    if (!owners.Contains(_leaves[data].Id)) owners.Add(_leaves[data].Id);
+                break;
             case TapeOp.Call:
-                if (_objects[ins.Data] is ProfileField p)
-                    foreach (var l in p.Leaves)
-                        if (!owners.Contains(l.Surface.Id)) owners.Add(l.Surface.Id);
                 break;
             default:
                 if (!owners.Contains(_leaves[ins.Data].Id)) owners.Add(_leaves[ins.Data].Id);
