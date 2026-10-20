@@ -94,6 +94,7 @@ public sealed partial class Tape
                 TapeOp.Rounded => RoundedValue(ins, a, b, new Point3D(x[j], y[j], z[j])),
                 TapeOp.Shell => ShellValue(ins, a, b),
                 TapeOp.Blend => BlendValue(_blends[ins.Data], a, b),
+                TapeOp.Profile => ProfileValue(_profiles[ins.Data], new Point3D(x[j], y[j], z[j])),
                 _ => _objects[ins.Data].Value(new Point3D(x[j], y[j], z[j])),
             };
         }
