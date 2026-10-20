@@ -1,0 +1,22 @@
+[
+  {"id": "plate:x+", "feature": "plate", "kind": "linear", "anchor": [100, 25, 5], "axis": [1, 0, 0],
+   "value": 100, "min": 0.001, "step": 1, "faces": ["plate/x+"], "label": "plate width",
+   "edits": [{"path": "plate.size.0", "base": 100, "per": [1]}]},
+  {"id": "plate:x-", "feature": "plate", "kind": "linear", "anchor": [0, 25, 5], "axis": [-1, 0, 0],
+   "value": 100, "min": 0.001, "step": 1, "faces": ["plate/x-"], "label": "plate width",
+   "edits": [{"path": "plate.origin.0", "base": 0, "per": [-1]}, {"path": "plate.size.0", "base": 100, "per": [1]}]},
+  {"id": "plate:z+", "feature": "plate", "kind": "linear", "anchor": [50, 25, 10], "axis": [0, 0, 1],
+   "value": 10, "min": 0.001, "step": 1, "faces": ["plate/z+"], "label": "plate thickness", "readOnly": true,
+   "edits": [{"path": "plate.size.2", "base": 10, "per": [1]}]},
+  {"id": "hole:center", "feature": "hole", "kind": "planar", "anchor": [30, 25, 10], "axis": [0, 0, 1],
+   "value": [30, 25], "step": 1, "faces": ["hole/wall"], "label": "hole centre",
+   "edits": [{"path": "hole.center.0", "base": 30, "per": [1, 0]}, {"path": "hole.center.1", "base": 25, "per": [0, 1]}]},
+  {"id": "hole:diameter", "feature": "hole", "kind": "linear", "anchor": [35, 25, 10], "axis": [1, 0, 0],
+   "value": 10, "min": 0.001, "step": 0.5, "faces": ["hole/wall"], "label": "hole diameter",
+   "edits": [{"path": "hole.diameter", "base": 10, "per": [2]}]},
+  {"id": "shaft:angle", "feature": "shaft", "kind": "angle", "anchor": [0, 0, 0], "axis": [0, 0, 1],
+   "value": 270, "min": 1, "max": 360, "step": 5, "faces": ["shaft/big"], "label": "shaft angle",
+   "edits": [{"path": "shaft.angle", "base": 270, "per": [1]}]},
+  {"id": "upper", "feature": "upper", "kind": "frame", "anchor": [0, 20, 15], "axis": [0, 0, 1],
+   "value": 0, "step": 1, "faces": [], "label": "upper placement", "edits": []}
+]

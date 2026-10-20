@@ -13,7 +13,7 @@ node tests/playground/run.mjs path/to/wwwroot      # or any other published wwwr
 The parts on their own:
 
 ```sh
-node --test tests/playground/{kernel-client,store,diagnose,references,diff,history,features}.test.mjs   # front end only, no publish
+node --test tests/playground/{kernel-client,store,diagnose,references,diff,history,dragmath,features}.test.mjs   # front end only, no publish
 node --test tests/playground/kernel.test.mjs       # kernel only; ISOFORM_PLAYGROUND=<wwwroot> to point elsewhere
 node tests/playground/e2e.mjs [wwwroot]            # browser only
 node tests/playground/serve.mjs [wwwroot] [port]   # serve the page to look at it yourself (default port 8137)
@@ -33,6 +33,12 @@ helpers to the primary; `adaptResult` keeps result v2 as written and adds the me
 **`store.test.mjs`**: the selection is face names, so it follows a face that is renumbered and drops one that is gone;
 a document that does not read keeps the last result; history gets one entry per changed document; the status line has
 the form `e2e.mjs` reads.
+
+**`dragmath.test.mjs`** drives `wwwroot/js/lib/dragmath.js` with the handles in `handles.fixture.json` (the C#
+contract of `docs/playground-plan.md`, one of each kind): the pointer ray gives `t` as the closest point to a linear
+handle's axis, the hit on a planar handle's plane, or the angle about an angle handle's axis; a drag counts from where
+it was grabbed and an angle keeps turning past half a turn; the value snaps to `step` and stays within `min`/`max`; the
+edits are `{set, value: base + per·t}`; a selected face shows its feature's handles and never an assembly frame.
 
 **`diagnose.test.mjs`** (`wwwroot/js/lib/diagnose.js`): diagnostics grouped by code with readable titles, errors
 first; the face names a message mentions (whole names only), else for a feature that left no faces the ones its
@@ -84,9 +90,12 @@ and flies the camera there (`out/screenshots/diagnostics.png`); "Resolve at 0.25
 (`window.isoform.pin`), a slot edited in across it, and the pin shows `split`, lit when clicked (`out/screenshots/pins.png`).
 Then the history on example 0: `applyEdits` commits one entry (agent view shows its hash and edit, the editor
 flashes), an edit that does not apply leaves the hash alone, undo returns the original hash and redo the edited one
-(`out/screenshots/history.png`). Then the tree and inspector: it selects `hole` in the tree,
-types a diameter and scrubs it (each must change the document and its hash, and keep `hole` selected), re-picks
-the fillet's edge, and checks that selecting a face selects its feature in the tree.
+(`out/screenshots/history.png`).
+Last it selects `plate/x+` on example 0, drags its handle 40 px outwards with mouse events, and checks that
+`plate.size.0` grew and the hash changed (skipped while the kernel has no `Handles` export).
+Then the tree and inspector: it selects `hole` in the tree, types a diameter and scrubs it (each must change
+the document and its hash, and keep `hole` selected), re-picks the fillet's edge, and checks that selecting a face
+selects its feature in the tree.
 
 ## Screenshots
 
@@ -94,7 +103,8 @@ the fillet's edge, and checks that selecting a face selects its feature in the t
 taken two frames after the result arrived. Each shows the editor on the left with the stats line at the bottom, and
 the part on the right, framed to fit, one colour per face, sharp edges dark and tangent edges faint. Things to look
 for: a part missing or cut off (framing), faces that share a colour where they should not (face naming), holes in the
-mesh, stray triangles, and red diagnostics under the stats line.
+mesh, stray triangles, and red diagnostics under the stats line. `handle-drag.png` is example 0 in the handle drag, just
+before the release: the plate tinted, its handles drawn over it, and the dragged arrow's label with the live width.
 
 ## Writing browser tests
 
@@ -111,14 +121,18 @@ Coordinates are CSS pixels in the viewport. The page exposes `window.isoform`: `
 (resolves once that text has regenerated); for diagnostics `diagnostics()` (as listed), `focusDiagnostic(index)`,
 `marked()` (the faces lit for the one in focus, with their colours), `cell()` (the cell the result was made at),
 `target()` (where the camera looks) and `resolve(cell)`; for reference pins `pins()` and `pin(name | [a, b])` (resolves to the pin); for commits `applyEdits(edits, label, origin)`, `undo()`, `redo()` (each
-resolves to `{hash}`, `{error, failedEdit?}` or null) and `history()` (`{at, entries: [{hash, edits, label, origin}]}`); for the tree, `feature()` (the selected item's key).
-Later tasks add to it, for example handles:
+resolves to `{hash}`, `{error, failedEdit?}` or null) and `history()` (`{at, entries: [{hash, edits, label, origin}]}`); for the tree, `feature()` (the selected item's key);
+for handles `handles()`: the shown handles (those of the
+selected face's feature), each `{id, feature, kind, label, value, faces, readOnly, screen, direction}` with `screen`
+the point to grab it by and `direction` the unit screen direction of its axis (where `t` grows). Later tasks add to
+it. For example:
 
 ```js
 const page = await browser.newPage();
 await page.open(`${site.url}?example=0`);
 await page.waitFor('window.isoform?.ready');
-const [h] = await page.evaluate('window.isoform.handles()');   // assumed to include screen positions
-await page.drag(h.screen, [h.screen[0] + 40, h.screen[1]]);
-await page.waitFor(`window.isoform.document().includes('"end": 10')`);
+await page.evaluate(`window.isoform.select(['plate/x+'])`);
+const h = await page.waitFor(`window.isoform.handles().find(h => h.id === 'plate:x+')`);
+await page.drag(h.screen, [h.screen[0] + 40 * h.direction[0], h.screen[1] + 40 * h.direction[1]]);
+await page.waitFor(`!window.isoform.document().includes('"size": [100, 50, 10]')`);
 ```

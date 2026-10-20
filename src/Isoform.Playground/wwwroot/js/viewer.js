@@ -57,9 +57,10 @@ export function createViewer(host) {
     const { center, radius } = geometry.boundingSphere;
     if (!radius) return;
     controls.target.copy(center);
-    // Further back when the view is narrower than tall: the horizontal field of view is then the smaller one.
-    const narrow = Math.max(1, 1 / camera.aspect);
-    camera.position.copy(center).add(new THREE.Vector3(1.1, -1.6, 1.0).normalize().multiplyScalar(radius * 2.6 * narrow));
+    // The whole bounding sphere in view, in the narrower of the two fields of view (the view sits between two panels).
+    const half = THREE.MathUtils.degToRad(camera.fov) / 2;
+    const narrow = Math.min(half, Math.atan(Math.tan(half) * camera.aspect));
+    camera.position.copy(center).add(new THREE.Vector3(1.1, -1.6, 1.0).normalize().multiplyScalar(radius / Math.sin(narrow)));
     camera.near = radius / 100;
     camera.far = radius * 100;
     camera.updateProjectionMatrix();
@@ -72,8 +73,10 @@ export function createViewer(host) {
     camera.updateProjectionMatrix();
   }).observe(host);
 
+  const frameHooks = new Set(); // e.g. handles keeping their size on screen as the camera moves
   renderer.setAnimationLoop(() => {
     controls.update();
+    for (const hook of frameHooks) hook();
     renderer.render(scene, camera);
   });
 
@@ -81,6 +84,10 @@ export function createViewer(host) {
 
   return {
     canvas: renderer.domElement,
+    // For overlays drawn in the view (handles): they add to the scene and pause the controls while they drag.
+    scene, camera, controls,
+    /** Calls hook before every frame is drawn. */
+    onFrame: hook => frameHooks.add(hook),
 
     /** Replaces the model with a result's mesh; nothing is lit until light(). fit frames the camera on it. */
     show(result, fit) {
