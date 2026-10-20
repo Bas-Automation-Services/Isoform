@@ -54,6 +54,9 @@ public sealed class OcctModeler(ModelingSettings settings) : IModeler
                     case Fillet f:
                         (part, tags) = ApplyFillet(part, tags, f, diagnostics);
                         break;
+                    default:
+                        diagnostics.Add(new Diagnostic(Diagnostic.BackendFailed, feature.Id, $"{feature.GetType().Name} is not supported by the OCCT baseline"));
+                        return new OcctResult(diagnostics, null, null);
                 }
             }
             catch (OcctException e)

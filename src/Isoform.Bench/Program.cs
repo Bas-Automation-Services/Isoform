@@ -4,6 +4,7 @@ using Isoform.Document;
 using Isoform.Geometry;
 using Isoform.Meshing;
 using Isoform.Modeling;
+using Isoform.Occt;
 
 // Baseline measurements for K2. Run with: dotnet run -c Release --project src/Isoform.Bench
 var settings = new ModelingSettings();
@@ -12,7 +13,7 @@ Console.WriteLine($"Isoform bench — {Environment.ProcessorCount} logical cores
 var plate = new Block("plate", BooleanOp.New, [0, 0, 0], [100, 50, 10]);
 var parts = new (string Name, PartDocument Doc)[]
 {
-    ("base (9 leaves)", new PartDocument([plate, new Hole("hole", [30, 25], 10), new Fillet("fillet", ["plate/z+", "plate/x+"], 2)])),
+    ("base", new PartDocument([plate, new Hole("hole", [30, 25], 10), new Fillet("fillet", ["plate/z+", "plate/x+"], 2)])),
     ("base + shell", new PartDocument([plate, new Hole("hole", [30, 25], 10), new Fillet("fillet", ["plate/z+", "plate/x+"], 2), new Shell("shell", 1.5)])),
     ("20 operations", new PartDocument(
     [
@@ -70,6 +71,32 @@ foreach (var (name, doc) in parts)
         TopologyBuilder.Build(mesh, part.Surfaces, settings.Tolerance);
         Console.WriteLine($"  mesh h={h}: {meshMs:N0} ms + topology {total.Elapsed.TotalMilliseconds - meshMs:N0} ms, {mesh.Quads.Count:N0} quads, {GC.GetTotalMemory(false) / 1e6:N0} MB live");
         foreach (var s in stages) Console.WriteLine($"      {s}");
+    }
+}
+
+// The same parts on OCCT: regenerate from the document, then tessellate at the chord accuracy our mesh
+// reaches at 0.5 / 0.25 / 0.1 mm cells. Best of 3 runs (the first includes warm-up).
+if (OcctModeler.IsAvailable)
+{
+    Console.WriteLine();
+    Console.WriteLine("== OCCT 8.0.0-rc2 (same parts, single-threaded booleans)");
+    foreach (var (name, doc) in parts.Where(p => !p.Doc.Features.OfType<Shell>().Any()))
+    {
+        foreach (var deflection in new[] { 0.02, 0.0054, 0.0013 })
+        {
+            double regen = double.MaxValue, mesh = double.MaxValue;
+            var triangles = 0;
+            for (var run = 0; run < 3; run++)
+            {
+                var sw = Stopwatch.StartNew();
+                var result = new OcctModeler(settings).Regenerate(doc);
+                regen = Math.Min(regen, sw.Elapsed.TotalMilliseconds);
+                sw.Restart();
+                triangles = result.Shape!.Tessellate(deflection);
+                mesh = Math.Min(mesh, sw.Elapsed.TotalMilliseconds);
+            }
+            Console.WriteLine($"  {name}, deflection {deflection} mm: regenerate {regen:N0} ms + tessellate {mesh:N0} ms, {triangles:N0} triangles");
+        }
     }
 }
 

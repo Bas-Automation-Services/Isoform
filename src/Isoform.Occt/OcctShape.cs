@@ -75,6 +75,13 @@ public sealed class OcctShape
 
     public void WriteStep(string path) => Check(iso_write_step(Handle, path));
 
+    /// <summary>Tessellates for display; returns the number of triangles.</summary>
+    public int Tessellate(double deflection, double angle = 0.5)
+    {
+        Check(iso_tessellate(Handle, deflection, angle, out var n));
+        return n;
+    }
+
     public OcctOperation Boolean(OcctBoolean kind, OcctShape tool, bool simplify)
     {
         Check(iso_boolean((int)kind, Handle, tool.Handle, simplify ? 1 : 0, out var op));

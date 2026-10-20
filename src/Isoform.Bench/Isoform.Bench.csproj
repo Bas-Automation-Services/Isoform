@@ -7,6 +7,7 @@
 
   <ItemGroup>
     <ProjectReference Include="../Isoform.Modeling/Isoform.Modeling.csproj" />
+    <ProjectReference Include="../Isoform.Occt/Isoform.Occt.csproj" />
   </ItemGroup>
 
 </Project>

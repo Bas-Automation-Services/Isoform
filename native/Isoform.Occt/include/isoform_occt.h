@@ -41,6 +41,8 @@ ISO_API int iso_solid_count(IsoShape* shape, int* count);
 ISO_API int iso_is_valid(IsoShape* shape, int* valid);
 ISO_API int iso_volume(IsoShape* shape, double* volume);
 ISO_API int iso_write_step(IsoShape* shape, const char* utf8_path);
+// Tessellates every face (chordal deflection in mm, angular in radians); returns the total triangle count.
+ISO_API int iso_tessellate(IsoShape* shape, double deflection, double angle, int* triangles);
 
 // Boolean op on two shapes; simplify merges same-domain faces (history includes the merge).
 ISO_API int iso_boolean(int kind, IsoShape* a, IsoShape* b, int simplify, IsoOp** out);

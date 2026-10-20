@@ -9,6 +9,8 @@
 #include <BRepExtrema_DistShapeShape.hxx>
 #include <BRepFilletAPI_MakeFillet.hxx>
 #include <BRepGProp.hxx>
+#include <BRepMesh_IncrementalMesh.hxx>
+#include <Poly_Triangulation.hxx>
 #include <BRepPrimAPI_MakeBox.hxx>
 #include <BRepPrimAPI_MakeCylinder.hxx>
 #include <BRepTools_History.hxx>
@@ -262,6 +264,23 @@ int iso_write_step(IsoShape* s, const char* path)
         STEPControl_Writer writer;
         if (writer.Transfer(s->shape, STEPControl_AsIs) != IFSelect_RetDone) return fail("STEP transfer failed");
         if (writer.Write(path) != IFSelect_RetDone) return fail("STEP write failed");
+        return 0;
+    });
+}
+
+int iso_tessellate(IsoShape* s, double deflection, double angle, int* triangles)
+{
+    return guard([&] {
+        BRepMesh_IncrementalMesh mesher(s->shape, deflection, Standard_False, angle, Standard_True);
+        if (!mesher.IsDone()) return fail("tessellation failed");
+        int count = 0;
+        for (int i = 1; i <= s->faces.Extent(); ++i)
+        {
+            TopLoc_Location location;
+            const Handle(Poly_Triangulation) t = BRep_Tool::Triangulation(TopoDS::Face(s->faces(i)), location);
+            if (!t.IsNull()) count += t->NbTriangles();
+        }
+        *triangles = count;
         return 0;
     });
 }
