@@ -123,7 +123,7 @@ Object.assign(window.isoform, {
 // Handles (J1): the selected feature's handles. A released drag commits its edits as one history entry (J3's
 // applyEdits); J2 adds the preview pipeline.
 const handles = createHandles(viewer, store, {
-  fetch: () => client.call('handles', { slot: 'main' }).then(r => r.result),
+  fetch: () => client.call('handles', { slot: 'main' }).then(r => r.result.handles),
   commit: edits => commits.applyEdits(edits, undefined, 'handle'),
 });
 window.isoform.handles = handles.list;
