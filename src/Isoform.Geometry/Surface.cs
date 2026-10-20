@@ -2,7 +2,7 @@ using BasAutomation.Geometry;
 
 namespace Isoform.Geometry;
 
-public enum SurfaceKind { Plane, Cylinder, Fillet, Sphere, Cone, Torus }
+public enum SurfaceKind { Plane, Cylinder, Fillet, Sphere, Cone, Torus, Blend }
 
 /// <summary>
 /// An analytic surface with a 1-Lipschitz signed distance, exact near the surface: negative on the material side.
@@ -13,6 +13,7 @@ public enum SurfaceKind { Plane, Cylinder, Fillet, Sphere, Cone, Torus }
 /// <item>Cone: apex <see cref="Origin"/>, opening along <see cref="Axis"/> with half-angle <see cref="Angle"/>, material inside.</item>
 /// <item>Torus: centre <see cref="Origin"/>, <see cref="Axis"/>, centre circle <see cref="Radius"/>, material inside tube <see cref="Minor"/>.</item>
 /// <item>Fillet: produced by a rounded edge; its distance comes from <see cref="RoundedEdgeField"/>.</item>
+/// <item>Blend: produced by a smooth join or cut; its field comes from <see cref="BlendField"/>.</item>
 /// </list>
 /// Cone and torus are a line and a circle in the half-plane (ρ, z) of distance from the axis and height along it:
 /// their distance is the 2D distance there, which is how a revolved profile edge measures it too.
@@ -26,7 +27,7 @@ public sealed record Surface(int Id, string Source, SurfaceKind Kind, Point3D Or
         SurfaceKind.Sphere => (p - Origin).Length - Radius,
         SurfaceKind.Cone => Radial(p).Length * Math.Cos(Angle) - Axis.Dot(p - Origin) * Math.Sin(Angle),
         SurfaceKind.Torus => Hypot(Radial(p).Length - Radius, Axis.Dot(p - Origin)) - Minor,
-        _ => throw new InvalidOperationException("Fillet surfaces have no standalone distance."),
+        _ => throw new InvalidOperationException($"{Kind} surfaces have no standalone distance."),
     };
 
     public Vector3D Gradient(Point3D p)
@@ -62,7 +63,7 @@ public sealed record Surface(int Id, string Source, SurfaceKind Kind, Point3D Or
     /// <summary>True if both describe the same geometric surface with the same material side.</summary>
     public bool SameGeometry(Surface other, double tolerance)
     {
-        if (Kind != other.Kind || Kind == SurfaceKind.Fillet) return false;
+        if (Kind != other.Kind || Kind is SurfaceKind.Fillet or SurfaceKind.Blend) return false;
         bool Near(double a, double b) => Math.Abs(a - b) <= tolerance;
         bool Coaxial() => Axis.Cross(other.Axis).Length <= tolerance && Radial(other.Origin).Length <= tolerance;
         return Kind switch

@@ -455,6 +455,63 @@ public sealed class ShellField : Field
     }
 }
 
+/// <summary>
+/// Smooth union or intersection of two solids, the quadratic smooth min: where their fields are within k of each
+/// other the two surfaces blend into a new face, elsewhere it is exactly the plain min or max. The gradient is a
+/// convex combination of the two, so the field stays 1-Lipschitz. Not a rolling ball: a free-form blend.
+/// </summary>
+public sealed class BlendField(Field a, Field b, double k, Surface blend, bool union) : Field
+{
+    public Field A { get; } = a;
+    public Field B { get; } = b;
+    public double K { get; } = k;
+    public Surface Blend { get; } = blend;
+    public bool Union { get; } = union;
+
+    public override FieldSample Sample(Point3D p)
+    {
+        var (sa, sb) = (A.Sample(p), B.Sample(p));
+        var diff = sa.Value - sb.Value;
+        var h = Math.Max(K - Math.Abs(diff), 0) / K;
+        // Ties go to A, as in MinField and MaxField.
+        if (h == 0) return Union ? (sb.Value < sa.Value ? sb : sa) : (sb.Value > sa.Value ? sb : sa);
+        var wa = Union ? 0.5 - diff / (2 * K) : 0.5 + diff / (2 * K);
+        return new(Blended(sa.Value, sb.Value, h), Blend.Id, sa.Gradient * wa + sb.Gradient * (1 - wa));
+    }
+
+    public override double Value(Point3D p)
+    {
+        var (a, b) = (A.Value(p), B.Value(p));
+        var h = Math.Max(K - Math.Abs(a - b), 0) / K;
+        if (h == 0) return Union ? (b < a ? b : a) : (b > a ? b : a);
+        return Blended(a, b, h);
+    }
+
+    double Blended(double a, double b, double h) => Union ? Math.Min(a, b) - h * h * K / 4 : Math.Max(a, b) + h * h * K / 4;
+
+    public override FieldSample? SampleSurface(int owner, Point3D p) =>
+        owner == Blend.Id ? Sample(p) : A.SampleSurface(owner, p) ?? B.SampleSurface(owner, p);
+
+    public override Interval Bounds(Box3D box)
+    {
+        var (ia, ib) = (A.Bounds(box), B.Bounds(box));
+        var plain = Union ? Interval.Min(ia, ib) : Interval.Max(ia, ib);
+        if (Apart(ia, ib)) return plain;
+        return Union ? new(plain.Lo - K / 4, plain.Hi) : new(plain.Lo, plain.Hi + K / 4);
+    }
+
+    // Where the two are certainly k apart there is no blend, only the plain min or max.
+    public override Field Simplify(Box3D box)
+    {
+        if (Apart(A.Bounds(box), B.Bounds(box)))
+            return (Union ? (Field)new MinField([A, B]) : new MaxField([A, B])).Simplify(box);
+        var (a, b) = (A.Simplify(box), B.Simplify(box));
+        return ReferenceEquals(a, A) && ReferenceEquals(b, B) ? this : new BlendField(a, b, K, Blend, Union);
+    }
+
+    bool Apart(Interval a, Interval b) => a.Lo - b.Hi >= K || b.Lo - a.Hi >= K;
+}
+
 public static class FieldAlgebra
 {
     /// <summary>
@@ -527,6 +584,7 @@ public static class FieldAlgebra
             MinField m => m.Children,
             NegateField n => [n.Child],
             RoundedEdgeField r => [r.A, r.B],
+            BlendField b => [b.A, b.B],
             ProfileField p => p.Leaves,
             _ => [],
         };

@@ -47,12 +47,15 @@ public sealed class Compiler(ModelingSettings settings)
             }
         }
 
-        Field Combine(BooleanOp op, Field solid) => op switch
+        // A blend above 0 joins or cuts smoothly through a new face named after the feature.
+        Field Combine(BooleanOp op, Field solid, double blend = 0, Func<Surface, Surface>? named = null, string id = "")
         {
-            BooleanOp.New => solid,
-            BooleanOp.Join => new MinField([tree!, solid]),
-            _ => new MaxField([tree!, new NegateField(solid)]),
-        };
+            if (op == BooleanOp.New) return solid;
+            var tool = op == BooleanOp.Join ? solid : new NegateField(solid);
+            if (blend <= 0) return op == BooleanOp.Join ? new MinField([tree!, tool]) : new MaxField([tree!, tool]);
+            var face = named!(new Surface(0, $"{id}/blend", SurfaceKind.Blend, new Point3D(0, 0, 0), new Vector3D(0, 0, 1), blend));
+            return new BlendField(FieldAlgebra.Normalize(tree!), FieldAlgebra.Normalize(tool), blend, face, union: op == BooleanOp.Join);
+        }
 
         if (DocumentRules.FirstProblem(doc, _tol) is { } invalid)
             return new CompiledPart(null, surfaces, min, max, [invalid]);
@@ -68,19 +71,19 @@ public sealed class Compiler(ModelingSettings settings)
                 case Block b:
                     var (block, blockBox) = BlockField(b, m, Named);
                     if (b.Op != BooleanOp.Cut) Grow(blockBox);
-                    tree = Combine(Op(b.Op), block);
+                    tree = Combine(Op(b.Op), block, b.Blend, Named, b.Id);
                     break;
 
                 case Extrude e:
                     var (extruded, extrudedBox) = ExtrudeField(e, m, Named);
                     if (e.Op != BooleanOp.Cut) Grow(extrudedBox);
-                    tree = Combine(Op(e.Op), extruded);
+                    tree = Combine(Op(e.Op), extruded, e.Blend, Named, e.Id);
                     break;
 
                 case Revolve r:
                     var (revolved, revolvedBox) = RevolveField(r, m, Named);
                     if (r.Op != BooleanOp.Cut) Grow(revolvedBox);
-                    tree = Combine(Op(r.Op), revolved);
+                    tree = Combine(Op(r.Op), revolved, r.Blend, Named, r.Id);
                     break;
 
                 case Hole h:
@@ -114,6 +117,17 @@ public sealed class Compiler(ModelingSettings settings)
                     tree = ShellOf(sh, FieldAlgebra.Normalize(tree!), Register);
                     break;
 
+                case Offset o:
+                    if (OffsetOf(FieldAlgebra.Normalize(tree!), o.Distance, Register, new Dictionary<(LeafField, double), LeafField>(), o.Id) is { } grown)
+                    {
+                        tree = grown;
+                        // Growing moves every face out by at most the distance, and the box with them.
+                        if (o.Distance > 0) Grow([min - new Vector3D(1, 1, 1) * o.Distance, max + new Vector3D(1, 1, 1) * o.Distance]);
+                    }
+                    else
+                        diagnostics.Add(new Diagnostic(Diagnostic.InvalidParameter, o.Id, "a shelled part cannot be offset; offset before the shell"));
+                    break;
+
                 case Fillet or Chamfer:
                     tree = ApplyEdge(feature, FieldAlgebra.Normalize(tree!), Register, min, max, diagnostics);
                     break;
@@ -141,6 +155,7 @@ public sealed class Compiler(ModelingSettings settings)
             {
                 LeafField leaf => (leaf.Surface, leaf.Complement),
                 RoundedEdgeField r => (r.Fillet, false),
+                BlendField b => (b.Blend, false),
                 _ => (null, false),
             };
             if (s is null || innerOf.ContainsKey(s.Id)) continue;
@@ -151,6 +166,49 @@ public sealed class Compiler(ModelingSettings settings)
             innerOf[s.Id] = register(inner).Id;
         }
         return new ShellField(tree, t, innerOf);
+    }
+
+    /// <summary>
+    /// The tree with every face moved by d (material grows for d > 0). Faces get real offset surfaces under their
+    /// own names, fillet radii grow with them (a fillet shrunk to nothing leaves a sharp edge), and later features
+    /// see true geometry. Each leaf is offset once, so faces shared by fillets stay shared. Null for a shell.
+    /// </summary>
+    static Field? OffsetOf(Field f, double d, Func<Surface, Surface> register, Dictionary<(LeafField, double), LeafField> done, string id)
+    {
+        LeafField Leaf(LeafField l, double by)
+        {
+            if (done.TryGetValue((l, by), out var known)) return known;
+            return done[(l, by)] = new LeafField(register(l.Surface.Offset(0, l.Surface.Source, l.Complement ? -by : by)), l.Complement);
+        }
+        Field? Each(IReadOnlyList<Field> children, Func<List<Field>, Field> make)
+        {
+            var moved = children.Select(c => OffsetOf(c, d, register, done, id)).ToList();
+            return moved.Any(c => c is null) ? null : make(moved!);
+        }
+        switch (f)
+        {
+            case LeafField l:
+                return Leaf(l, d);
+            case MaxField m:
+                return Each(m.Children, c => new MaxField(c));
+            case MinField m:
+                return Each(m.Children, c => new MinField(c));
+            case NegateField n:
+                // −g − d = −(g + d): the complement's own faces move the other way.
+                return OffsetOf(n.Child, -d, register, done, id) is { } child ? new NegateField(child) : null;
+            case RoundedEdgeField r:
+                var (a, b) = (Leaf(r.A, d), Leaf(r.B, d));
+                return r.Radius + d > 1e-9
+                    ? new RoundedEdgeField(a, b, r.Radius + d, register(r.Fillet with { Radius = r.Radius + d }))
+                    : new MaxField([a, b]);
+            case BlendField bl:
+                // The smooth min shifts with its arguments, so the blend face keeps its width.
+                return Each([bl.A, bl.B], c => new BlendField(c[0], c[1], bl.K, bl.Blend, bl.Union));
+            case ProfileField p:
+                return p.Offset(d, l => Leaf(l, d), register, (a, b) => $"{id}/corner:{a}+{b}");
+            default:
+                return null;
+        }
     }
 
     /// <summary>Copy k of a pattern: the motion applied k times.</summary>
@@ -448,6 +506,9 @@ public sealed class Compiler(ModelingSettings settings)
             case ShellField s:
                 var outer = Replace(s.Outer, target, replacement);
                 return outer == s.Outer ? s : s.WithOuter(outer);
+            case BlendField b:
+                var (ra, rb) = (Replace(b.A, target, replacement), Replace(b.B, target, replacement));
+                return ra == b.A && rb == b.B ? b : new BlendField(ra, rb, b.K, b.Blend, b.Union);
             default:
                 return field;
         }

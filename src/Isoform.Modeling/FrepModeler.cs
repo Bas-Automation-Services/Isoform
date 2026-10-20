@@ -29,7 +29,8 @@ public sealed class FrepModeler(ModelingSettings settings) : IModeler
 
         var present = topology.Faces.SelectMany(f => f.Sources).ToHashSet();
         var unresolved = diagnostics.Where(d => d.Code == Diagnostic.BelowResolution).Select(d => d.FeatureId).ToHashSet();
-        foreach (var feature in document.Features.Where(f => f is not Fillet && !unresolved.Contains(f.Id)))
+        // An offset moves faces that keep their names; it has none of its own to look for.
+        foreach (var feature in document.Features.Where(f => f is not (Fillet or Offset) && !unresolved.Contains(f.Id)))
             if (!part.Surfaces.Any(s => s.Source.StartsWith(feature.Id + "/") && present.Contains(s.Source)))
                 diagnostics.Add(new Diagnostic(Diagnostic.NoEffect, feature.Id, $"{feature.Id} does not touch the part"));
 
@@ -46,7 +47,17 @@ public sealed class FrepModeler(ModelingSettings settings) : IModeler
         var smallest = 2 * Settings.CellSize;
         foreach (var feature in document.Features)
         {
-            var size = feature switch { Hole x => x.Diameter, Shell x => x.Thickness, Fillet x => 2 * x.Radius, Chamfer x => Math.Sqrt(2) * x.Distance, _ => double.PositiveInfinity };
+            var size = feature switch
+            {
+                Hole x => x.Diameter,
+                Shell x => x.Thickness,
+                Fillet x => 2 * x.Radius,
+                Chamfer x => Math.Sqrt(2) * x.Distance,
+                Block { Blend: > 0 } x => x.Blend,
+                Extrude { Blend: > 0 } x => x.Blend,
+                Revolve { Blend: > 0 } x => x.Blend,
+                _ => double.PositiveInfinity,
+            };
             if (size < smallest)
                 yield return new Diagnostic(Diagnostic.BelowResolution, feature.Id, $"{feature.Id} ({size:G4} mm) is below the resolved size of {smallest:G4} mm; use a smaller CellSize");
             // A profile edge sweeps a face as wide as the edge is long.

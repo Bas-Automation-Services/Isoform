@@ -10,7 +10,8 @@ public enum BooleanOp { New, Join, Cut }
 public abstract record Feature(string Id);
 
 /// <summary>Axis-aligned block from <paramref name="Origin"/> with <paramref name="Size"/> (W, L, H) in mm.</summary>
-public sealed record Block(string Id, BooleanOp Op, double[] Origin, double[] Size) : Feature(Id);
+/// <remarks>A <paramref name="Blend"/> above 0 joins or cuts smoothly: the faces merge through an <c>id/blend</c> face about that wide.</remarks>
+public sealed record Block(string Id, BooleanOp Op, double[] Origin, double[] Size, double Blend = 0) : Feature(Id);
 
 /// <summary>Through-all hole along Z at <paramref name="Center"/> (x, y).</summary>
 public sealed record Hole(string Id, double[] Center, double Diameter) : Feature(Id);
@@ -43,14 +44,20 @@ public sealed record Profile(double[] Start, IReadOnlyList<ProfileEdge> Edges);
 /// A profile swept along the sketch normal from <paramref name="Start"/> to <paramref name="End"/>. Side faces are
 /// named after their profile edge (<c>rib/top</c>), the caps <c>rib/start</c> and <c>rib/end</c>.
 /// </summary>
-public sealed record Extrude(string Id, BooleanOp Op, SketchPlane Plane, Profile Profile, double Start, double End) : Feature(Id);
+public sealed record Extrude(string Id, BooleanOp Op, SketchPlane Plane, Profile Profile, double Start, double End, double Blend = 0) : Feature(Id);
 
 /// <summary>
 /// A profile revolved round the sketch's y axis: profile x is the distance from the axis (never negative), y the
 /// height along it. <paramref name="Angle"/> in degrees, right-handed round the axis from the sketch plane; below
 /// 360 the two flat ends are <c>id/start</c> and <c>id/end</c>.
 /// </summary>
-public sealed record Revolve(string Id, BooleanOp Op, SketchPlane Plane, Profile Profile, double Angle = 360) : Feature(Id);
+public sealed record Revolve(string Id, BooleanOp Op, SketchPlane Plane, Profile Profile, double Angle = 360, double Blend = 0) : Feature(Id);
+
+/// <summary>
+/// Moves every face of the part so far by <paramref name="Distance"/> along its outward normal (negative: inward).
+/// Faces keep their names. Flat edges stay sharp; grown convex corners of swept profiles become round.
+/// </summary>
+public sealed record Offset(string Id, double Distance) : Feature(Id);
 
 /// <summary>How a pattern places its copies.</summary>
 public abstract record PatternMotion;

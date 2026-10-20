@@ -145,10 +145,19 @@ public sealed class ProfileField : Field
     readonly int[] _vertexSign; // at the end of edge k: +1 convex, −1 reflex, 0 tangent
     readonly Frame _frame;
     readonly bool _revolve;
+    readonly double _offset;
+    readonly LeafField?[] _corners; // at the end of edge k: the round face an offset gave that corner
 
-    public ProfileField(IReadOnlyList<ProfileEdge2D> edges, IReadOnlyList<LeafField?> leaves, Frame frame, bool revolve)
+    /// <param name="offset">
+    /// Grows the solid by this distance: the leaves are then the offset faces, and nearest a corner the value is
+    /// the distance to the corner less the offset, so a grown convex corner (or a shrunk reflex one) is round.
+    /// </param>
+    /// <param name="corners">The face of each such round corner, per corner at the end of edge k.</param>
+    public ProfileField(IReadOnlyList<ProfileEdge2D> edges, IReadOnlyList<LeafField?> leaves, Frame frame, bool revolve,
+        double offset = 0, IReadOnlyList<LeafField?>? corners = null)
     {
-        (_edges, _leaves, _frame, _revolve) = (edges.ToArray(), leaves.ToArray(), frame, revolve);
+        (_edges, _leaves, _frame, _revolve, _offset) = (edges.ToArray(), leaves.ToArray(), frame, revolve, offset);
+        _corners = corners?.ToArray() ?? new LeafField?[_edges.Length];
         _vertexSign = new int[_edges.Length];
         for (var k = 0; k < _edges.Length; k++)
         {
@@ -156,11 +165,41 @@ public sealed class ProfileField : Field
             var cross = a.U * b.V - a.V * b.U;
             _vertexSign[k] = cross > 1e-12 ? 1 : cross < -1e-12 ? -1 : 0;
         }
-        Leaves = _leaves.OfType<LeafField>().ToList();
+        Leaves = _leaves.OfType<LeafField>().Concat(_corners.OfType<LeafField>()).ToList();
     }
 
-    /// <summary>The surface of every edge that has one.</summary>
+    /// <summary>The surface of every edge that has one, and of every round corner.</summary>
     public IReadOnlyList<LeafField> Leaves { get; }
+
+    /// <summary>
+    /// The same profile grown by <paramref name="d"/>: <paramref name="offsetLeaf"/> gives each face's offset, and a
+    /// corner that turns round gets a face of its own, a cylinder round the corner line (extrude) or a torus or
+    /// sphere round the corner circle (revolve), registered under <paramref name="cornerName"/> of its two edges.
+    /// </summary>
+    public ProfileField Offset(double d, Func<LeafField, LeafField> offsetLeaf, Func<Surface, Surface> register, Func<string, string, string> cornerName)
+    {
+        var total = _offset + d;
+        var corners = new LeafField?[_edges.Length];
+        for (var k = 0; k < _edges.Length; k++)
+        {
+            if (_corners[k] is { } existing) corners[k] = offsetLeaf(existing);
+            else if (Math.Abs(total) > 1e-9 && _vertexSign[k] == Math.Sign(total))
+            {
+                var (u, v) = (_edges[k].U1, _edges[k].V1);
+                var next = _leaves[(k + 1) % _edges.Length];
+                var name = cornerName(_leaves[k]?.Surface.Source ?? "axis", next?.Surface.Source ?? "axis");
+                var r = Math.Abs(total);
+                var surface = !_revolve
+                    ? new Surface(0, name, SurfaceKind.Cylinder, _frame.ToWorld(new Point3D(u, v, 0)), _frame.Z, r)
+                    : Math.Abs(u) <= 1e-9
+                        ? new Surface(0, name, SurfaceKind.Sphere, _frame.Origin + _frame.Y * v, _frame.Y, r)
+                        : new Surface(0, name, SurfaceKind.Torus, _frame.Origin + _frame.Y * v, _frame.Y, u, r);
+                // A grown convex corner holds material inside the round; a shrunk reflex corner outside it.
+                corners[k] = new LeafField(register(surface), complement: total < 0);
+            }
+        }
+        return new(_edges, _leaves.Select(l => l is null ? null : offsetLeaf(l)).ToList(), _frame, _revolve, total, corners);
+    }
 
     /// <summary>
     /// The surface a profile edge sweeps, with the profile's inside (its left) as material; null for an edge on
@@ -226,11 +265,11 @@ public sealed class ProfileField : Field
         var (u, v, radial) = Map(p);
         var (i, where, squared) = Nearest(u, v);
         if (where < 0) return _leaves[i]!.Sample(p);
-        var (vu, vv, sign) = Vertex(i, where, p);
+        var (vu, vv, sign, k) = Vertex(i, where, p);
         var (du, dv) = (u - vu, v - vv);
         var d = Math.Sqrt(du * du + dv * dv);
         var g = d > 0 ? Back(du / d, dv / d, radial) * sign : _leaves[i]!.Sample(p).Gradient;
-        return new(sign * d, _leaves[i]!.Surface.Id, g);
+        return new(sign * d - _offset, (_corners[k] ?? _leaves[i]!).Surface.Id, g);
     }
 
     public override double Value(Point3D p)
@@ -238,9 +277,9 @@ public sealed class ProfileField : Field
         var (u, v, _) = Map(p);
         var (i, where, _) = Nearest(u, v);
         if (where < 0) return _leaves[i]!.Value(p);
-        var (vu, vv, sign) = Vertex(i, where, p);
+        var (vu, vv, sign, _) = Vertex(i, where, p);
         var (du, dv) = (u - vu, v - vv);
-        return sign * Math.Sqrt(du * du + dv * dv);
+        return sign * Math.Sqrt(du * du + dv * dv) - _offset;
     }
 
     public override FieldSample? SampleSurface(int owner, Point3D p)
@@ -326,11 +365,11 @@ public sealed class ProfileField : Field
     /// The nearest end of edge i and the sign there: a point nearest to a convex corner is outside, to a reflex
     /// corner inside; at a tangent junction the edge's own side decides.
     /// </summary>
-    (double U, double V, double Sign) Vertex(int i, int where, Point3D p)
+    (double U, double V, double Sign, int Corner) Vertex(int i, int where, Point3D p)
     {
         var e = _edges[i];
         var k = where == 1 ? i : (i - 1 + _edges.Length) % _edges.Length;
-        var sign = _vertexSign[k] != 0 ? _vertexSign[k] : _leaves[i]!.Value(p) < 0 ? -1 : 1;
-        return where == 1 ? (e.U1, e.V1, sign) : (e.U0, e.V0, sign);
+        var sign = _vertexSign[k] != 0 ? _vertexSign[k] : _leaves[i]!.Value(p) + _offset < 0 ? -1 : 1;
+        return where == 1 ? (e.U1, e.V1, sign, k) : (e.U0, e.V0, sign, k);
     }
 }

@@ -62,6 +62,7 @@ public static class CanonicalFormat
                 w.WriteString("op", b.Op.ToString().ToLowerInvariant());
                 Numbers(w, "origin", b.Origin);
                 Numbers(w, "size", b.Size);
+                Blend(w, b.Blend);
                 break;
             case Hole h:
                 w.WriteString("type", "hole");
@@ -98,6 +99,7 @@ public static class CanonicalFormat
                 WriteProfile(w, e.Profile);
                 Number(w, "start", e.Start);
                 Number(w, "end", e.End);
+                Blend(w, e.Blend);
                 break;
             case Pattern p:
                 w.WriteString("type", "pattern");
@@ -133,6 +135,11 @@ public static class CanonicalFormat
                 WritePlane(w, r.Plane);
                 WriteProfile(w, r.Profile);
                 Number(w, "angle", r.Angle);
+                Blend(w, r.Blend);
+                break;
+            case Offset o:
+                w.WriteString("type", "offset");
+                Number(w, "distance", o.Distance);
                 break;
             default:
                 throw new NotSupportedException(f.GetType().Name);
@@ -145,14 +152,15 @@ public static class CanonicalFormat
         var id = (string)n["id"]!;
         return (string)n["type"]! switch
         {
-            "block" => new Block(id, Enum.Parse<BooleanOp>((string)n["op"]!, ignoreCase: true), Arr(n["origin"], 3), Arr(n["size"], 3)),
+            "block" => new Block(id, Enum.Parse<BooleanOp>((string)n["op"]!, ignoreCase: true), Arr(n["origin"], 3), Arr(n["size"], 3), (double?)n["blend"] ?? 0),
+            "offset" => new Offset(id, (double)n["distance"]!),
             "hole" => new Hole(id, Arr(n["center"], 2), (double)n["diameter"]!),
             "plane-cut" => new PlaneCut(id, Arr(n["point"], 3), Arr(n["normal"], 3)),
             "shell" => new Shell(id, (double)n["thickness"]!),
             "fillet" => new Fillet(id, n["edge"]!.AsArray().Select(e => (string)e!).ToArray(), (double)n["radius"]!),
             "chamfer" => new Chamfer(id, n["edge"]!.AsArray().Select(e => (string)e!).ToArray(), (double)n["distance"]!),
-            "extrude" => new Extrude(id, Op(n), ReadPlane(n["plane"]!), ReadProfile(n["profile"]!), (double)n["start"]!, (double)n["end"]!),
-            "revolve" => new Revolve(id, Op(n), ReadPlane(n["plane"]!), ReadProfile(n["profile"]!), (double)n["angle"]!),
+            "extrude" => new Extrude(id, Op(n), ReadPlane(n["plane"]!), ReadProfile(n["profile"]!), (double)n["start"]!, (double)n["end"]!, (double?)n["blend"] ?? 0),
+            "revolve" => new Revolve(id, Op(n), ReadPlane(n["plane"]!), ReadProfile(n["profile"]!), (double)n["angle"]!, (double?)n["blend"] ?? 0),
             "pattern" => new Pattern(id, n["features"]!.AsArray().Select(f => (string)f!).ToArray(), ReadMotion(n)),
             var t => throw new FormatException($"Unknown feature type '{t}'."),
         };
@@ -163,6 +171,12 @@ public static class CanonicalFormat
         : n["circular"] is { } c ? new CircularMotion(Arr(c["origin"], 3), Arr(c["axis"], 3), (int)c["count"]!, (double)c["angle"]!)
         : n["mirror"] is { } m ? new MirrorMotion(Arr(m["point"], 3), Arr(m["normal"], 3))
         : throw new FormatException("A pattern needs a linear, circular or mirror motion.");
+
+    // Only written when used, so documents without blends keep their bytes and hash.
+    static void Blend(Utf8JsonWriter w, double blend)
+    {
+        if (blend != 0) Number(w, "blend", blend);
+    }
 
     static BooleanOp Op(JsonNode n) => Enum.Parse<BooleanOp>((string)n["op"]!, ignoreCase: true);
 

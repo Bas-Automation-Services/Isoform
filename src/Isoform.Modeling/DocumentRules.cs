@@ -20,6 +20,9 @@ public static class DocumentRules
                 Fillet f when f.Radius <= tolerance => $"fillet radius must be positive, got {f.Radius}",
                 Fillet f when f.Edge.Length != 2 => "a fillet edge names exactly two source faces",
                 Chamfer c when c.Distance <= tolerance => $"chamfer distance must be positive, got {c.Distance}",
+                Offset o when Math.Abs(o.Distance) <= tolerance => "an offset distance must not be zero",
+                _ when BlendOf(feature) is var (op, blend) && (blend < 0 || blend > 0 && op == BooleanOp.New) =>
+                    blend < 0 ? $"blend must not be negative, got {blend}" : "only a join or a cut can blend",
                 Chamfer c when c.Edge.Length != 2 => "a chamfer edge names exactly two source faces",
                 Extrude e when e.End - e.Start <= tolerance => $"extrude end must be beyond its start, got {e.Start} to {e.End}",
                 Extrude e => Profiles.Problem(e.Plane, e.Profile, tolerance, revolve: false),
@@ -55,6 +58,14 @@ public static class DocumentRules
             _ => null,
         };
     }
+
+    static (BooleanOp Op, double Blend) BlendOf(Feature f) => f switch
+    {
+        Block b => (b.Op, b.Blend),
+        Extrude e => (e.Op, e.Blend),
+        Revolve r => (r.Op, r.Blend),
+        _ => (BooleanOp.Join, 0),
+    };
 
     static bool StartsBody(Feature f) => f is Block { Op: BooleanOp.New } or Extrude { Op: BooleanOp.New } or Revolve { Op: BooleanOp.New };
 }
