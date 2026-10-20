@@ -18,10 +18,13 @@ public sealed record Instance(string Id, string Part, string Hash, Frame Placeme
     public string Name(string source) => $"{Id}/{source}";
 }
 
-public sealed class AssemblyResult(IReadOnlyList<Instance> instances, IReadOnlyList<Diagnostic> diagnostics)
+public sealed class AssemblyResult(IReadOnlyList<Instance> instances, IReadOnlyList<Diagnostic> diagnostics, int freeDegrees = 0)
 {
     public IReadOnlyList<Instance> Instances { get; } = instances;
     public IReadOnlyList<Diagnostic> Diagnostics { get; } = diagnostics;
+
+    /// <summary>Degrees of freedom the mates leave the ungrounded components (0: fully held).</summary>
+    public int FreeDegrees { get; } = freeDegrees;
 
     /// <summary>Every instance's mesh moved into place and laid end to end, with its first quad index.</summary>
     public (Mesh Mesh, IReadOnlyList<int> FirstQuad) WorldMesh()
@@ -48,49 +51,46 @@ public sealed class AssemblyModeler(ModelingSettings settings)
     /// <param name="load">The text of the document at a path, or null when there is none.</param>
     public AssemblyResult Regenerate(AssemblyDocument assembly, Func<string, string?> load)
     {
-        var instances = new List<Instance>();
         var diagnostics = new List<Diagnostic>();
         var parts = new Dictionary<string, FrepResult>();
         var modeler = new FrepModeler(settings);
+        // Instances keep their pose inside their top-level component; mates move whole top-level components.
+        var found = new List<(int Top, string Id, string Part, string Hash, Frame Inner, FrepResult Result)>();
 
-        void Add(AssemblyDocument a, Frame parent, string prefix, ImmutableStack<string> open)
+        void Add(Component c, int top, Frame inner, string prefix, ImmutableStack<string> open)
         {
-            foreach (var c in a.Components)
+            var id = prefix + c.Id;
+            if (found.Any(i => i.Id == id))
             {
-                var id = prefix + c.Id;
-                if (instances.Any(i => i.Id == id) || a.Components.Count(x => x.Id == c.Id) > 1)
-                {
-                    diagnostics.Add(new Diagnostic(Diagnostic.InvalidParameter, id, $"component id '{c.Id}' is used twice"));
-                    continue;
-                }
-                if (load(c.Part) is not { } text)
-                {
-                    diagnostics.Add(new Diagnostic(Diagnostic.PartMissing, id, $"there is no document '{c.Part}'"));
-                    continue;
-                }
-                var frame = FrameOf(c.Placement).Then(parent);
-                if (CanonicalFormat.FormatOf(text) == AssemblyDocument.FormatVersion)
-                {
-                    if (open.Contains(c.Part))
-                    {
-                        diagnostics.Add(new Diagnostic(Diagnostic.InvalidParameter, id, $"'{c.Part}' contains itself"));
-                        continue;
-                    }
-                    var sub = CanonicalFormat.ReadAssembly(text);
-                    Pinned(c, CanonicalFormat.Hash(sub), id);
-                    Add(sub, frame, id + "/", open.Push(c.Part));
-                    continue;
-                }
-                var doc = CanonicalFormat.Read(text);
-                var hash = CanonicalFormat.Hash(doc);
-                Pinned(c, hash, id);
-                if (!parts.TryGetValue(hash, out var result))
-                {
-                    result = parts[hash] = modeler.Regenerate(doc);
-                    diagnostics.AddRange(result.Diagnostics.Select(d => d with { FeatureId = $"{c.Part}:{d.FeatureId}" }));
-                }
-                instances.Add(new Instance(id, c.Part, hash, frame, result));
+                diagnostics.Add(new Diagnostic(Diagnostic.InvalidParameter, id, $"component id '{c.Id}' is used twice"));
+                return;
             }
+            if (load(c.Part) is not { } text)
+            {
+                diagnostics.Add(new Diagnostic(Diagnostic.PartMissing, id, $"there is no document '{c.Part}'"));
+                return;
+            }
+            if (CanonicalFormat.FormatOf(text) == AssemblyDocument.FormatVersion)
+            {
+                if (open.Contains(c.Part))
+                {
+                    diagnostics.Add(new Diagnostic(Diagnostic.InvalidParameter, id, $"'{c.Part}' contains itself"));
+                    return;
+                }
+                var sub = CanonicalFormat.ReadAssembly(text);
+                Pinned(c, CanonicalFormat.Hash(sub), id);
+                foreach (var inside in sub.Components) Add(inside, top, FrameOf(inside.Placement).Then(inner), id + "/", open.Push(c.Part));
+                return;
+            }
+            var doc = CanonicalFormat.Read(text);
+            var hash = CanonicalFormat.Hash(doc);
+            Pinned(c, hash, id);
+            if (!parts.TryGetValue(hash, out var result))
+            {
+                result = parts[hash] = modeler.Regenerate(doc);
+                diagnostics.AddRange(result.Diagnostics.Select(d => d with { FeatureId = $"{c.Part}:{d.FeatureId}" }));
+            }
+            found.Add((top, id, c.Part, hash, inner, result));
         }
 
         void Pinned(Component c, string hash, string id)
@@ -99,8 +99,70 @@ public sealed class AssemblyModeler(ModelingSettings settings)
                 diagnostics.Add(new Diagnostic(Diagnostic.PartChanged, id, $"'{c.Part}' changed since the assembly pinned it"));
         }
 
-        Add(assembly, Frame.Identity, "", ImmutableStack<string>.Empty);
-        return new AssemblyResult(instances, diagnostics);
+        for (var k = 0; k < assembly.Components.Count; k++)
+            Add(assembly.Components[k], k, Frame.Identity, "", ImmutableStack<string>.Empty);
+
+        var poses = assembly.Components.Select(c => FrameOf(c.Placement)).ToList();
+        var freeDegrees = 0;
+        if (assembly.Mates is { Count: > 0 } mates)
+        {
+            var terms = new List<MateTerm>();
+            foreach (var m in mates)
+            {
+                if (Term(m, found, diagnostics) is { } term) terms.Add(term);
+            }
+            var grounded = assembly.Components.Select(c => c.Grounded).ToArray();
+            if (!grounded.Any(g => g)) grounded[0] = true;
+            var solution = MateSolver.Solve(poses, grounded, terms);
+            poses = solution.Poses.ToList();
+            freeDegrees = solution.FreeDegrees;
+            if (solution.Residual > 1e-9)
+                diagnostics.Add(new Diagnostic(Diagnostic.MatesConflict, null, $"the mates cannot all hold (left {solution.Residual:G3} apart)"));
+        }
+
+        var instances = found.Select(f => new Instance(f.Id, f.Part, f.Hash, f.Inner.Then(poses[f.Top]), f.Result)).ToList();
+        return new AssemblyResult(instances, diagnostics, freeDegrees);
+    }
+
+    /// <summary>
+    /// A mate's two faces in their top-level components' coordinates: a flat face by a point on it and its outward
+    /// normal (taken from the solid itself, so a face of a cut points the right way), a cylinder or cone by its axis.
+    /// </summary>
+    static MateTerm? Term(Mate m, List<(int Top, string Id, string Part, string Hash, Frame Inner, FrepResult Result)> found, List<Diagnostic> diagnostics)
+    {
+        (int Top, Point3D Point, Vector3D Direction)? Face(string name)
+        {
+            var owner = found.Where(f => name.StartsWith(f.Id + "/")).MaxBy(f => f.Id.Length);
+            if (owner.Result is null)
+            {
+                diagnostics.Add(new Diagnostic(Diagnostic.InvalidParameter, m.Id, $"no component has the face '{name}'"));
+                return null;
+            }
+            var source = name[(owner.Id.Length + 1)..];
+            var surface = owner.Result.Part.Surfaces.LastOrDefault(s => s.Source == source);
+            var mesh = owner.Result.Mesh;
+            var quad = mesh?.Quads.Select((q, i) => (q, i)).FirstOrDefault(x => surface is not null && x.q.Owner == surface.Id);
+            if (surface is null || mesh is null || quad is not { } on || on.q.Owner != surface.Id)
+            {
+                diagnostics.Add(new Diagnostic(Diagnostic.InvalidParameter, m.Id, $"'{name}' is not a face of {owner.Id}"));
+                return null;
+            }
+            var flat = m.Kind != MateKind.Axis;
+            if (flat ? surface.Kind != SurfaceKind.Plane : surface.Kind is not (SurfaceKind.Cylinder or SurfaceKind.Cone))
+            {
+                diagnostics.Add(new Diagnostic(Diagnostic.InvalidParameter, m.Id,
+                    $"a {m.Kind.ToString().ToLowerInvariant()} mate needs {(flat ? "flat faces" : "cylinders or cones")}; '{name}' is a {surface.Kind.ToString().ToLowerInvariant()}"));
+                return null;
+            }
+            if (!flat) return (owner.Top, owner.Inner.ToWorld(surface.Origin), owner.Inner.ToWorld(surface.Axis));
+            var point = mesh.Vertices[on.q.A];
+            // The face's own surface field: at an edge vertex the solid's gradient would be the neighbour's.
+            var normal = owner.Result.Part.Field!.SampleSurface(surface.Id, point)!.Value.Gradient.Normalized();
+            return (owner.Top, owner.Inner.ToWorld(point), owner.Inner.ToWorld(normal));
+        }
+
+        if (Face(m.A) is not { } a || Face(m.B) is not { } b) return null;
+        return new MateTerm(m.Kind, a.Top, a.Point, a.Direction, b.Top, b.Point, b.Direction, m.Offset);
     }
 
     public static Frame FrameOf(Placement p) =>

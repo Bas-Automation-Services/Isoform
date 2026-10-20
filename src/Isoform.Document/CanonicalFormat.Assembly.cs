@@ -55,6 +55,7 @@ public static partial class CanonicalFormat
             w.WriteString("id", c.Id);
             w.WriteString("part", c.Part);
             if (c.Hash is { } hash) w.WriteString("hash", hash);
+            if (c.Grounded) w.WriteBoolean("grounded", true);
             w.WriteStartObject("placement");
             Numbers(w, "origin", c.Placement.Origin);
             Numbers(w, "x", c.Placement.X);
@@ -63,6 +64,22 @@ public static partial class CanonicalFormat
             w.WriteEndObject();
         }
         w.WriteEndArray();
+        // Only written when used, like every optional key.
+        if (assembly.Mates is { Count: > 0 } mates)
+        {
+            w.WriteStartArray("mates");
+            foreach (var m in mates)
+            {
+                w.WriteStartObject();
+                w.WriteString("id", m.Id);
+                w.WriteString("kind", m.Kind.ToString().ToLowerInvariant());
+                w.WriteString("a", m.A);
+                w.WriteString("b", m.B);
+                if (m.Offset != 0) Number(w, "offset", m.Offset);
+                w.WriteEndObject();
+            }
+            w.WriteEndArray();
+        }
         w.WriteEndObject();
     }
 
@@ -74,8 +91,9 @@ public static partial class CanonicalFormat
         {
             var p = n["placement"];
             var placement = p is null ? Placement.Identity : new Placement(Arr(p["origin"], 3), Arr(p["x"], 3), Arr(p["normal"], 3));
-            return new Component((string)n["id"]!, (string)n["part"]!, placement, (string?)n["hash"]);
-        }).ToList());
+            return new Component((string)n["id"]!, (string)n["part"]!, placement, (string?)n["hash"], (bool?)n["grounded"] ?? false);
+        }).ToList(), root["mates"]?.AsArray().Select(n => n!).Select(n => new Mate((string)n["id"]!,
+            Enum.Parse<MateKind>((string)n["kind"]!, ignoreCase: true), (string)n["a"]!, (string)n["b"]!, (double?)n["offset"] ?? 0)).ToList());
     }
 
     static string Text(Action<Utf8JsonWriter> write)

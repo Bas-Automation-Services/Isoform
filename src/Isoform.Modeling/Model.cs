@@ -32,6 +32,7 @@ public sealed record Diagnostic(string Code, string? FeatureId, string Message)
     public const string BackendFailed = "backend-failed";
     public const string PartMissing = "part-missing";
     public const string PartChanged = "part-changed";
+    public const string MatesConflict = "mates-conflict";
 }
 
 /// <summary>A connected face that exists after regeneration, with every source surface it came from.</summary>
