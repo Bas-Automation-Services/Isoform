@@ -122,9 +122,9 @@ public static partial class DualContouring
         Action<string, TimeSpan>? trace = null, bool adaptive = true, bool prune = true, bool snapGrid = false)
     {
         var clock = System.Diagnostics.Stopwatch.StartNew();
-        void Stage(string name)
+        void Stage(FormattableString name)
         {
-            trace?.Invoke(name, clock.Elapsed);
+            trace?.Invoke(FormattableString.Invariant(name), clock.Elapsed);
             clock.Restart();
         }
 
@@ -150,7 +150,7 @@ public static partial class DualContouring
             var sample = f.Sample(c);
             crossings[e] = new(c, sample.Gradient.Normalized(), sample.Owner);
         });
-        Stage("crossings (root finding)");
+        Stage($"crossings (root finding)");
 
         // Sorting (cell, edge) groups the crossings per cell, puts cells in ascending order and keeps each cell's
         // crossings in edge order. A leaf beside smaller neighbours can fill two quadrants; it takes the crossing once.

@@ -155,6 +155,6 @@ public static class Expression
 
         double Tangent(double degrees) => Trig(degrees, Math.Cos, [1, 0, -1, 0]) is var cos && cos != 0
             ? Trig(degrees, Math.Sin, [0, 1, 0, -1]) / cos
-            : throw new FormatException($"tan({degrees}) is undefined in '{text}'");
+            : throw new FormatException(FormattableString.Invariant($"tan({degrees}) is undefined in '{text}'"));
     }
 }

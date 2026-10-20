@@ -7,8 +7,8 @@ import {
 } from '../../src/Isoform.Playground/wwwroot/js/lib/diagnose.js';
 
 // What the kernel reported for example 0 with the hole moved to y = 44.4 (a 0.6 mm wall), at 0.5 mm cells; the
-// message as a Dutch culture formats it.
-const thin = 'plate/y+ and hole/wall are 0,601 mm apart near (30,09, 49,70, 0,09), below the resolved size of 1 mm';
+// message as the kernel formats it, culture-invariantly.
+const thin = 'plate/y+ and hole/wall are 0.601 mm apart near (30.09, 49.70, 0.09), below the resolved size of 1 mm';
 const result = (diagnostics, extra = {}) => ({
   faces: [['plate/x+'], ['plate/y+'], ['hole/wall'], ['plate/z+'], ['fillet/face'], ['plate/x-']],
   thinSpots: [
@@ -28,11 +28,11 @@ test('namesIn: the names a message mentions, in its order, whole names only', ()
   assert.deepEqual(namesIn('nothing here', names), []);
 });
 
-test('sizeOf: a thin spot\'s thickness, else the size in the message, in either decimal mark', () => {
+test('sizeOf: a thin spot\'s thickness, else the size in the message', () => {
   assert.equal(sizeOf(thin, { thickness: 0.601 }), 0.601);
   assert.equal(sizeOf(thin, null), 0.601);
   assert.equal(sizeOf('hole (0.6 mm) is below the resolved size of 1 mm; use a smaller CellSize'), 0.6);
-  assert.equal(sizeOf('shell leaves a cavity about 0,25 mm thick, below the resolved size of 1 mm'), 0.25);
+  assert.equal(sizeOf('shell leaves a cavity about 0.25 mm thick, below the resolved size of 1 mm'), 0.25);
   assert.equal(sizeOf('shell leaves a cavity too thin to measure, if any'), null);
 });
 
@@ -109,7 +109,7 @@ test('groups: by code, errors first, then in the kernel\'s order', () => {
 
 test('refind: the focused diagnostic survives a regeneration that still reports it', () => {
   const before = diagnose(result([d('below-resolution', 'hole', thin)]))[0];
-  const moved = 'plate/y+ and hole/wall are 0,55 mm apart near (30,09, 49,72, 0,09), below the resolved size of 1 mm';
+  const moved = 'plate/y+ and hole/wall are 0.55 mm apart near (30.09, 49.72, 0.09), below the resolved size of 1 mm';
   const after = diagnose(result([d('fillet-invalid', 'fillet', 'x'), d('below-resolution', 'hole', moved)]));
   assert.equal(refind(after, before).index, 1);
   assert.equal(refind(diagnose(result([])), before), null);

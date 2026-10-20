@@ -78,7 +78,7 @@ public static class ExactBrep
             if (unsupported.Count > 0) throw new NotSupportedException($"faces without a closed-form surface: {string.Join(", ", unsupported)}");
             var stray = Enumerable.Range(0, faceCount).Select(f => (f, Deviation(_surface[f], f))).Where(x => x.Item2 > Fit).ToList();
             if (stray.Count > 0)
-                throw new NotSupportedException($"faces that are not one analytic surface: {string.Join(", ", stray.Select(x => $"{Name(x.f)} (off its {_surface[x.f].Kind.ToString().ToLowerInvariant()} by {x.Item2:G2} mm)"))}");
+                throw new NotSupportedException($"faces that are not one analytic surface: {string.Join(", ", stray.Select(x => FormattableString.Invariant($"{Name(x.f)} (off its {_surface[x.f].Kind.ToString().ToLowerInvariant()} by {x.Item2:G2} mm)")))}");
 
             // Whether each face's gradient points out of the solid (the quads wind outward).
             _inside = new Point3D[faceCount];

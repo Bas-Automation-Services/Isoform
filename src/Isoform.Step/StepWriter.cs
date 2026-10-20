@@ -240,9 +240,9 @@ public static class StepWriter
             var sb = new StringBuilder();
             sb.Append("ISO-10303-21;\nHEADER;\n");
             sb.Append("FILE_DESCRIPTION(('Isoform exact B-rep'),'2;1');\n");
-            sb.Append($"FILE_NAME({S(name)},'',(''),(''),'Isoform','Isoform','');\n");
+            sb.Append(CultureInfo.InvariantCulture, $"FILE_NAME({S(name)},'',(''),(''),'Isoform','Isoform','');\n");
             sb.Append("FILE_SCHEMA(('AUTOMOTIVE_DESIGN { 1 0 10303 214 1 1 1 1 }'));\nENDSEC;\nDATA;\n");
-            for (var i = 0; i < Lines.Count; i++) sb.Append($"#{i + 1}={Lines[i]};\n");
+            for (var i = 0; i < Lines.Count; i++) sb.Append(CultureInfo.InvariantCulture, $"#{i + 1}={Lines[i]};\n");
             sb.Append("ENDSEC;\nEND-ISO-10303-21;\n");
             return sb.ToString();
         }

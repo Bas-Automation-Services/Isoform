@@ -167,7 +167,7 @@ public sealed class AssemblyModeler(ModelingSettings settings, RegionCache? cach
             poses = solution.Poses.ToList();
             freeDegrees = solution.FreeDegrees;
             if (solution.Residual > 1e-9)
-                diagnostics.Add(new Diagnostic(Diagnostic.MatesConflict, null, $"the mates cannot all hold (left {solution.Residual:G3} apart)"));
+                diagnostics.Add(new Diagnostic(Diagnostic.MatesConflict, null, FormattableString.Invariant($"the mates cannot all hold (left {solution.Residual:G3} apart)")));
         }
 
         var instances = found.Select(f => new Instance(f.Id, f.Part, f.Hash, f.Inner.Then(poses[f.Top]), f.Result)).ToList();
