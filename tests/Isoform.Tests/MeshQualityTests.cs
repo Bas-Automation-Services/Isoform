@@ -1,0 +1,94 @@
+using BasAutomation.Geometry;
+using Isoform.Document;
+using Isoform.Meshing;
+using Isoform.Modeling;
+using Xunit.Abstractions;
+
+namespace Isoform.Tests;
+
+/// <summary>H3a: the mesh is a faithful, measurable approximation of the exact implicit solid.</summary>
+public class MeshQualityTests(ITestOutputHelper output)
+{
+    // Small part so fine grids stay cheap: 20×10×5 plate, Ø6 hole, R2 fillet.
+    static readonly PartDocument Small = new(
+    [
+        new Block("plate", BooleanOp.New, [0, 0, 0], [20, 10, 5]),
+        new Hole("hole", [8, 5], 6),
+        new Fillet("fillet", ["plate/z+", "plate/x+"], 2),
+    ]);
+
+    static double SmallVolume => 20 * 10 * 5 - Math.PI * 9 * 5 - 2 * 2 * (1 - Math.PI / 4) * 10;
+
+    [Fact]
+    public void Mesh_is_watertight_and_encloses_the_exact_volume()
+    {
+        var result = Regenerate(Small, 0.25);
+
+        result.Mesh!.IsWatertight().Should().BeTrue();
+        var volume = SignedVolume(result.Mesh);
+        output.WriteLine($"volume {volume:F6} exact {SmallVolume:F6} rel {(volume - SmallVolume) / SmallVolume:E2}");
+        volume.Should().BeApproximately(SmallVolume, SmallVolume * 1e-3, "positive volume also proves outward winding");
+    }
+
+    [Fact]
+    public void Error_shrinks_quadratically_and_meets_the_chord_tolerance()
+    {
+        var errors = new[] { 0.5, 0.25, 0.125 }.Select(h =>
+        {
+            var r = Regenerate(Small, h);
+            var (vertex, chord) = Errors(r);
+            output.WriteLine($"h {h}: max vertex error {vertex:E2}, max chord error {chord:E2}");
+            return (vertex, chord);
+        }).ToList();
+
+        errors[1].chord.Should().BeLessThan(errors[0].chord / 3, "halving h should cut chord error ~4×");
+        errors[2].chord.Should().BeLessThan(errors[1].chord / 3);
+        errors[2].chord.Should().BeLessThan(0.01, "default chord tolerance is 0.01 mm");
+        errors.Should().OnlyContain(e => e.vertex <= 1e-7, "vertices lie on the exact surface within the modeling tolerance");
+    }
+
+    [Fact]
+    public void Regeneration_is_bit_for_bit_deterministic()
+    {
+        var a = Regenerate(EditSuite.Base, 0.5);
+        var b = Regenerate(EditSuite.Base, 0.5);
+
+        b.Mesh!.Vertices.Select(Bits).Should().Equal(a.Mesh!.Vertices.Select(Bits));
+        b.Mesh.Quads.Should().Equal(a.Mesh.Quads);
+        b.Topology!.Faces.Select(f => string.Join(",", f.Sources)).Should().Equal(a.Topology!.Faces.Select(f => string.Join(",", f.Sources)));
+        b.Topology.Edges.Should().Equal(a.Topology.Edges);
+    }
+
+    static FrepResult Regenerate(PartDocument doc, double h) =>
+        new FrepModeler(new ModelingSettings { CellSize = h }).Regenerate(doc);
+
+    static (long, long, long) Bits(Point3D p) =>
+        (BitConverter.DoubleToInt64Bits(p.X), BitConverter.DoubleToInt64Bits(p.Y), BitConverter.DoubleToInt64Bits(p.Z));
+
+    /// <summary>
+    /// |f| at vertices and at triangle centroids / edge midpoints. Every leaf is an exact distance, so away from
+    /// sharp edges |f| is the distance to the surface; at edges it is a lower bound.
+    /// </summary>
+    static (double Vertex, double Chord) Errors(FrepResult r)
+    {
+        var field = r.Part.Field!;
+        var v = r.Mesh!.Vertices;
+        var vertex = v.Max(p => Math.Abs(field.Value(p)));
+        var chord = 0.0;
+        foreach (var t in r.Mesh.Triangles())
+        {
+            Point3D Mid(Point3D a, Point3D b) => new((a.X + b.X) / 2, (a.Y + b.Y) / 2, (a.Z + b.Z) / 2);
+            var c = new Point3D((v[t.A].X + v[t.B].X + v[t.C].X) / 3, (v[t.A].Y + v[t.B].Y + v[t.C].Y) / 3, (v[t.A].Z + v[t.B].Z + v[t.C].Z) / 3);
+            foreach (var p in new[] { c, Mid(v[t.A], v[t.B]), Mid(v[t.B], v[t.C]), Mid(v[t.C], v[t.A]) })
+                chord = Math.Max(chord, Math.Abs(field.Value(p)));
+        }
+        return (vertex, chord);
+    }
+
+    static double SignedVolume(Mesh mesh)
+    {
+        var v = mesh.Vertices;
+        return mesh.Triangles().Sum(t => v[t.A].AsVector().Dot(v[t.B].AsVector().Cross(v[t.C].AsVector()))) / 6;
+    }
+}
+

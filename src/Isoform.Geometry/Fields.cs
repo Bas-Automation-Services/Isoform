@@ -14,6 +14,9 @@ public abstract class Field
     public abstract FieldSample Sample(Point3D p);
 
     public double Value(Point3D p) => Sample(p).Value;
+
+    /// <summary>The field of one owner surface alone, ignoring the rest of the tree; null if it is not in this tree.</summary>
+    public abstract FieldSample? SampleSurface(int owner, Point3D p);
 }
 
 public sealed class LeafField(Surface surface, bool complement = false) : Field
@@ -29,6 +32,8 @@ public sealed class LeafField(Surface surface, bool complement = false) : Field
         var g = Surface.Gradient(p);
         return Complement ? new(-d, Surface.Id, -g) : new(d, Surface.Id, g);
     }
+
+    public override FieldSample? SampleSurface(int owner, Point3D p) => owner == Surface.Id ? Sample(p) : null;
 }
 
 /// <summary>Intersection.</summary>
@@ -45,6 +50,13 @@ public sealed class MaxField(IReadOnlyList<Field> children) : Field
             if (s.Value > best.Value) best = s;
         }
         return best;
+    }
+
+    public override FieldSample? SampleSurface(int owner, Point3D p)
+    {
+        foreach (var c in Children)
+            if (c.SampleSurface(owner, p) is { } s) return s;
+        return null;
     }
 }
 
@@ -63,6 +75,13 @@ public sealed class MinField(IReadOnlyList<Field> children) : Field
         }
         return best;
     }
+
+    public override FieldSample? SampleSurface(int owner, Point3D p)
+    {
+        foreach (var c in Children)
+            if (c.SampleSurface(owner, p) is { } s) return s;
+        return null;
+    }
 }
 
 /// <summary>Complement. Removed by <see cref="FieldAlgebra.Normalize"/>, which pushes it down to the leaves.</summary>
@@ -75,6 +94,9 @@ public sealed class NegateField(Field child) : Field
         var s = Child.Sample(p);
         return new(-s.Value, s.Owner, -s.Gradient);
     }
+
+    public override FieldSample? SampleSurface(int owner, Point3D p) =>
+        Child.SampleSurface(owner, p) is { } s ? new(-s.Value, s.Owner, -s.Gradient) : null;
 }
 
 /// <summary>
@@ -107,6 +129,23 @@ public sealed class RoundedEdgeField(LeafField a, LeafField b, double radius, Su
         var beta = (b - a * c) / denom;
         if (alpha < 0 || beta < 0) return sharp;
 
+        return Rounded(sa, sb, alpha, beta);
+    }
+
+    public override FieldSample? SampleSurface(int owner, Point3D p)
+    {
+        if (owner != Fillet.Id) return A.SampleSurface(owner, p) ?? B.SampleSurface(owner, p);
+        var sa = A.Sample(p);
+        var sb = B.Sample(p);
+        var c = sa.Gradient.Dot(sb.Gradient);
+        var denom = 1 - c * c;
+        var a = sa.Value + Radius;
+        var b = sb.Value + Radius;
+        return Rounded(sa, sb, (a - b * c) / denom, (b - a * c) / denom);
+    }
+
+    FieldSample Rounded(FieldSample sa, FieldSample sb, double alpha, double beta)
+    {
         var w = sa.Gradient * alpha + sb.Gradient * beta;
         var len = w.Length;
         return len > 0 ? new(len - Radius, Fillet.Id, w / len) : new(-Radius, Fillet.Id, sa.Gradient);

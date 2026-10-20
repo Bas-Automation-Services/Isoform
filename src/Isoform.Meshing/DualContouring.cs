@@ -161,8 +161,34 @@ public static class DualContouring
             }
         }
         var x = SymmetricSolver.PseudoSolve(ata, atb, relativeCutoff: 0.05);
-        var v = new Point3D(mp.X + x[0], mp.Y + x[1], mp.Z + x[2]);
+        var v = Refine(field, new Point3D(mp.X + x[0], mp.Y + x[1], mp.Z + x[2]), crossings.Select(c => c.Owner).Distinct().ToList());
+        // Tangent (G1) junctions leave the along-face position undetermined; land on the solid itself.
+        v = Project(field, v);
         return grid.ContainsLoosely(cell, v) ? v : mp;
+    }
+
+    // The QEF uses tangent planes; Gauss-Newton on the owner surfaces themselves moves the vertex onto the
+    // real (possibly curved) edge or corner.
+    static Point3D Refine(Field field, Point3D p, List<int> owners)
+    {
+        for (var it = 0; it < 8; it++)
+        {
+            var jtj = new double[3, 3];
+            var jtr = new double[3];
+            foreach (var owner in owners)
+            {
+                var s = field.SampleSurface(owner, p)!.Value;
+                double[] g = [s.Gradient.X, s.Gradient.Y, s.Gradient.Z];
+                for (var r = 0; r < 3; r++)
+                {
+                    jtr[r] -= g[r] * s.Value;
+                    for (var c = 0; c < 3; c++) jtj[r, c] += g[r] * g[c];
+                }
+            }
+            var dx = SymmetricSolver.PseudoSolve(jtj, jtr, relativeCutoff: 1e-6);
+            p = new Point3D(p.X + dx[0], p.Y + dx[1], p.Z + dx[2]);
+        }
+        return p;
     }
 
     // Newton steps along the exact gradient: puts smooth-region vertices on the surface.
