@@ -72,6 +72,24 @@ public class QueryTests(ITestOutputHelper output)
         Face(part, exit).Should().StartWith("ring/");
     }
 
+    [Fact]
+    public void Ray_along_a_slanted_face_just_inside_or_outside_it_does_not_crawl()
+    {
+        // Sphere tracing alone steps by the 1e-6 gap: 4e7 steps for this ray.
+        var part = Compile(Plate, new PlaneCut("cut", [60, 0, 0], [1, 1, 0]));
+        var (n, along) = (new Vector3D(1, 1, 0).Normalized(), new Vector3D(-1, 1, 0));
+
+        var sw = Stopwatch.StartNew();
+        var inside = Queries.Raycast(part.Field!, P(40, 20, 5) - n * 1e-6, along, 200)!.Value;
+        var outside = Queries.Raycast(part.Field!, P(40, 20, 5) + n * 1e-6, along, 200);
+
+        output.WriteLine($"{sw.Elapsed.TotalMilliseconds:F1} ms");
+        Face(part, inside).Should().Be("plate/y+");
+        inside.Distance.Should().BeApproximately((30 + 1e-6 / Math.Sqrt(2)) * Math.Sqrt(2), 1e-12);
+        outside.Should().BeNull();
+        sw.Elapsed.TotalSeconds.Should().BeLessThan(1);
+    }
+
     // ---- Distance ----
 
     [Fact]
@@ -193,6 +211,47 @@ public class QueryTests(ITestOutputHelper output)
     {
         var part = Compile(Plate);
         Queries.MinimumWall(part.Field!, MeshOf(part, 0.5))!.Value.Thickness.Should().BeApproximately(10, 1e-9);
+    }
+
+    // The chord from beside the sharp x+/z- edge runs up the x+ face to the fillet or chamfer above it and reads less
+    // than 10 (8 at the edge itself); the chord back from there runs into the plate, so that is no wall. Refining towards
+    // the edge also used to send rays crawling up the x+ face 1e-5 inside it: minutes for the filleted plate.
+    [Theory]
+    [InlineData("fillet")]
+    [InlineData("chamfer")]
+    [InlineData("fillets on two edges")]
+    [InlineData("fillet and hole")]
+    public void Minimum_wall_of_a_filleted_or_chamfered_plate_is_its_thickness(string kind)
+    {
+        Feature[] features = kind switch
+        {
+            "fillet" => [Plate, new Fillet("fillet", ["plate/z+", "plate/x+"], 2)],
+            "chamfer" => [Plate, new Chamfer("chamfer", ["plate/z+", "plate/x+"], 2)],
+            "fillets on two edges" => [Plate, new Fillet("top", ["plate/z+", "plate/x+"], 2), new Fillet("bottom", ["plate/z-", "plate/y+"], 3)],
+            _ => [Plate, new Hole("hole", [30, 25], 10), new Fillet("fillet", ["plate/z+", "plate/x+"], 2)],
+        };
+        var part = Compile(features);
+        var mesh = MeshOf(part, 0.5);
+
+        var sw = Stopwatch.StartNew();
+        var wall = Queries.MinimumWall(part.Field!, mesh)!.Value;
+
+        output.WriteLine($"{wall.Thickness:F12} from {part.Surfaces[wall.FromOwner].Source} to {part.Surfaces[wall.ToOwner].Source}, {sw.Elapsed.TotalSeconds:F2} s");
+        wall.Thickness.Should().BeApproximately(10, 1e-9);
+        sw.Elapsed.TotalSeconds.Should().BeLessThan(10);
+    }
+
+    [Fact]
+    public void Minimum_wall_of_a_knife_edge_reads_thin_towards_its_tip()
+    {
+        // The top runs down at 1 in 3 to a sharp edge with the bottom along x = 100.
+        var part = Compile(Plate, new PlaneCut("cut", [100, 0, 0], [1, 0, 3]));
+
+        var wall = Queries.MinimumWall(part.Field!, MeshOf(part, 0.5))!.Value;
+
+        output.WriteLine($"{wall.Thickness:E3} at x = {wall.From.X:F6}");
+        wall.Thickness.Should().BeLessThan(1e-3);
+        wall.From.X.Should().BeGreaterThan(99.99);
     }
 
     // ---- Mass properties ----
