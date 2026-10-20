@@ -1,6 +1,6 @@
 // Opens every example in headless Edge or Chrome, waits for the part to regenerate, checks the stats line and
 // saves a screenshot to tests/playground/out/screenshots; then picks a face, resolves a thin spot from the
-// diagnostics, pins a face, and commits, undoes and redoes an edit. Exits non-zero if anything fails.
+// diagnostics, pins a face, commits, undoes and redoes an edit, and drags a handle. Exits non-zero if anything fails.
 // node tests/playground/e2e.mjs [published wwwroot]      (env: ISOFORM_BROWSER, ISOFORM_TIMEOUT in ms)
 import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -19,9 +19,49 @@ const names = Object.keys(JSON.parse(kernel.Examples()));
 // The stats line once the page has a result: "812 ms · 19,598 triangles · 8 faces, ..." or an error.
 const settled = `(s => /\\d ms ·|Error:|does not parse/.test(s) && s)(document.getElementById('stats')?.textContent ?? '')`;
 
+/**
+ * Handles: on example 0, select plate/x+, drag its arrow 40 px outwards, and the plate gets wider and the hash
+ * changes. Skipped while the kernel has no Handles export. Returns 'passed', 'FAILED' or 'skipped'.
+ */
+async function dragHandle(page) {
+  if (typeof kernel.Handles !== 'function') {
+    console.log('skip  handles: the kernel has no Handles export yet');
+    return 'skipped';
+  }
+  const problems = [];
+  let width;
+  try {
+    await page.open(`${site.url}?example=0`);
+    await page.waitFor(settled, { timeout });
+    const before = await page.evaluate('window.isoform.hash()');
+    await page.evaluate(`window.isoform.select(['plate/x+'])`);
+    const h = await page.waitFor(`window.isoform.handles().find(h => h.kind === 'linear' && !h.readOnly && h.faces.includes('plate/x+'))`, { timeout: 10000 });
+    await page.frames();
+    const to = [h.screen[0] + 40 * h.direction[0], h.screen[1] + 40 * h.direction[1]];
+    // By hand rather than page.drag, for a screenshot with the label showing mid-drag.
+    await page.mouse('mouseMoved', h.screen);
+    await page.mouse('mousePressed', h.screen, { buttons: 1 });
+    for (let i = 1; i <= 12; i++)
+      await page.mouse('mouseMoved', [h.screen[0] + (to[0] - h.screen[0]) * i / 12, h.screen[1] + (to[1] - h.screen[1]) * i / 12], { buttons: 1 });
+    await page.frames();
+    await page.screenshot(join(shots, 'handle-drag.png'));
+    await page.mouse('mouseReleased', to);
+    await page.waitFor(`window.isoform.hash() !== ${JSON.stringify(before)}`, { timeout });
+    width = await page.evaluate(`JSON.parse(window.isoform.document()).features.find(f => f.id === 'plate').size[0]`);
+    if (!(width > 100)) problems.push(`plate.size.0 is ${width}, not more than 100`);
+    if (!(await page.evaluate('window.isoform.selection()')).includes('plate/x+')) problems.push('plate/x+ is no longer selected');
+  } catch (e) {
+    problems.push(e.message);
+  }
+  problems.push(...page.errors);
+  console.log(`${problems.length ? 'FAIL' : 'pass'}  handles: dragged plate/x+ to plate.size.0 = ${width}, the hash changed`);
+  for (const p of problems) console.log(`        ${p}`);
+  return problems.length ? 'FAILED' : 'passed';
+}
+
 const site = await serve(root);
 const browser = await launch();
-let failures = 0, picking = false, diagnosing = false, pinning = false, committing = false;
+let failures = 0, picking = false, diagnosing = false, pinning = false, committing = false, handles = 'skipped';
 try {
   const page = await browser.newPage();
   for (const [i, name] of names.entries()) {
@@ -78,13 +118,14 @@ try {
   diagnosing = await diagnostics(page);
   pinning = await pins(page);
   committing = await commits(page);
+  handles = await dragHandle(page);
 } finally {
   await browser.close();
   await site.close();
 }
 console.log(`\n${names.length - failures}/${names.length} examples passed, picking ${picking ? 'passed' : 'FAILED'}, `
-  + `diagnostics ${diagnosing ? 'passed' : 'FAILED'}, pins ${pinning ? 'passed' : 'FAILED'}, history ${committing ? 'passed' : 'FAILED'}; screenshots in ${relative(repo, shots)}`);
-process.exitCode = failures || !picking || !diagnosing || !pinning || !committing ? 1 : 0;
+  + `diagnostics ${diagnosing ? 'passed' : 'FAILED'}, pins ${pinning ? 'passed' : 'FAILED'}, history ${committing ? 'passed' : 'FAILED'}, handles ${handles}; screenshots in ${relative(repo, shots)}`);
+process.exitCode = failures || !picking || !diagnosing || !pinning || !committing || handles === 'FAILED' ? 1 : 0;
 
 /**
  * Diagnostics in place: example 0 with its hole moved to leave a 0.6 mm wall gives a below-resolution thin spot at

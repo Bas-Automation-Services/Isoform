@@ -66,8 +66,10 @@ export function createViewer(host) {
     camera.updateProjectionMatrix();
   }).observe(host);
 
+  const frameHooks = new Set(); // e.g. handles keeping their size on screen as the camera moves
   renderer.setAnimationLoop(() => {
     controls.update();
+    for (const hook of frameHooks) hook();
     renderer.render(scene, camera);
   });
 
@@ -75,6 +77,10 @@ export function createViewer(host) {
 
   return {
     canvas: renderer.domElement,
+    // For overlays drawn in the view (handles): they add to the scene and pause the controls while they drag.
+    scene, camera, controls,
+    /** Calls hook before every frame is drawn. */
+    onFrame: hook => frameHooks.add(hook),
 
     /** Replaces the model with a result's mesh; nothing is lit until light(). fit frames the camera on it. */
     show(result, fit) {

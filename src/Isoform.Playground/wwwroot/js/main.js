@@ -3,6 +3,7 @@ import { adaptResult, createClient } from './kernel-client.js';
 import { createStore } from './store.js';
 import { createViewer } from './viewer.js';
 import { createPicking } from './picking.js';
+import { createHandles } from './handles.js';
 import { createEditor } from './panels/editor.js';
 import { createDiagnostics } from './panels/diagnostics.js';
 import { createSelection } from './panels/selection.js';
@@ -118,6 +119,14 @@ Object.assign(window.isoform, {
   pins: () => store.state.pins ?? [],
   pin: target => references.pin(typeof target === 'string' ? { face: target } : Array.isArray(target) ? { edge: target } : undefined),
 });
+
+// Handles (J1): the selected feature's handles. A released drag commits its edits as one history entry (J3's
+// applyEdits); J2 adds the preview pipeline.
+const handles = createHandles(viewer, store, {
+  fetch: () => client.call('handles', { slot: 'main' }).then(r => r.result),
+  commit: edits => commits.applyEdits(edits, undefined, 'handle'),
+});
+window.isoform.handles = handles.list;
 
 await client.start();
 editor.load((await client.call('examples')).result);
