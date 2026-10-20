@@ -1,16 +1,15 @@
-// The selected feature's handles in the view. Selecting a face selects its feature: its faces get a tint and its
-// handles show, as arrows (linear), discs (planar) and arcs (angle), a constant size on screen. Hovering one lights it
-// and shows its label and value; dragging it computes the edits every move (preview) and hands them to commit on
-// release. Handles set by an expression are grey and do not drag. The handles come from the kernel (the C# contract
+// The selected feature's handles in the view: the store's feature, which the tree sets and a picked face sets to its
+// own (panels/tree.js, which also tints the feature's faces). They show as arrows (linear), discs (planar) and arcs
+// (angle), a constant size on screen. Hovering one lights it and shows its label and value; dragging it computes the
+// edits every move (preview) and hands them to commit on release. Handles set by an expression are grey and do not drag. The handles come from the kernel (the C# contract
 // in docs/playground-plan.md) after every regeneration; the math is in lib/dragmath.js.
 import * as THREE from 'three';
-import { anchorAt, featureOf, frameOf, shownHandles, startDrag, valueAt } from './lib/dragmath.js';
-import { faceName } from './store.js';
+import { anchorAt, frameOf, shownHandles, startDrag, valueAt } from './lib/dragmath.js';
 
 // Sizes in CSS pixels.
 const arrow = { length: 64, head: 16, radius: 6, shaft: 1.6 }, disc = 11, arc = { radius: 46, tube: 1.6, knob: 6 };
 const reach = 9;  // how near the pointer must come to a handle's outline to grab it
-const color = { idle: 0x2f6fdb, hot: 0xf59e0b, readOnly: 0x9aa0a6, tint: 0x2f6fdb };
+const color = { idle: 0x2f6fdb, hot: 0xf59e0b, readOnly: 0x9aa0a6 };
 
 const vector = a => new THREE.Vector3(...a);
 const shown = x => String(Math.round(x * 1000) / 1000);
@@ -42,7 +41,6 @@ export function createHandles(viewer, store, { fetch, commit, preview = () => { 
 
   let all = [];        // every handle of the result on screen
   let visuals = [];    // per shown handle: { handle, object, materials, arc?, knob?, t }
-  let tint = null;     // the overlay that tints the selected feature's faces
   let hot = null, drag = null; // the visual under the pointer, and the one being dragged: { visual, move, state }
 
   // A new result drops the old handles (their anchors moved) and fetches its own; a reply for a result no longer on
@@ -54,33 +52,19 @@ export function createHandles(viewer, store, { fetch, commit, preview = () => { 
       const arrived = list => { if (asked === store.state.result) { all = list ?? []; rebuild(); } };
       if (asked) fetch().then(arrived, () => arrived([]));
     }
-    if (s.result !== before.result || s.selection !== before.selection) rebuild();
+    if (s.result !== before.result || s.selection !== before.selection || s.feature !== before.feature) rebuild();
   });
 
   function rebuild() {
     for (const v of visuals) { v.arc?.dispose(); v.materials.forEach(m => m.dispose()); }
     group.clear();
-    if (tint) { scene.remove(tint); tint.geometry.dispose(); tint = null; }
     if (drag) { drag = null; controls.enabled = true; }
     hot = null;
     label.hidden = true;
-    const { result, selection } = store.state;
-    visuals = result ? shownHandles(all, selection).map(visualOf) : [];
+    const { result, feature } = store.state;
+    // shownHandles takes face names: any name under the feature picks its handles.
+    visuals = result && feature ? shownHandles(all, [`${feature}/`]).map(visualOf) : [];
     for (const v of visuals) group.add(v.object);
-    if (result && selection.length) tintFeature(result, featureOf(selection[0]));
-  }
-
-  function tintFeature(result, feature) {
-    const { positions, faceOfTriangle } = result.mesh;
-    const mine = result.faces.map(face => faceName(face).startsWith(feature + '/'));
-    const picked = [];
-    faceOfTriangle.forEach((f, t) => { if (mine[f]) picked.push(...positions.subarray(t * 9, t * 9 + 9)); });
-    const geometry = new THREE.BufferGeometry();
-    geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(picked), 3));
-    tint = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({
-      color: color.tint, transparent: true, opacity: 0.16, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1,
-    }));
-    scene.add(tint);
   }
 
   function visualOf(handle) {
