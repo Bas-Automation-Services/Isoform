@@ -32,7 +32,12 @@ store.subscribe((s, before) => {
 });
 createPicking(viewer, store, $('tooltip'));
 createSelection(store, $('selection'));
-createDiagnostics(store, { stats: $('stats'), list: $('diagnostics'), workers: workers.length });
+// The cell size the page opens with; the diagnostics offer it as the way back after resolving at a finer one.
+const defaultCell = +[...$('cell').options].find(o => o.defaultSelected).value;
+const diagnostics = createDiagnostics(store, {
+  stats: $('stats'), list: $('diagnostics'), workers: workers.length, viewer, view: $('view'), badge: $('verdict'), defaultCell,
+  resolve: cell => useCell(cell),
+});
 
 /** Regenerates the document in the store; latest wins, so edits made meanwhile fold into one next run. */
 async function regenerate({ fit: refit = false } = {}) {
@@ -45,6 +50,15 @@ async function regenerate({ fit: refit = false } = {}) {
 
 const editor = createEditor(store, { editor: $('editor'), parse: $('parse'), examplesBox: $('examples'), regenerate });
 $('cell').addEventListener('change', () => regenerate());
+
+/** Regenerates at this cell size, keeping the view; the cell select shows it, with an option of its own if needed. */
+function useCell(cell) {
+  const box = $('cell');
+  if (![...box.options].some(o => +o.value === cell))
+    box.add(new Option(`${cell} mm`, String(cell)), [...box.options].find(o => +o.value < cell) ?? null);
+  box.value = [...box.options].find(o => +o.value === cell).value;
+  return regenerate();
+}
 $('chord').addEventListener('change', () => regenerate());
 
 // For the browser tests and the console: plain data out, a promise per regeneration.
@@ -60,6 +74,16 @@ window.isoform = {
     return regenerate();
   },
 };
+
+// Diagnostics (J5) for the browser tests: the list as shown, the faces lit for the one in focus, the cell in use.
+Object.assign(window.isoform, {
+  diagnostics: () => diagnostics.items(),
+  focusDiagnostic: (index, feature) => diagnostics.focus(index, feature),
+  marked: () => viewer.marks().map(([f, color]) => ({ face: store.state.result.faces[f][0], color })),
+  cell: () => store.state.result?.cell ?? null,
+  target: () => viewer.target(),
+  resolve: cell => useCell(cell),
+});
 
 await client.start();
 editor.load((await client.call('examples')).result);
