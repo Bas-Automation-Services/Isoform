@@ -257,7 +257,12 @@ Sample, bounds enclose, simplification bit-exact) and keeps its face names under
 - *Smooth blend and offset:* join or cut with a blend radius (quadratic smooth min, 1-Lipschitz); offset moves every
   face and rebuilds real offset surfaces, so later features see true geometry; grown corners get faces of their own.
 
-Not yet: concave (material-adding) rolling-ball fillets, so only smooth blends add material in an inside corner; a
-spherical patch where three fillets meet (they mitre); fillets on cone, sphere and torus edges; a single-edge fillet
-on a swept edge the profile is not behind; offsetting a shell. The OCCT baseline does not run the new features, so
+- *Inside corners:* fillets that add material, exact rolling ball. Neighbouring profile edges get a tangent arc in
+  the profile (convex or reflex; chamfers a straight cut), so outline corners and shaft steps are cylinders and tori.
+  Inside a cut the tool's convex edge is rounded. Where two joined solids meet a filler is added, cut flush by both
+  solids' other faces.
+
+Not yet: a spherical or rolled patch where fillets meet at a corner (they mitre, and two flush inside fillets leave
+the corner between them open); fillets on cone, sphere and torus edges; a fillet on the rim of a cut (a face of the
+part against a face of the tool); a single-edge fillet on a swept edge the profile is not behind; offsetting a shell. The OCCT baseline does not run the new features, so
 they are checked against analytic answers only; cross-checking them is part of K7.

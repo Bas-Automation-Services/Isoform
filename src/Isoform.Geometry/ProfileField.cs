@@ -243,6 +243,60 @@ public sealed class ProfileField : Field
     /// True when the whole profile lies on the material side of this leaf's edge: then the edge's surface bounds
     /// the swept solid everywhere, and an edge feature can use it as if it were a face of an intersection.
     /// </summary>
+    public Frame Frame => _frame;
+    public bool Revolved => _revolve;
+
+    /// <summary>The corner between the edges of two leaves, as the index of the first edge (the corner is its end).</summary>
+    public int? CornerBetween(LeafField a, LeafField b)
+    {
+        var (i, j) = (Array.IndexOf(_leaves, a), Array.IndexOf(_leaves, b));
+        if (i < 0 || j < 0) return null;
+        var n = _edges.Length;
+        return (i + 1) % n == j ? i : (j + 1) % n == i ? j : null;
+    }
+
+    /// <summary>
+    /// The profile with corner k (between two straight edges) rounded by a tangent arc of radius
+    /// <paramref name="size"/>, or cut by a straight chamfer at that distance along both edges. Works on convex and
+    /// reflex corners alike. The trimmed edges keep their faces; <paramref name="newLeaf"/> makes the new edge's face.
+    /// Null when an edge is an arc or too short for the corner.
+    /// </summary>
+    public ProfileField? WithCorner(int k, double size, bool round, Func<ProfileEdge2D, LeafField?> newLeaf)
+    {
+        var n = _edges.Length;
+        var (e1, e2) = (_edges[k], _edges[(k + 1) % n]);
+        if (e1.IsArc || e2.IsArc || _vertexSign[k] == 0) return null;
+        var (d1, d2) = (e1.EndTangent, e2.StartTangent);
+        var turn = Math.Abs(Math.Atan2(d1.U * d2.V - d1.V * d2.U, d1.U * d2.U + d1.V * d2.V));
+        var t = round ? size * Math.Tan(turn / 2) : size;
+        double Length(ProfileEdge2D e) => Math.Sqrt((e.U1 - e.U0) * (e.U1 - e.U0) + (e.V1 - e.V0) * (e.V1 - e.V0));
+        if (t >= Length(e1) - 1e-9 || t >= Length(e2) - 1e-9) return null;
+
+        var (t1u, t1v) = (e1.U1 - d1.U * t, e1.V1 - d1.V * t);
+        var (t2u, t2v) = (e2.U0 + d2.U * t, e2.V0 + d2.V * t);
+        // A left turn (convex corner) rounds with an arc turning left as well.
+        var corner = new ProfileEdge2D(t1u, t1v, t2u, t2v, round ? _vertexSign[k] * Math.Tan(turn / 4) : 0);
+        var edges = _edges.ToList();
+        var leaves = _leaves.ToList();
+        var corners = _corners.ToList();
+        edges[k] = new ProfileEdge2D(e1.U0, e1.V0, t1u, t1v, 0);
+        edges[(k + 1) % n] = new ProfileEdge2D(t2u, t2v, e2.U1, e2.V1, 0);
+        edges.Insert(k + 1, corner);
+        leaves.Insert(k + 1, newLeaf(corner));
+        corners.Insert(k + 1, null);
+        return new(edges, leaves, _frame, _revolve, _offset, corners);
+    }
+
+    /// <summary>The faces of the edges next to this leaf's edge, where they meet it at an angle (not tangent).</summary>
+    public IEnumerable<LeafField> Neighbours(LeafField leaf)
+    {
+        var i = Array.IndexOf(_leaves, leaf);
+        if (i < 0) yield break;
+        var n = _edges.Length;
+        if (_vertexSign[(i - 1 + n) % n] != 0 && _leaves[(i - 1 + n) % n] is { } before) yield return before;
+        if (_vertexSign[i] != 0 && _leaves[(i + 1) % n] is { } after) yield return after;
+    }
+
     public bool Supports(LeafField leaf)
     {
         var i = Array.IndexOf(_leaves, leaf);

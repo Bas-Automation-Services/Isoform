@@ -317,9 +317,14 @@ public sealed class Compiler(ModelingSettings settings)
     }
 
     /// <summary>
-    /// A fillet or chamfer on the edge between two faces of one intersection. A face may sit in the intersection
-    /// directly, inside an earlier fillet (fillets sharing a face), or as the side of a swept profile that lies
-    /// wholly on its material side. Inside a shell the feature reshapes only the shell's outside.
+    /// A fillet or chamfer on an edge, in the first of these forms that fits:
+    /// <list type="number">
+    /// <item>two neighbouring edges of one swept profile: the profile corner itself is rounded or cut, convex or reflex;</item>
+    /// <item>a convex edge between two faces of one intersection. A face may sit there directly, inside an earlier
+    /// fillet (fillets sharing a face), or as the side of a swept profile that lies wholly behind it;</item>
+    /// <item>for fillets, a concave edge: inside a cut, or where two joined solids meet (<see cref="ConcaveFillet"/>).</item>
+    /// </list>
+    /// Inside a shell the feature reshapes only the shell's outside.
     /// </summary>
     Field ApplyEdge(Feature feature, Field tree, Func<Surface, Surface> register, Point3D min, Point3D max, List<Diagnostic> diagnostics)
     {
@@ -337,10 +342,24 @@ public sealed class Compiler(ModelingSettings settings)
         }
         var name = $"[{string.Join(", ", edge)}]";
 
+        foreach (var p in FieldAlgebra.Descendants(tree).Concat(Intersections(tree, null).SelectMany(x => FieldAlgebra.Descendants(x.Host))).OfType<ProfileField>().Distinct())
+        {
+            var (la, lb) = (p.Leaves.FirstOrDefault(l => l.Surface.Source == edge[0]), p.Leaves.FirstOrDefault(l => l.Surface.Source == edge[1]));
+            if (la is null || lb is null || p.CornerBetween(la, lb) is not { } corner) continue;
+            var rebuilt = p.WithCorner(corner, size, fillet, e => ProfileField.EdgeLeaf(e, p.Frame, p.Revolved,
+                (k, o, a, r, m, ang) => register(new Surface(0, $"{feature.Id}/face", k, o, a, r, m, ang))));
+            return rebuilt is null
+                ? Fail(invalid, $"{(fillet ? "radius" : "distance")} {size} does not fit on the straight profile edges next to the corner")
+                : Replace(tree, p, rebuilt);
+        }
+
         var found = Intersections(tree, null)
             .Select(x => (x.Host, x.Shell, A: Held(x.Host, edge[0]), B: Held(x.Host, edge[1])))
             .FirstOrDefault(x => x.A is not null && x.B is not null);
-        if (found.Host is null) return Fail(unsupported, $"edge {name} is not a convex edge between two faces of one intersection");
+        if (found.Host is null)
+            return fillet
+                ? ConcaveFillet(feature.Id, edge, size, tree, register, min, max, Fail)
+                : Fail(unsupported, $"edge {name} is not a convex edge between two faces of one intersection");
         var (host, shell, a, b) = (found.Host, found.Shell, found.A!, found.B!);
 
         if (EdgeSamples(a.Surface, b.Surface, min, max) is not { } samples)
@@ -371,6 +390,118 @@ public sealed class Compiler(ModelingSettings settings)
         // A face held directly is now inside the fillet; a chamfer only adds its own face.
         var children = host.Children.Where(c => !fillet || (c != a && c != b)).Append(addition).ToList();
         return Replace(tree, host, new MaxField(children));
+    }
+
+    /// <summary>
+    /// A fillet that adds material in an inside corner. The empty corner between the faces is convex, so the ball
+    /// rolls there exactly as on a convex edge, and the material it leaves behind is added:
+    /// <list type="bullet">
+    /// <item>inside a cut the two faces belong to the tool, which the normalized tree holds as a union of complements:
+    /// rounding the tool's convex edge is the whole fillet;</item>
+    /// <item>where two joined solids meet, a filler (corner gap minus rounded gap) joins them, cut by each solid's other
+    /// faces so it ends flush where the edge ends, as a CAD fillet on that one edge does.</item>
+    /// </list>
+    /// </summary>
+    Field ConcaveFillet(string id, string[] edge, double r, Field tree, Func<Surface, Surface> register, Point3D min, Point3D max, Func<string, string, Field> fail)
+    {
+        var name = $"[{string.Join(", ", edge)}]";
+        LeafField Flip(LeafField l) => new(l.Surface, !l.Complement);
+
+        // Checks the edge is there and the ball touches both faces on the part; returns null when it does.
+        string? Problem(RoundedEdgeField rounded, Func<Point3D, bool> onBoth, out string code)
+        {
+            code = Diagnostic.FilletInvalid;
+            if (EdgeSamples(rounded.A.Surface, rounded.B.Surface, min, max) is not { } samples)
+            {
+                code = Diagnostic.UnsupportedFillet;
+                return $"no exact fillet for {rounded.A.Surface.Kind}–{rounded.B.Surface.Kind} in this orientation";
+            }
+            var onEdge = samples.Where(q => Math.Abs(tree.Value(q)) <= 10 * _tol && onBoth(q)).ToList();
+            if (onEdge.Count == 0) return $"edge {name} does not exist on the part";
+            return onEdge.Select(rounded.Contacts).Any(c => Math.Abs(tree.Value(c.OnA)) > 10 * _tol || Math.Abs(tree.Value(c.OnB)) > 10 * _tol)
+                ? $"radius {r} does not fit between the faces next to the edge" : null;
+        }
+
+        var unions = Unions(tree).ToList();
+        foreach (var union in unions)
+        {
+            if (FlippedIn(union, edge[0]) is not { } a || FlippedIn(union, edge[1]) is not { } b || a.Flipped == b.Flipped) continue;
+            var rounded = new RoundedEdgeField(a.Flipped, b.Flipped, r, register(FilletSurface(id, r)));
+            if (Problem(rounded, _ => true, out var code) is { } problem) return fail(code, problem);
+            var kept = union.Children.Where(c => c != a.Direct && c != b.Direct).Append(new NegateField(rounded)).ToList();
+            return Replace(tree, union, new MinField(kept));
+        }
+
+        foreach (var union in unions)
+        for (var i = 0; i < union.Children.Count; i++)
+        for (var j = 0; j < union.Children.Count; j++)
+        {
+            if (i == j || HostIn(union.Children[i], edge[0]) is not { } one || HostIn(union.Children[j], edge[1]) is not { } two) continue;
+            var rounded = new RoundedEdgeField(Flip(one.Leaf), Flip(two.Leaf), r, register(FilletSurface(id, r)));
+            // The edge is where the two solids touch: on the boundary of both, not just on one face's line.
+            var (first, second) = (union.Children[i], union.Children[j]);
+            if (Problem(rounded, q => Math.Abs(first.Value(q)) <= 10 * _tol && Math.Abs(second.Value(q)) <= 10 * _tol, out var code) is { } problem)
+                return fail(code, problem);
+            // Gap corner minus the rounded gap, kept within the extent of both faces.
+            var filler = new MaxField([rounded.A, rounded.B, new NegateField(rounded), .. Clips(one), .. Clips(two)]);
+            return Replace(tree, union, new MinField([.. union.Children, filler]));
+        }
+        return fail(Diagnostic.UnsupportedFillet, $"edge {name} is neither a convex edge of one intersection nor an inside corner of a cut or a join");
+    }
+
+    static Surface FilletSurface(string id, double r) => new(0, $"{id}/face", SurfaceKind.Fillet, new Point3D(0, 0, 0), new Vector3D(0, 0, 1), r);
+
+    /// <summary>A face of a union of complements as its flipped leaf: directly, or inside an earlier inside fillet.</summary>
+    static (LeafField Flipped, Field? Direct)? FlippedIn(MinField union, string source)
+    {
+        foreach (var c in union.Children)
+        {
+            if (c is LeafField l && l.Surface.Source == source) return (new LeafField(l.Surface, !l.Complement), l);
+            if (c is NegateField { Child: RoundedEdgeField r })
+            {
+                if (r.A.Surface.Source == source) return (r.A, null);
+                if (r.B.Surface.Source == source) return (r.B, null);
+            }
+        }
+        return null;
+    }
+
+    /// <summary>The intersection inside a joined solid that holds a face, the face, and the child holding it.</summary>
+    static (MaxField Host, LeafField Leaf, Field Holder)? HostIn(Field solid, string source)
+    {
+        foreach (var (host, _) in Intersections(solid, null))
+            if (Held(host, source) is { } leaf)
+                return (host, leaf, host.Children.First(c => c == leaf || c is RoundedEdgeField r && (r.A == leaf || r.B == leaf) || c is ProfileField p && p.Leaves.Contains(leaf)));
+        return null;
+    }
+
+    /// <summary>
+    /// What bounds a face along its edge: the host's other children, the other face of a fillet that holds it, or
+    /// the faces next to it in a swept profile.
+    /// </summary>
+    static IEnumerable<Field> Clips((MaxField Host, LeafField Leaf, Field Holder) h)
+    {
+        foreach (var c in h.Host.Children.Where(c => c != h.Holder)) yield return c;
+        switch (h.Holder)
+        {
+            case RoundedEdgeField r:
+                yield return r.A == h.Leaf ? r.B : r.A;
+                break;
+            case ProfileField p:
+                foreach (var n in p.Neighbours(h.Leaf)) yield return n;
+                break;
+        }
+    }
+
+    /// <summary>Every union node, also inside a shell's outside.</summary>
+    static IEnumerable<MinField> Unions(Field tree)
+    {
+        foreach (var node in FieldAlgebra.Descendants(tree))
+        {
+            if (node is MinField m) yield return m;
+            if (node is ShellField s)
+                foreach (var inner in Unions(s.Outer)) yield return inner;
+        }
     }
 
     static Point3D Middle((Point3D Centre, Point3D OnA, Point3D OnB) c, double r)
@@ -422,7 +553,8 @@ public sealed class Compiler(ModelingSettings settings)
     {
         foreach (var node in FieldAlgebra.Descendants(tree))
         {
-            if (node is MaxField m) yield return (m, shell);
+            // An inside fillet's filler is no face-holding intersection of the part.
+            if (node is MaxField m && !m.Children.Any(c => c is NegateField { Child: RoundedEdgeField })) yield return (m, shell);
             if (node is ShellField s)
                 foreach (var inner in Intersections(s.Outer, s)) yield return inner;
         }
@@ -509,6 +641,9 @@ public sealed class Compiler(ModelingSettings settings)
             case BlendField b:
                 var (ra, rb) = (Replace(b.A, target, replacement), Replace(b.B, target, replacement));
                 return ra == b.A && rb == b.B ? b : new BlendField(ra, rb, b.K, b.Blend, b.Union);
+            case NegateField n:
+                var child = Replace(n.Child, target, replacement);
+                return child == n.Child ? n : new NegateField(child);
             default:
                 return field;
         }
