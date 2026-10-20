@@ -22,6 +22,8 @@ public static class DocumentRules
             string? problem = feature switch
             {
                 _ when feature.Id.Length == 0 || feature.Id.Contains('/') => $"feature ids may not be empty or contain '/', got '{feature.Id}'",
+                // Edit paths start with the id and split at '.'; "parameters." is the parameter table.
+                _ when feature.Id == "parameters" || feature.Id.Contains('.') => $"edit paths could not reach a feature with the id '{feature.Id}': ids may not contain '.' or be 'parameters'",
                 _ when !ids.Add(feature.Id) => $"the feature id '{feature.Id}' is used twice",
                 CombineBodies c when c.Tool == (c.Body ?? current) => $"body '{c.Tool}' cannot be combined with itself",
                 _ when StartsBody(feature) && bodies.Contains(feature.Body ?? feature.Id) => $"there already is a body named '{feature.Body ?? feature.Id}'",
