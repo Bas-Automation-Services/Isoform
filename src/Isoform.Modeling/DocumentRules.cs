@@ -54,6 +54,9 @@ public static class DocumentRules
                 Extrude { Sketch: { } s } e => SweepProblem(s, e.Regions, doc.Features.Take(i).ToList()),
                 Extrude e => Profiles.Problem(e.Plane!, e.Profile!, tolerance, revolve: false),
                 Revolve r when !(r.Angle > tolerance && r.Angle <= 360) => Invariant($"revolve angle must be in (0, 360], got {r.Angle}"),
+                Revolve { Sketch: null, Axis: not null } => "a revolve axis is a line of its sketch; an inline profile turns round its plane's y axis",
+                Revolve { Sketch: { } s, Axis: { } axis } when doc.Features.Take(i).FirstOrDefault(f => f.Id == s) is Sketch k && !k.Entities.Any(e => e.Id == axis && e is SketchLine) =>
+                    $"the revolve axis '{axis}' is not a line of sketch {s}",
                 Revolve { Sketch: { } s } r => SweepProblem(s, r.Regions, doc.Features.Take(i).ToList()),
                 Revolve r => Profiles.Problem(r.Plane!, r.Profile!, tolerance, revolve: true),
                 Sketch s => SketchProblem(s, doc.Features.Take(i).ToList(), tolerance),

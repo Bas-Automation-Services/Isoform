@@ -145,3 +145,21 @@ test('Dxf writes a sketch of the document, or a flat face of the slot\'s part', 
   assert.deepEqual([face.entities, face.approximated], [5, 0]);
   assert.match(JSON.parse(kernel.Dxf('main', '', '', 'plate/bore')).error, /not a flat face/);
 });
+
+test('FaceFrame and Sketch: the plane of plate/z+, and a sketch on it solved with a drag', () => {
+  const [, document] = examples[0];
+  kernel.Regenerate(document, '[]', cell, chord, 'main', false);
+  const frame = JSON.parse(kernel.FaceFrame('main', 'plate/z+'));
+  assert.deepEqual([frame.origin, frame.x, frame.y, frame.normal], [[0, 0, 10], [1, 0, 0], [0, 1, 0], [0, 0, 1]]);
+  assert.match(JSON.parse(kernel.FaceFrame('main', 'hole/wall')).error, /not a flat face/);
+  const doc = JSON.parse(document);
+  doc.features.push({ id: 's', type: 'sketch', on: { face: 'plate/z+' }, points: { a: [60, 10], b: [80, 10], c: [70, 30] },
+    entities: [{ id: 'ab', line: ['a', 'b'] }, { id: 'bc', line: ['b', 'c'] }, { id: 'ca', line: ['c', 'a'] }], constraints: [{ fix: 'a' }, { length: 'ab', value: 25 }] });
+  const r = JSON.parse(kernel.Sketch(JSON.stringify(doc), 's', JSON.stringify({ point: 'c', to: [72, 35] })));
+  assert.equal(r.solved, true);
+  assert.equal(r.freeDegrees, 3);
+  assert.deepEqual(r.points.a, [60, 10]);
+  assert.ok(Math.abs(Math.hypot(r.points.b[0] - 60, r.points.b[1] - 10) - 25) < 1e-9);
+  assert.deepEqual(r.regions, [{ outer: ['ab', 'bc', 'ca'], holes: [] }]);
+  assert.match(JSON.parse(kernel.Sketch(document, 'plate', '')).error, /not a sketch/);
+});

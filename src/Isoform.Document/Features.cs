@@ -90,7 +90,8 @@ public sealed record Extrude(string Id, BooleanOp Op, SketchPlane? Plane, Profil
 /// <summary>
 /// A profile revolved round the sketch's y axis: profile x is the distance from the axis (never negative), y the
 /// height along it. <paramref name="Angle"/> in degrees, right-handed round the axis from the sketch plane; below
-/// 360 the two flat ends are <c>id/start</c> and <c>id/end</c>. With <see cref="Sketch"/>, as for an extrude.
+/// 360 the two flat ends are <c>id/start</c> and <c>id/end</c>. With <see cref="Sketch"/>, as for an extrude, and
+/// with <see cref="Axis"/> round that line of the sketch instead of its y axis.
 /// </summary>
 public sealed record Revolve(string Id, BooleanOp Op, SketchPlane? Plane, Profile? Profile, double Angle = 360, double Blend = 0) : Feature(Id)
 {
@@ -99,6 +100,9 @@ public sealed record Revolve(string Id, BooleanOp Op, SketchPlane? Plane, Profil
 
     /// <inheritdoc cref="Extrude.Regions"/>
     public IReadOnlyList<string[]>? Regions { get; init; }
+
+    /// <summary>A line of the sketch (construction or not) to revolve round, from its first point towards its second; null for the sketch's y axis.</summary>
+    public string? Axis { get; init; }
 }
 
 /// <summary>Where a sketch lies: a plane, or a flat face of the part by name (it then follows the face).</summary>

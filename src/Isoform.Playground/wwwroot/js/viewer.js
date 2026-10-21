@@ -74,10 +74,11 @@ export function createViewer(host) {
   }).observe(host);
 
   const frameHooks = new Set(); // e.g. handles keeping their size on screen as the camera moves
+  let active = camera; // the camera drawn with: sketch mode (sketch/mode.js) puts an orthographic one of its own in
   renderer.setAnimationLoop(() => {
     controls.update();
     for (const hook of frameHooks) hook();
-    renderer.render(scene, camera);
+    renderer.render(scene, active);
   });
 
   const raycaster = new THREE.Raycaster();
@@ -88,6 +89,11 @@ export function createViewer(host) {
     scene, camera, controls,
     /** Calls hook before every frame is drawn. */
     onFrame: hook => frameHooks.add(hook),
+    /** Draws with this camera instead of the orbiting one, which stays where it was; null goes back to it. */
+    useCamera(other) {
+      active = other ?? camera;
+      controls.enabled = !other;
+    },
 
     /** Replaces the model with a result's mesh; nothing is lit until light(). fit frames the camera on it. */
     show(result, fit) {

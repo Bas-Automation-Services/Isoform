@@ -70,7 +70,8 @@ public static class FormatGuide
             "its regions. See Sketches below.",
             Outline, ["plate/z+"], []),
         new("An extrude (or revolve) of a sketch: sketch names it, regions optionally picks regions, each by entity ids round " +
-            "its outside (all when left out). Loops inside a region are holes. Side faces <id>/<entity id>, caps as before.",
+            "its outside (all when left out). Loops inside a region are holes. Side faces <id>/<entity id>, caps as before. " +
+            "A revolve's axis may name a line of the sketch to turn round (construction or not) instead of the sketch's y axis.",
             new Extrude("pad", BooleanOp.Join, null, null, 0, 5) { Sketch = "outline" },
             ["pad/bottom", "pad/right", "pad/top", "pad/left", "pad/bore", "pad/end"], [Outline]),
         new("Moves every face of the part so far along its normal (negative: inward). Faces keep their names; a grown " +

@@ -146,4 +146,35 @@ public class SketchExtrudeTests
         Names(r).Should().Equal("tube/floor", "tube/inner", "tube/outer", "tube/roof");
         Volume(r).Should().BeApproximately(Math.PI * (100 - 25) * 20, Relative(Math.PI * (100 - 25) * 20));
     }
+
+    // A 5 × 10 rectangle from u = 20 to 25 beside a construction line at u = 10.
+    static string Turned(string axis) => $$$"""
+        {"id": "s", "type": "sketch", "on": {"plane": {"origin": [0, 0, 0], "x": [1, 0, 0], "normal": [0, 0, 1]}},
+         "points": {"a": [20, 0], "b": [25, 0], "c": [25, 10], "d": [20, 10], "p": [10, -5], "q": [10, 15]},
+         "entities": [{"id": "floor", "line": ["a", "b"]}, {"id": "outer", "line": ["b", "c"]}, {"id": "roof", "line": ["c", "d"]},
+                      {"id": "inner", "line": ["d", "a"]}, {"id": "axis", "line": ["p", "q"], "construction": true}]},
+        {"id": "tube", "type": "revolve", "op": "new", "sketch": "s", "axis": "{{{axis}}}", "angle": 360}
+        """;
+
+    [Fact]
+    public void A_sketch_revolves_round_a_line_of_its_own()
+    {
+        // Round the construction line: a tube of radii 10 and 15, 10 high.
+        var r = Regenerate(Turned("axis"));
+        r.Diagnostics.Should().BeEmpty();
+        Names(r).Should().Equal("tube/floor", "tube/inner", "tube/outer", "tube/roof");
+        var tube = Math.PI * (225 - 100) * 10;
+        Volume(r).Should().BeApproximately(tube, Relative(tube));
+
+        // Round its side "inner" (u = 20, running d to a: the rectangle on its other side): a cylinder of radius 5,
+        // with no face on the axis.
+        var solid = Regenerate(Turned("inner"));
+        solid.Diagnostics.Should().BeEmpty();
+        Names(solid).Should().Equal("tube/floor", "tube/outer", "tube/roof");
+        Volume(solid).Should().BeApproximately(Math.PI * 25 * 10, Relative(Math.PI * 25 * 10));
+
+        var text = CanonicalFormat.Write(Document(Turned("axis")));
+        text.Should().Contain("\"axis\": \"axis\"");
+        Regenerate(Turned("h")).Diagnostics.Should().ContainSingle(d => d.Code == Diagnostic.InvalidParameter && d.Message.Contains("not a line of sketch s"));
+    }
 }

@@ -209,6 +209,7 @@ public static partial class CanonicalFormat
                 w.WriteString("type", "revolve");
                 w.WriteString("op", r.Op.ToString().ToLowerInvariant());
                 Swept(w, r.Plane, r.Profile, r.Sketch, r.Regions);
+                if (r.Axis is { } axis) w.WriteString("axis", axis);
                 Number(w, "angle", r.Angle);
                 Blend(w, r.Blend);
                 break;
@@ -272,7 +273,7 @@ public static partial class CanonicalFormat
             "extrude" => new Extrude(id, Op(n), ReadPlaneOf(n), ReadProfileOf(n), (double)n["start"]!, (double)n["end"]!, (double?)n["blend"] ?? 0)
                 { Sketch = (string?)n["sketch"], Regions = ReadRegions(n["regions"]) },
             "revolve" => new Revolve(id, Op(n), ReadPlaneOf(n), ReadProfileOf(n), (double)n["angle"]!, (double?)n["blend"] ?? 0)
-                { Sketch = (string?)n["sketch"], Regions = ReadRegions(n["regions"]) },
+                { Sketch = (string?)n["sketch"], Regions = ReadRegions(n["regions"]), Axis = (string?)n["axis"] },
             "sketch" => ReadSketch(id, n),
             "combine" => new CombineBodies(id, (string)n["tool"]!, Op(n), (bool?)n["keep"] ?? false),
             "pattern" => new Pattern(id, n["features"]!.AsArray().Select(f => (string)f!).ToArray(), ReadMotion(n)),

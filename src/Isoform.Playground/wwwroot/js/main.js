@@ -20,6 +20,7 @@ import { createTour } from './panels/tour.js';
 import { createShare } from './panels/share.js';
 import { createFiles } from './panels/files.js';
 import { createChatPanel } from './panels/chat.js';
+import { createSketchMode } from './sketch/mode.js';
 
 const $ = id => document.getElementById(id);
 const store = createStore();
@@ -106,7 +107,7 @@ createAgent(store, $('agent'), commits);
 createHistory(store, $('history'), commits);
 
 // Feature tree and inspector (J4): every inspector change is an edit list, committed as one history entry.
-createTree(store, viewer, $('tree'));
+createTree(store, viewer, $('tree'), { open: it => it.type === 'sketch' && sketching.edit(it.id) });
 createInspector(store, $('inspector'), (edits, label) => commits.applyEdits(edits, label, 'inspector'));
 
 // For the browser tests and the console: plain data out, a promise per regeneration.
@@ -206,6 +207,16 @@ const handles = createHandles(viewer, store, {
 });
 window.isoform.handles = handles.list;
 window.isoform.dragging = handles.dragging;
+
+// --- Sketch mode (B1-B5, docs/sketch-plan.md) ---------------------------------------------------------------------
+// A flat face selected, Sketch (or S) draws on it; a sketch in the tree double-clicked is edited. Its finish is one
+// commit of origin 'sketch'.
+const sketching = createSketchMode(store, {
+  viewer, view: $('view'), column: $('model'), call: client.call, latest: client.latest,
+  applyEdits: (edits, label, origin) => commits.applyEdits(edits, label, origin),
+});
+window.isoform.sketch = sketching.api;
+// --- end sketch mode --------------------------------------------------------------------------------------------
 
 // --- Guided tour and share links (T1) ---------------------------------------------------------------------------
 // The tour commits its edits like an agent (origin 'tour'); a #doc= link opens its document instead of an example.
