@@ -16,7 +16,7 @@ vertices while producing exact output, and does it do better at this than a B-re
 | `Isoform.Modeling` | Regeneration, topology, references, diagnostics: the backend-neutral API |
 | `Isoform.Occt` | OCCT B-rep baseline behind the same API |
 | `Isoform.Playground` | The kernel in the browser (WebAssembly): document editor and 3D view |
-| `Isoform.Server` | The playground with the kernel running natively: a localhost server, the page's worker protocol over WebSocket |
+| `Isoform.Server` | The playground with the kernel running natively: a localhost server, the page's worker protocol over WebSocket, and the chat panel's Claude agent |
 | `native/Isoform.Occt` | Small C ABI over OpenCASCADE used by `Isoform.Occt` |
 
 ## Features
@@ -77,6 +77,18 @@ workers. The page uses it when the server served it, or when `?kernel=ws://local
 from another origin needs `--allow-origin <origin>`: other sites cannot reach the kernel); the status line says `native`
 or `wasm`. Without a server, or with `?kernel=wasm`, the page runs the kernel in WebAssembly
 as before, so a shared link works from any static host.
+
+With the server, the Chat panel lets you ask Claude for changes ("make the plate 120 long"): the server runs Claude
+(`claude-opus-5-5`, through the official Anthropic SDK) with the MCP tool set on the page's document, and its edits
+come back as one history entry, shown in the agent view and undone like any other. The API key is read from the
+server's environment only; the page never sees it:
+
+```sh
+export ANTHROPIC_API_KEY=...                       # PowerShell: $env:ANTHROPIC_API_KEY = "..."
+dotnet run -c Release --project src/Isoform.Server
+```
+
+Without a key the server says so at start and the chat answers that it has none; in WebAssembly the panel is inert.
 
 ## About
 
