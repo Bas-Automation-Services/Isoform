@@ -1,6 +1,7 @@
 using BasAutomation.Geometry;
 using Isoform.Document;
 using Isoform.Geometry;
+using Isoform.Sketching;
 using static System.FormattableString;
 
 namespace Isoform.Modeling;
@@ -91,6 +92,44 @@ public sealed class Compiler(ModelingSettings settings)
             return new CompiledPart(null, surfaces, min, max, [invalid]);
         doc = Parametric.Resolve(doc);
 
+        // Sketches, solved where they stand in the history: a face sketch takes the face as the part has it there.
+        var sketches = new Dictionary<string, (SweptShape? Shape, string? Problem)>();
+        void Prepare(Sketch s)
+        {
+            var solution = SketchSolver.Solve(s);
+            foreach (var p in solution.Problems)
+                diagnostics.Add(new Diagnostic(p.Code, s.Id, $"sketch {s.Id}: {p.Message}"));
+            if (!solution.Solved)
+            {
+                sketches[s.Id] = (null, "does not solve");
+                return;
+            }
+            var (regions, problem) = SketchRegions.Of(s, solution);
+            if (problem is not null) diagnostics.Add(new Diagnostic(SketchSolution.Invalid, s.Id, $"sketch {s.Id}: {problem}"));
+            var plane = s.On.Plane ?? FacePlane(s.On.Face!, surfaces, tree);
+            if (plane is null)
+                diagnostics.Add(new Diagnostic(Diagnostic.SketchPlaneLost, s.Id, $"sketch {s.Id} lies on {s.On.Face}, which is not a flat face of the part here"));
+            sketches[s.Id] = plane is null || problem is not null ? (null, plane is null ? "has no plane" : "has no regions") : (new SweptShape(plane, regions), null);
+        }
+
+        // The plane and regions an extrude or revolve sweeps: its own profile, or its sketch's regions.
+        SweptShape? Shape(Feature f, string reportAs)
+        {
+            var (plane, profile, sketch, wanted) = f switch
+            {
+                Extrude e => (e.Plane, e.Profile, e.Sketch, e.Regions),
+                Revolve r => (r.Plane, r.Profile, r.Sketch, r.Regions),
+                _ => throw new ArgumentException(f.Id),
+            };
+            if (sketch is null) return new SweptShape(plane!, [new SketchRegion(profile!, [])]);
+            var (shape, why) = sketches[sketch];
+            var (regions, problem) = shape is null ? ([], $"its sketch {sketch} {why}") : SketchRegions.Select(shape.Regions, wanted);
+            if (problem is null) return shape! with { Regions = regions };
+            if (diagnostics.All(d => d.FeatureId != reportAs || d.Code != SketchSolution.Invalid))
+                diagnostics.Add(new Diagnostic(SketchSolution.Invalid, reportAs, $"{reportAs} cannot sweep sketch {sketch}: {problem}"));
+            return null;
+        }
+
         // A solid-making feature placed by a rigid motion. Pattern copies rename their surfaces, join where the
         // original starts the body, and report as the pattern.
         void Place(Feature feature, Frame m, Func<string, string> name, string reportAs)
@@ -106,13 +145,15 @@ public sealed class Compiler(ModelingSettings settings)
                     break;
 
                 case Extrude e:
-                    var (extruded, extrudedBox) = ExtrudeField(e, m, Named);
+                    if (Shape(e, reportAs) is not { } extrudeShape) break;
+                    var (extruded, extrudedBox) = ExtrudeField(e, extrudeShape, m, Named);
                     if (e.Op != BooleanOp.Cut) Grow(extrudedBox);
                     tree = Combine(Op(e.Op), extruded, e.Blend, Named, e.Id);
                     break;
 
                 case Revolve r:
-                    var (revolved, revolvedBox) = RevolveField(r, m, Named);
+                    if (Shape(r, reportAs) is not { } revolveShape) break;
+                    var (revolved, revolvedBox) = RevolveField(r, revolveShape, m, Named);
                     if (r.Op != BooleanOp.Cut) Grow(revolvedBox);
                     tree = Combine(Op(r.Op), revolved, r.Blend, Named, r.Id);
                     break;
@@ -132,6 +173,13 @@ public sealed class Compiler(ModelingSettings settings)
 
         foreach (var feature in doc.Features)
         {
+            // A sketch makes no solid and belongs to no body.
+            if (feature is Sketch sketch)
+            {
+                Prepare(sketch);
+                continue;
+            }
+
             // Pick the body: a new one, the one the feature names, or for an edge the body that has its faces.
             if (DocumentRules.StartsBody(feature)) Start(feature.Body ?? feature.Id);
             else if (feature.Body is { } named) Switch(named);
@@ -152,7 +200,7 @@ public sealed class Compiler(ModelingSettings settings)
             switch (feature)
             {
                 case Lattice l:
-                    tree = LatticeOf(l, FieldAlgebra.Normalize(tree!), doc, Register, min, max, diagnostics);
+                    tree = LatticeOf(l, FieldAlgebra.Normalize(tree!), doc, Register, min, max, diagnostics, f => Shape(f, l.Id));
                     break;
 
                 case Pattern p:
@@ -243,11 +291,11 @@ public sealed class Compiler(ModelingSettings settings)
     /// t, f)), the lattice its own inner face and the others named as a shell names them; near the outside, where the
     /// cavity cannot reach, it simplifies to s alone. A region then joins the solid outside it: min(that, max(s, −r)).
     /// </summary>
-    Field LatticeOf(Lattice l, Field solid, PartDocument doc, Func<Surface, Surface> register, Point3D min, Point3D max, List<Diagnostic> diagnostics)
+    Field LatticeOf(Lattice l, Field solid, PartDocument doc, Func<Surface, Surface> register, Point3D min, Point3D max, List<Diagnostic> diagnostics, Func<Feature, SweptShape?> shape)
     {
         var face = register(new Surface(0, l.Face, SurfaceKind.Lattice, new Point3D(0, 0, 0), new Vector3D(0, 0, 1), l.Cell));
         var lattice = new LatticeField(DocumentRules.LatticeKindOf(l.Kind)!.Value, l.Cell, l.Thickness, face);
-        var outside = l.Region is { } region ? new NegateField(RegionOf(l.Id, region, doc, register)) : null;
+        var outside = l.Region is { } region ? new NegateField(RegionOf(l.Id, region, doc, register, shape)) : null;
         var skinned = l.Skin > 0 && !FieldAlgebra.Descendants(solid).Any(n => n is ShellField);
         if (l.Skin > 0 && !skinned)
             diagnostics.Add(new Diagnostic(Diagnostic.InvalidParameter, l.Id, "this body is already shelled; give the lattice no skin, or let the skin be the shell"));
@@ -261,7 +309,7 @@ public sealed class Compiler(ModelingSettings settings)
     }
 
     /// <summary>A lattice's region as a solid, its faces named after the lattice: id/region:x- for a box, id/region:&lt;face&gt; for a feature.</summary>
-    static Field RegionOf(string id, LatticeRegion region, PartDocument doc, Func<Surface, Surface> register)
+    static Field RegionOf(string id, LatticeRegion region, PartDocument doc, Func<Surface, Surface> register, Func<Feature, SweptShape?> shape)
     {
         Surface Named(Surface s) => register(s with { Source = $"{id}/region:{(region.Feature is null ? s.Source[(s.Source.IndexOf('/') + 1)..] : s.Source)}" });
         return (region.Feature is not { } feature
@@ -269,8 +317,8 @@ public sealed class Compiler(ModelingSettings settings)
             : doc[feature] switch
             {
                 Block b => BlockField(b, Frame.Identity, Named),
-                Extrude e => ExtrudeField(e, Frame.Identity, Named),
-                var r => RevolveField((Revolve)r, Frame.Identity, Named),
+                Extrude e => ExtrudeField(e, shape(e)!, Frame.Identity, Named),
+                var r => RevolveField((Revolve)r, shape(r)!, Frame.Identity, Named),
             }).Item1;
     }
 
@@ -472,31 +520,68 @@ public sealed class Compiler(ModelingSettings settings)
         }
     }
 
-    /// <summary>The profile swept between two caps, and the corners of a box round it.</summary>
-    static (Field, Point3D[]) ExtrudeField(Extrude e, Frame placement, Func<Surface, Surface> register)
+    /// <summary>A plane and the regions to sweep in it: an inline profile, or a sketch's regions (outer loops with holes).</summary>
+    sealed record SweptShape(SketchPlane Plane, IReadOnlyList<SketchRegion> Regions);
+
+    /// <summary>
+    /// The 2D solid of the regions in the sketch frame, swept straight or round: per region the outer loop less its
+    /// holes, and the union of the regions. Faces are named after the profile edge (or sketch entity) that sweeps them.
+    /// </summary>
+    static Field Regions(string id, SweptShape shape, Frame frame, bool revolve, Func<Surface, Surface> register)
     {
-        var frame = Profiles.FrameOf(e.Plane).Then(placement);
-        var edges = Profiles.CounterClockwise(e.Profile);
-        var leaves = edges.Select(x => ProfileField.EdgeLeaf(x.Edge, frame, revolve: false,
-            (k, o, a, r, m, ang) => register(new Surface(0, $"{e.Id}/{x.Id}", k, o, a, r, m, ang)))).ToList();
+        Field Loop(Profile p)
+        {
+            var edges = Profiles.CounterClockwise(p);
+            var leaves = edges.Select(x => ProfileField.EdgeLeaf(x.Edge, frame, revolve,
+                (k, o, a, r, m, ang) => register(new Surface(0, $"{id}/{x.Id}", k, o, a, r, m, ang)))).ToList();
+            return new ProfileField(edges.Select(x => x.Edge).ToList(), leaves, frame, revolve);
+        }
+        var regions = shape.Regions.Select(r => r.Holes.Count == 0 ? Loop(r.Outer)
+            : (Field)new MaxField([Loop(r.Outer), .. r.Holes.Select(h => (Field)new NegateField(Loop(h)))])).ToList();
+        return regions.Count == 1 ? regions[0] : new MinField(regions);
+    }
+
+    /// <summary>A 2D box round every region's outer loop.</summary>
+    static (double U0, double V0, double U1, double V1) Bounds(SweptShape shape) => shape.Regions.Select(r => Profiles.Bounds(r.Outer))
+        .Aggregate((a, b) => (Math.Min(a.U0, b.U0), Math.Min(a.V0, b.V0), Math.Max(a.U1, b.U1), Math.Max(a.V1, b.V1)));
+
+    /// <summary>
+    /// The plane of a flat face as a sketch plane: its outward normal as the part has it here, the world origin put onto
+    /// it as the origin and the world x put onto it as the x direction (world y where x runs along the normal), so a
+    /// sketch on a top face reads in world coordinates. The frame is right-handed with its normal out of the part, so on a
+    /// face looking the other way (a bottom face) sketch y runs along world −y. Null when no flat surface has that name yet.
+    /// </summary>
+    static SketchPlane? FacePlane(string face, List<Surface> surfaces, Field? tree)
+    {
+        if (tree is null || surfaces.LastOrDefault(s => s.Source == face) is not { Kind: SurfaceKind.Plane } found) return null;
+        var n = TopologyBuilder.Oriented(surfaces, tree)[found.Id].Axis.Normalized();
+        var o = n * n.Dot(found.Origin.AsVector());
+        var x = new Vector3D(1, 0, 0) - n * n.X;
+        if (x.Length < 0.1) x = new Vector3D(0, 1, 0) - n * n.Y;
+        x = x.Normalized();
+        return new SketchPlane([o.X, o.Y, o.Z], [x.X, x.Y, x.Z], [n.X, n.Y, n.Z]);
+    }
+
+    /// <summary>The regions swept between two caps, and the corners of a box round them.</summary>
+    static (Field, Point3D[]) ExtrudeField(Extrude e, SweptShape shape, Frame placement, Func<Surface, Surface> register)
+    {
+        var frame = Profiles.FrameOf(shape.Plane).Then(placement);
+        var profile = Regions(e.Id, shape, frame, revolve: false, register);
         var start = register(new Surface(0, $"{e.Id}/start", SurfaceKind.Plane, frame.Origin + frame.Z * e.Start, -frame.Z));
         var end = register(new Surface(0, $"{e.Id}/end", SurfaceKind.Plane, frame.Origin + frame.Z * e.End, frame.Z));
-        var field = new MaxField([new ProfileField(edges.Select(x => x.Edge).ToList(), leaves, frame, revolve: false), new LeafField(start), new LeafField(end)]);
+        var field = new MaxField([profile, new LeafField(start), new LeafField(end)]);
 
-        var (u0, v0, u1, v1) = Profiles.Bounds(e.Profile);
+        var (u0, v0, u1, v1) = Bounds(shape);
         var corners = from u in new[] { u0, u1 } from v in new[] { v0, v1 } from w in new[] { e.Start, e.End }
                       select frame.ToWorld(new Point3D(u, v, w));
         return (field, corners.ToArray());
     }
 
-    /// <summary>The profile revolved round the sketch's y axis, cut to the swept angle by two half-planes below 360°.</summary>
-    static (Field, Point3D[]) RevolveField(Revolve r, Frame placement, Func<Surface, Surface> register)
+    /// <summary>The regions revolved round the sketch's y axis, cut to the swept angle by two half-planes below 360°.</summary>
+    static (Field, Point3D[]) RevolveField(Revolve r, SweptShape shape, Frame placement, Func<Surface, Surface> register)
     {
-        var frame = Profiles.FrameOf(r.Plane).Then(placement);
-        var edges = Profiles.CounterClockwise(r.Profile);
-        var leaves = edges.Select(x => ProfileField.EdgeLeaf(x.Edge, frame, revolve: true,
-            (k, o, a, rad, m, ang) => register(new Surface(0, $"{r.Id}/{x.Id}", k, o, a, rad, m, ang)))).ToList();
-        Field field = new ProfileField(edges.Select(x => x.Edge).ToList(), leaves, frame, revolve: true);
+        var frame = Profiles.FrameOf(shape.Plane).Then(placement);
+        var field = Regions(r.Id, shape, frame, revolve: true, register);
         if (r.Angle < 360)
         {
             // θ runs from the sketch's x (U) towards W = axis × U, which is −Z for a sketch frame. Taken from the frame
@@ -510,7 +595,7 @@ public sealed class Compiler(ModelingSettings settings)
         }
 
         // A box round the full revolution: discs of the largest radius at both ends of the height range.
-        var (_, v0, u1, v1) = Profiles.Bounds(r.Profile);
+        var (_, v0, u1, v1) = Bounds(shape);
         var a = frame.Y;
         var extent = new Vector3D(u1 * Math.Sqrt(Math.Max(0, 1 - a.X * a.X)), u1 * Math.Sqrt(Math.Max(0, 1 - a.Y * a.Y)), u1 * Math.Sqrt(Math.Max(0, 1 - a.Z * a.Z)));
         var ends = new[] { frame.Origin + a * v0, frame.Origin + a * v1 };

@@ -26,6 +26,17 @@ public static class FormatGuide
     static readonly Extrude Rib = new("rib", BooleanOp.Join, Top, new Profile([10, 10],
         [new ProfileEdge("a", [40, 10]), new ProfileEdge("b", [40, 16]), new ProfileEdge("c", [10, 16]), new ProfileEdge("d", [10, 10])]), 0, 6);
 
+    /// <summary>A 30 × 20 outline with a Ø8 bore on the plate's top, every point fixed by its constraints.</summary>
+    static readonly Sketch Outline = new("outline", new SketchPlacement(Face: "plate/z+"),
+        new Dictionary<string, double[]> { ["a"] = [60, 15], ["b"] = [90, 15], ["c"] = [90, 35], ["d"] = [60, 35], ["h"] = [75, 25] },
+        [new SketchLine("bottom", "a", "b"), new SketchLine("right", "b", "c"), new SketchLine("top", "c", "d"), new SketchLine("left", "d", "a"),
+         new SketchCircle("bore", "h", 4)],
+        [
+            new("horizontal", ["bottom"]), new("vertical", ["right"]), new("horizontal", ["top"]), new("vertical", ["left"]),
+            new("fix", ["a"]), new("length", ["bottom"], 30), new("length", ["left"], 20),
+            new("horizontal-distance", ["a", "h"], 15), new("vertical-distance", ["a", "h"], 10), new("diameter", ["bore"], 8),
+        ]);
+
     /// <summary>One or more examples per feature type, each regenerating cleanly on the plate.</summary>
     public static IReadOnlyList<Example> Examples { get; } =
     [
@@ -51,6 +62,14 @@ public static class FormatGuide
             new Revolve("knob", BooleanOp.Join, new SketchPlane([70, 25, 10], [1, 0, 0], [0, -1, 0]), new Profile([0, 0],
                 [new ProfileEdge("base", [8, 0]), new ProfileEdge("side", [8, 6]), new ProfileEdge("top", [0, 6]), new ProfileEdge("axis", [0, 0])])),
             ["knob/side", "knob/top"], []),
+        new("A 2D sketch on a plane or on a flat face by name (it follows the face): named points with their last solved " +
+            "coordinates, lines, arcs and circles between them, and constraints. It makes no solid; extrudes and revolves sweep " +
+            "its regions. See Sketches below.",
+            Outline, ["plate/z+"], []),
+        new("An extrude (or revolve) of a sketch: sketch names it, regions optionally picks regions, each by entity ids round " +
+            "its outside (all when left out). Loops inside a region are holes. Side faces <id>/<entity id>, caps as before.",
+            new Extrude("pad", BooleanOp.Join, null, null, 0, 5) { Sketch = "outline" },
+            ["pad/bottom", "pad/right", "pad/top", "pad/left", "pad/bore", "pad/end"], [Outline]),
         new("Moves every face of the part so far along its normal (negative: inward). Faces keep their names; a grown " +
             "convex corner of a swept profile becomes <id>/corner:<face>+<face>.",
             new Offset("grow", 1), ["plate/z+", "rib/a", "grow/corner:rib/a+rib/b"], [Rib]),
@@ -138,7 +157,7 @@ public static class FormatGuide
         s.AppendLine("# Isoform document format (" + PartDocument.FormatVersion + ")");
         s.AppendLine();
         s.AppendLine("A part is JSON: " + Compact(CanonicalFormat.Write(new PartDocument([Plate, Bore]))));
-        s.AppendLine("Units mm, Z up. Features apply in order; the first must start a body (op new). Ids are unique, non-empty, without '/'.");
+        s.AppendLine("Units mm, Z up. Features apply in order; the first after any sketches must start a body (op new). Ids are unique, non-empty, without '/'.");
         s.AppendLine("Ids are stable: never derive them from position. Numbers are plain JSON numbers; points [x,y,z], 2D points [u,v].");
         s.AppendLine("Tools return the canonical text (fixed key order, optional keys only when used) and its SHA-256 hash.");
         s.AppendLine();
@@ -156,12 +175,26 @@ public static class FormatGuide
         s.AppendLine("{id, to [u,v], bulge?}, each from the previous point; the last edge ends at start; either winding. bulge = tan(θ/4)");
         s.AppendLine("for an arc of included angle θ, positive turning left (1 = half circle). Edge ids are unique, not 'start' or 'end'.");
         s.AppendLine();
+        s.AppendLine("## Sketches");
+        s.AppendLine("on: {\"plane\": {...}} or {\"face\": \"plate/z+\"}. On a face the plane is the face's, normal out of the part, origin and x the");
+        s.AppendLine("world's put onto it: on a top face sketch [u,v] is world [x,y]; on a face looking the other way v runs opposite.");
+        s.AppendLine("points: {name: [u,v]}, the last solved coordinates. entities: {id, line: [p, q]}, {id, arc: {center, from, to}} (counter-");
+        s.AppendLine("clockwise), {id, circle: {center, radius}}; construction: true takes part in constraints only. Names never contain '.' or '/'.");
+        s.AppendLine("constraints: {<kind>: ref or [refs], value?}. Geometric: " + string.Join(", ", SketchConstraint.Geometric) + ".");
+        s.AppendLine("Dimensions (value in mm, angle in degrees, or \"=expression\"): " + string.Join(", ", SketchConstraint.Dimensions) + ".");
+        s.AppendLine("Refs: coincident [p,q]; horizontal/vertical line or [p,q]; parallel/perpendicular/angle [line,line]; tangent [line or round,");
+        s.AppendLine("round]; equal [line,line] or [round,round]; midpoint [p,line]; symmetric [p,q,line]; on [p,line or round]; fix p; length line;");
+        s.AppendLine("distance [p,q], [p,line] or [line,line]; horizontal-/vertical-distance [p,q]; radius/diameter round (arc or circle).");
+        s.AppendLine("Regeneration solves every sketch: sketch-conflict names constraints that cannot all hold, sketch-redundant one the others");
+        s.AppendLine("imply; a sketch that is not fully constrained keeps its free points where they are stored. Lines and arcs join where");
+        s.AppendLine("their ends meet; open chains are ignored; a point joining three or more edges, or loops that cross, are sketch-invalid.");
+        s.AppendLine();
         s.AppendLine("## Face names");
         s.AppendLine("Every face is named by the feature that made it: <feature id>/<face>. Names survive parameter edits, so refer to");
         s.AppendLine("faces by name (fillet edges, loops, mates), never by index. A face that two features share (flush faces, a merge)");
         s.AppendLine("lists both names; a source face cut in pieces appears once per piece.");
         s.AppendLine("- block <id>/x- x+ y- y+ z- z+; hole <id>/wall; plane-cut and single-edge fillet/chamfer <id>/face");
-        s.AppendLine("- extrude/revolve <id>/<profile edge id>, <id>/start, <id>/end; blend <id>/blend");
+        s.AppendLine("- extrude/revolve <id>/<profile edge id> or <id>/<sketch entity id>, <id>/start, <id>/end; blend <id>/blend");
         s.AppendLine("- loop fillet/chamfer <id>/<face across the edge>, e.g. round/rib/a; shell <id>/inner:<outer face>");
         s.AppendLine("- pattern copy k: <id>/<k>:<source face>, e.g. row/2:hole/wall; offset corners <id>/corner:<face>+<face>");
         s.AppendLine("- lattice <id>/surface (sheets) or <id>/struts, one face however many pieces; skin <id>/inner:<face>; region <id>/region:<face>");

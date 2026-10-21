@@ -78,7 +78,7 @@ public class FormatGuideTests
         foreach (var code in FormatGuide.DiagnosticCodes()) text.Should().Contain(code);
         foreach (var edit in FormatGuide.EditExamples.Concat(FormatGuide.AssemblyEditExamples)) text.Should().Contain(edit);
         text.Should().Contain(PartDocument.FormatVersion).And.Contain(AssemblyDocument.FormatVersion).And.Contain(Bundle.FormatVersion);
-        // Short enough to read once per session.
-        text.Length.Should().BeLessThan(12_000);
+        // Short enough to read once per session (about 4k tokens; sketches and their constraints took it past 12k).
+        text.Length.Should().BeLessThan(15_000);
     }
 }

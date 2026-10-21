@@ -46,12 +46,15 @@ public static class DocumentRules
                     blend < 0 ? Invariant($"blend must not be negative, got {blend}") : "only a join or a cut can blend",
                 Chamfer c when (c.Loop is null ? c.Edge.Length != 2 : c.Edge.Length != 0) => "a chamfer names either an edge of two source faces or one loop face",
                 Extrude e when e.End - e.Start <= tolerance => Invariant($"extrude end must be beyond its start, got {e.Start} to {e.End}"),
-                Extrude e => Profiles.Problem(e.Plane, e.Profile, tolerance, revolve: false),
+                Extrude { Sketch: { } s } e => SweepProblem(s, e.Regions, doc.Features.Take(i).ToList()),
+                Extrude e => Profiles.Problem(e.Plane!, e.Profile!, tolerance, revolve: false),
                 Revolve r when !(r.Angle > tolerance && r.Angle <= 360) => Invariant($"revolve angle must be in (0, 360], got {r.Angle}"),
-                Revolve r => Profiles.Problem(r.Plane, r.Profile, tolerance, revolve: true),
+                Revolve { Sketch: { } s } r => SweepProblem(s, r.Regions, doc.Features.Take(i).ToList()),
+                Revolve r => Profiles.Problem(r.Plane!, r.Profile!, tolerance, revolve: true),
+                Sketch s => SketchProblem(s, doc.Features.Take(i).ToList(), tolerance),
                 Pattern p => PatternProblem(p, doc.Features.Take(i).ToList(), tolerance),
                 Lattice l => LatticeProblem(l, doc.Features.Take(i).ToList(), tolerance),
-                _ when i == 0 && !StartsBody(feature) => "the first feature must start a new body",
+                _ when bodies.Count == 0 && feature is not Sketch && !StartsBody(feature) => "the first feature after any sketches must start a new body",
                 _ => null,
             };
             if (problem is not null) return new Diagnostic(Diagnostic.InvalidParameter, feature.Id, problem);
@@ -61,6 +64,27 @@ public static class DocumentRules
             if (feature is CombineBodies { Keep: false } used) bodies.Remove(used.Tool);
         }
         return null;
+    }
+
+    /// <summary>An extrude or revolve of a sketch: an earlier sketch, and region names that are not empty.</summary>
+    static string? SweepProblem(string sketch, IReadOnlyList<string[]>? regions, List<Feature> earlier) =>
+        earlier.FirstOrDefault(f => f.Id == sketch) is not Sketch ? $"'{sketch}' is not an earlier sketch"
+        : regions is { Count: 0 } || regions?.Any(r => r.Length == 0) == true ? "each region is named by one or more entities of its outer loop"
+        : null;
+
+    /// <summary>A sketch's structure (names, references, constraints) and where it lies.</summary>
+    static string? SketchProblem(Sketch s, List<Feature> earlier, double tolerance)
+    {
+        if (Sketching.SketchSolver.Problem(s) is { } problem) return problem;
+        if (s.On is { Face: { } face })
+        {
+            var owner = face.Split('/')[0];
+            return earlier.Any(f => f.Id == owner) ? null : $"a sketch on a face needs that face made earlier; '{owner}' is not an earlier feature";
+        }
+        if (s.On.Plane is not { } plane) return "a sketch lies on a plane or a face";
+        var (n, x) = (new BasAutomation.Geometry.Vector3D(plane.Normal[0], plane.Normal[1], plane.Normal[2]), new BasAutomation.Geometry.Vector3D(plane.X[0], plane.X[1], plane.X[2]));
+        return n.Length <= tolerance || x.Cross(n).Length <= tolerance * Math.Max(1, x.Length)
+            ? "the sketch plane needs a normal and an x direction that is not parallel to it" : null;
     }
 
     static string? PatternProblem(Pattern p, List<Feature> earlier, double tolerance)

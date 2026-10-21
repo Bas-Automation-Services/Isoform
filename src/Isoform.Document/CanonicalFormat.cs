@@ -164,8 +164,7 @@ public static partial class CanonicalFormat
             case Extrude e:
                 w.WriteString("type", "extrude");
                 w.WriteString("op", e.Op.ToString().ToLowerInvariant());
-                WritePlane(w, e.Plane);
-                WriteProfile(w, e.Profile);
+                Swept(w, e.Plane, e.Profile, e.Sketch, e.Regions);
                 Number(w, "start", e.Start);
                 Number(w, "end", e.End);
                 Blend(w, e.Blend);
@@ -201,8 +200,7 @@ public static partial class CanonicalFormat
             case Revolve r:
                 w.WriteString("type", "revolve");
                 w.WriteString("op", r.Op.ToString().ToLowerInvariant());
-                WritePlane(w, r.Plane);
-                WriteProfile(w, r.Profile);
+                Swept(w, r.Plane, r.Profile, r.Sketch, r.Regions);
                 Number(w, "angle", r.Angle);
                 Blend(w, r.Blend);
                 break;
@@ -231,6 +229,10 @@ public static partial class CanonicalFormat
                 w.WriteString("op", cb.Op.ToString().ToLowerInvariant());
                 if (cb.Keep) w.WriteBoolean("keep", true);
                 break;
+            case Sketch s:
+                w.WriteString("type", "sketch");
+                WriteSketch(w, s);
+                break;
             default:
                 throw new NotSupportedException(f.GetType().Name);
         }
@@ -253,8 +255,11 @@ public static partial class CanonicalFormat
             "shell" => new Shell(id, (double)n["thickness"]!),
             "fillet" => new Fillet(id, Edge(n), (double)n["radius"]!, (string?)n["loop"]),
             "chamfer" => new Chamfer(id, Edge(n), (double)n["distance"]!, (string?)n["loop"]),
-            "extrude" => new Extrude(id, Op(n), ReadPlane(n["plane"]!), ReadProfile(n["profile"]!), (double)n["start"]!, (double)n["end"]!, (double?)n["blend"] ?? 0),
-            "revolve" => new Revolve(id, Op(n), ReadPlane(n["plane"]!), ReadProfile(n["profile"]!), (double)n["angle"]!, (double?)n["blend"] ?? 0),
+            "extrude" => new Extrude(id, Op(n), ReadPlaneOf(n), ReadProfileOf(n), (double)n["start"]!, (double)n["end"]!, (double?)n["blend"] ?? 0)
+                { Sketch = (string?)n["sketch"], Regions = ReadRegions(n["regions"]) },
+            "revolve" => new Revolve(id, Op(n), ReadPlaneOf(n), ReadProfileOf(n), (double)n["angle"]!, (double?)n["blend"] ?? 0)
+                { Sketch = (string?)n["sketch"], Regions = ReadRegions(n["regions"]) },
+            "sketch" => ReadSketch(id, n),
             "combine" => new CombineBodies(id, (string)n["tool"]!, Op(n), (bool?)n["keep"] ?? false),
             "pattern" => new Pattern(id, n["features"]!.AsArray().Select(f => (string)f!).ToArray(), ReadMotion(n)),
             "lattice" => new Lattice(id, (string)n["kind"]!, (double)n["cell"]!, (double)n["thickness"]!, (double?)n["skin"] ?? 0, ReadRegion(n["region"])),
@@ -300,6 +305,111 @@ public static partial class CanonicalFormat
     static BooleanOp Op(JsonNode n) => Enum.Parse<BooleanOp>((string)n["op"]!, ignoreCase: true);
 
     static SketchPlane ReadPlane(JsonNode n) => new(Arr(n["origin"], 3), Arr(n["x"], 3), Arr(n["normal"], 3));
+
+    // A swept feature has an inline plane and profile, or a sketch and the regions to use (all when left out).
+    static SketchPlane? ReadPlaneOf(JsonNode n) => n["sketch"] is null ? ReadPlane(n["plane"] ?? throw new FormatException("An extrude or revolve needs a plane and profile, or a sketch.")) : null;
+
+    static Profile? ReadProfileOf(JsonNode n) => n["sketch"] is null ? ReadProfile(n["profile"] ?? throw new FormatException("An extrude or revolve needs a plane and profile, or a sketch.")) : null;
+
+    static IReadOnlyList<string[]>? ReadRegions(JsonNode? n) => n?.AsArray().Select(r => r is JsonValue v ? [(string)v!] : r!.AsArray().Select(x => (string)x!).ToArray()).ToList();
+
+    static void Swept(Utf8JsonWriter w, SketchPlane? plane, Profile? profile, string? sketch, IReadOnlyList<string[]>? regions)
+    {
+        if (sketch is null)
+        {
+            WritePlane(w, plane!);
+            WriteProfile(w, profile!);
+            return;
+        }
+        w.WriteString("sketch", sketch);
+        if (regions is null) return;
+        w.WriteStartArray("regions");
+        foreach (var r in regions) Strings(w, null, r);
+        w.WriteEndArray();
+    }
+
+    // One name as a string, several as an array: {"horizontal": "bottom"}, {"coincident": ["a", "b"]}.
+    static void Strings(Utf8JsonWriter w, string? name, string[] values)
+    {
+        if (name is not null) w.WritePropertyName(name);
+        w.WriteStartArray();
+        foreach (var v in values) w.WriteStringValue(v);
+        w.WriteEndArray();
+    }
+
+    static void WriteSketch(Utf8JsonWriter w, Sketch s)
+    {
+        w.WriteStartObject("on");
+        if (s.On.Face is { } face) w.WriteString("face", face);
+        else WritePlane(w, s.On.Plane!);
+        w.WriteEndObject();
+        // Points by name, so a point's place in the text never depends on when it was made.
+        w.WriteStartObject("points");
+        foreach (var (name, at) in s.Points.OrderBy(p => p.Key, StringComparer.Ordinal)) Numbers(w, name, at);
+        w.WriteEndObject();
+        w.WriteStartArray("entities");
+        foreach (var e in s.Entities)
+        {
+            w.WriteStartObject();
+            w.WriteString("id", e.Id);
+            switch (e)
+            {
+                case SketchLine l:
+                    Strings(w, "line", [l.From, l.To]);
+                    break;
+                case SketchArc a:
+                    w.WriteStartObject("arc");
+                    w.WriteString("center", a.Center);
+                    w.WriteString("from", a.From);
+                    w.WriteString("to", a.To);
+                    w.WriteEndObject();
+                    break;
+                case SketchCircle c:
+                    w.WriteStartObject("circle");
+                    w.WriteString("center", c.Center);
+                    Number(w, "radius", c.Radius);
+                    w.WriteEndObject();
+                    break;
+            }
+            if (e.Construction) w.WriteBoolean("construction", true);
+            w.WriteEndObject();
+        }
+        w.WriteEndArray();
+        w.WriteStartArray("constraints");
+        foreach (var c in s.Constraints)
+        {
+            w.WriteStartObject();
+            if (c.Refs.Length == 1) w.WriteString(c.Kind, c.Refs[0]);
+            else Strings(w, c.Kind, c.Refs);
+            if (c.Value is { } v) Number(w, "value", v);
+            w.WriteEndObject();
+        }
+        w.WriteEndArray();
+    }
+
+    static Sketch ReadSketch(string id, JsonNode n)
+    {
+        var on = n["on"] ?? throw new FormatException($"Sketch '{id}' needs 'on': a plane or a face.");
+        var placement = on["face"] is { } face ? new SketchPlacement(Face: (string)face!) : new SketchPlacement(Plane: ReadPlane(on["plane"] ?? on));
+        var points = (n["points"]?.AsObject() ?? []).ToDictionary(p => p.Key, p => Arr(p.Value, 2));
+        var entities = (n["entities"]?.AsArray() ?? []).Select(e =>
+        {
+            var eid = (string)e!["id"]!;
+            SketchEntity entity = e["line"] is { } l ? new SketchLine(eid, (string)l[0]!, (string)l[1]!)
+                : e["arc"] is { } a ? new SketchArc(eid, (string)a["center"]!, (string)a["from"]!, (string)a["to"]!)
+                : e["circle"] is { } c ? new SketchCircle(eid, (string)c["center"]!, (double)c["radius"]!)
+                : throw new FormatException($"Sketch entity '{eid}' must be a line, arc or circle.");
+            return entity with { Construction = (bool?)e["construction"] ?? false };
+        }).ToList();
+        var constraints = (n["constraints"]?.AsArray() ?? []).Select(c =>
+        {
+            var kind = c!.AsObject().Select(p => p.Key).FirstOrDefault(k => k != "value")
+                ?? throw new FormatException($"A constraint in sketch '{id}' has no kind.");
+            var refs = c[kind] is JsonArray list ? list.Select(x => (string)x!).ToArray() : [(string)c[kind]!];
+            return new SketchConstraint(kind, refs, (double?)c["value"]);
+        }).ToList();
+        return new Sketch(id, placement, points, entities, constraints);
+    }
 
     static Profile ReadProfile(JsonNode n) => new(Arr(n["start"], 2), n["edges"]!.AsArray()
         .Select(e => new ProfileEdge((string)e!["id"]!, Arr(e["to"], 2), (double?)e["bulge"] ?? 0)).ToList());

@@ -100,8 +100,9 @@ public static partial class Handles
                 {
                     case Block b: Block(b); break;
                     case Hole h: Hole(h); break;
-                    case Extrude e: Extrude(e); break;
-                    case Revolve r: Revolve(r); break;
+                    // A sketch's extrude or revolve gets its handles from the sketch (later); its own are for inline profiles.
+                    case Extrude { Sketch: null } e: Extrude(e); break;
+                    case Revolve { Sketch: null } r: Revolve(r); break;
                     case Fillet f: Edge(f, f.Edge, f.Loop, f.Radius, "radius", round: true); break;
                     case Chamfer c: Edge(c, c.Edge, c.Loop, c.Distance, "distance", round: false); break;
                     case Shell s: Skin(s, "thickness", s.Thickness); break;
@@ -150,22 +151,22 @@ public static partial class Handles
 
         void Extrude(Extrude e)
         {
-            var frame = Profiles.FrameOf(e.Plane);
-            var (u0, v0, u1, v1) = Profiles.Bounds(e.Profile);
+            var frame = Profiles.FrameOf(e.Plane!);
+            var (u0, v0, u1, v1) = Profiles.Bounds(e.Profile!);
             // A cap the part does not show still has its plane, as a block face does.
             Point3D Cap(string face, double w) => Middle(face)?.At ?? OnSurface(Exact(face)!, frame.ToWorld(new Point3D((u0 + u1) / 2, (v0 + v1) / 2, w)));
             var (start, end) = ($"{e.Id}/start", $"{e.Id}/end");
             _handles.Add(Make(e, "end", HandleKind.Linear, $"{e.Id} end", Cap(end, e.End), frame.Z, [end], ("end", e.End, [1.0])) with { Min = e.Start + MinSize });
             _handles.Add(Make(e, "start", HandleKind.Linear, $"{e.Id} start", Cap(start, e.Start), -frame.Z, [start], ("start", e.Start, [-1.0])) with { Max = e.End - MinSize });
-            Vertices(e, e.Profile, frame, e.End);
+            Vertices(e, e.Profile!, frame, e.End);
         }
 
         void Revolve(Revolve r)
         {
-            var frame = Profiles.FrameOf(r.Plane);
+            var frame = Profiles.FrameOf(r.Plane!);
             // A point of the largest side face the part shows (else the corner farthest from the axis) at its height and
             // distance from the axis, turned to the end of the sweep: θ runs from x towards −z.
-            var side = r.Profile.Edges.Select(x => Middle($"{r.Id}/{x.Id}")).Where(m => m is not null).MaxBy(m => m!.Value.Area)?.At;
+            var side = r.Profile!.Edges.Select(x => Middle($"{r.Id}/{x.Id}")).Where(m => m is not null).MaxBy(m => m!.Value.Area)?.At;
             var far = r.Profile.Edges.Select(x => x.To).MaxBy(p => p[0])!;
             var (height, radius) = side is { } m && frame.ToLocal(m) is var l ? (l.Y, Math.Sqrt(l.X * l.X + l.Z * l.Z)) : (far[1], far[0]);
             var phi = r.Angle * Math.PI / 180;
@@ -173,7 +174,7 @@ public static partial class Handles
             var anchor = centre + (frame.X * Math.Cos(phi) - frame.Z * Math.Sin(phi)) * radius;
             _handles.Add(Make(r, "angle", HandleKind.Angle, $"{r.Id} angle", anchor, frame.Y, r.Angle < 360 ? [$"{r.Id}/end"] : [],
                 ("angle", r.Angle, [1.0])) with { Center = centre, Min = MinSize, Max = 360 });
-            Vertices(r, r.Profile, frame, 0);
+            Vertices(r, r.Profile!, frame, 0);
         }
 
         /// <summary>

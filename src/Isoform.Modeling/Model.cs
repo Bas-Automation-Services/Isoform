@@ -46,6 +46,14 @@ public sealed record Diagnostic(string Code, string? FeatureId, string Message)
     public const string PartMissing = "part-missing";
     public const string PartChanged = "part-changed";
     public const string MatesConflict = "mates-conflict";
+    /// <summary>A sketch's constraints cannot all hold; the message names them.</summary>
+    public const string SketchConflict = "sketch-conflict";
+    /// <summary>A sketch constraint the others already imply (a warning).</summary>
+    public const string SketchRedundant = "sketch-redundant";
+    /// <summary>A sketch that cannot be used: bad references, loops that cross or branch, a region that is not there.</summary>
+    public const string SketchInvalid = "sketch-invalid";
+    /// <summary>A sketch placed on a face that is not a flat face of the part where the sketch stands.</summary>
+    public const string SketchPlaneLost = "sketch-plane-lost";
 }
 
 /// <summary>A connected face that exists after regeneration, with every source surface it came from.</summary>

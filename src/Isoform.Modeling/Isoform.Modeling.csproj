@@ -4,6 +4,7 @@
     <ProjectReference Include="../Isoform.Document/Isoform.Document.csproj" />
     <ProjectReference Include="../Isoform.Geometry/Isoform.Geometry.csproj" />
     <ProjectReference Include="../Isoform.Meshing/Isoform.Meshing.csproj" />
+    <ProjectReference Include="../Isoform.Sketching/Isoform.Sketching.csproj" />
   </ItemGroup>
 
 </Project>

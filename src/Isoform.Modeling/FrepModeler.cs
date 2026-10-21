@@ -214,8 +214,8 @@ public sealed class FrepModeler(ModelingSettings settings, RegionCache? cache = 
         unresolved = diagnostics.Select(d => d.FeatureId).ToHashSet();
 
         var present = topology.Faces.SelectMany(f => f.Sources).ToHashSet();
-        // An offset or a combine moves or merges faces that keep their names; it has none of its own to look for.
-        foreach (var feature in document.Features.Where(f => f is not (Fillet or Offset or CombineBodies) && !unresolved.Contains(f.Id)))
+        // An offset or a combine moves or merges faces that keep their names, and a sketch makes none: no faces of their own to look for.
+        foreach (var feature in document.Features.Where(f => f is not (Fillet or Offset or CombineBodies or Sketch) && !unresolved.Contains(f.Id)))
         {
             var own = part.Surfaces.Where(s => s.Source.StartsWith(feature.Id + "/")).ToList();
             if (own.Any(s => present.Contains(s.Source))) continue;

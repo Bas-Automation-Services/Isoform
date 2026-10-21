@@ -56,16 +56,69 @@ public sealed record Profile(double[] Start, IReadOnlyList<ProfileEdge> Edges);
 
 /// <summary>
 /// A profile swept along the sketch normal from <paramref name="Start"/> to <paramref name="End"/>. Side faces are
-/// named after their profile edge (<c>rib/top</c>), the caps <c>rib/start</c> and <c>rib/end</c>.
+/// named after their profile edge (<c>rib/top</c>), the caps <c>rib/start</c> and <c>rib/end</c>. With
+/// <see cref="Sketch"/> the regions of that sketch are swept instead of <paramref name="Profile"/>, which is then null
+/// as is <paramref name="Plane"/>; side faces are named after the sketch's entities.
 /// </summary>
-public sealed record Extrude(string Id, BooleanOp Op, SketchPlane Plane, Profile Profile, double Start, double End, double Blend = 0) : Feature(Id);
+public sealed record Extrude(string Id, BooleanOp Op, SketchPlane? Plane, Profile? Profile, double Start, double End, double Blend = 0) : Feature(Id)
+{
+    /// <summary>The id of an earlier <see cref="Isoform.Document.Sketch"/> to sweep, instead of an inline profile.</summary>
+    public string? Sketch { get; init; }
+
+    /// <summary>Which of the sketch's regions, each named by entities of its outer loop; null for every region.</summary>
+    public IReadOnlyList<string[]>? Regions { get; init; }
+}
 
 /// <summary>
 /// A profile revolved round the sketch's y axis: profile x is the distance from the axis (never negative), y the
 /// height along it. <paramref name="Angle"/> in degrees, right-handed round the axis from the sketch plane; below
-/// 360 the two flat ends are <c>id/start</c> and <c>id/end</c>.
+/// 360 the two flat ends are <c>id/start</c> and <c>id/end</c>. With <see cref="Sketch"/>, as for an extrude.
 /// </summary>
-public sealed record Revolve(string Id, BooleanOp Op, SketchPlane Plane, Profile Profile, double Angle = 360, double Blend = 0) : Feature(Id);
+public sealed record Revolve(string Id, BooleanOp Op, SketchPlane? Plane, Profile? Profile, double Angle = 360, double Blend = 0) : Feature(Id)
+{
+    /// <inheritdoc cref="Extrude.Sketch"/>
+    public string? Sketch { get; init; }
+
+    /// <inheritdoc cref="Extrude.Regions"/>
+    public IReadOnlyList<string[]>? Regions { get; init; }
+}
+
+/// <summary>Where a sketch lies: a plane, or a flat face of the part by name (it then follows the face).</summary>
+public sealed record SketchPlacement(SketchPlane? Plane = null, string? Face = null);
+
+/// <summary>A line, arc or circle of a sketch, between named points. Construction geometry is never swept.</summary>
+public abstract record SketchEntity(string Id)
+{
+    public bool Construction { get; init; }
+}
+
+/// <summary>A straight line from point <paramref name="From"/> to point <paramref name="To"/>.</summary>
+public sealed record SketchLine(string Id, string From, string To) : SketchEntity(Id);
+
+/// <summary>An arc round <paramref name="Center"/>, counter-clockwise from <paramref name="From"/> to <paramref name="To"/>.</summary>
+public sealed record SketchArc(string Id, string Center, string From, string To) : SketchEntity(Id);
+
+/// <summary>A full circle round <paramref name="Center"/>; its radius is solved like a point's coordinates.</summary>
+public sealed record SketchCircle(string Id, string Center, double Radius) : SketchEntity(Id);
+
+/// <summary>
+/// A constraint: its kind, the points or entities it binds and, for a dimension, its value (mm, or degrees for an
+/// angle). Kinds: coincident, horizontal, vertical, parallel, perpendicular, tangent, equal, midpoint, symmetric, on,
+/// fix; dimensions length, distance, horizontal-distance, vertical-distance, radius, diameter, angle.
+/// </summary>
+public sealed record SketchConstraint(string Kind, string[] Refs, double? Value = null)
+{
+    public static readonly string[] Geometric = ["coincident", "horizontal", "vertical", "parallel", "perpendicular", "tangent", "equal", "midpoint", "symmetric", "on", "fix"];
+    public static readonly string[] Dimensions = ["length", "distance", "horizontal-distance", "vertical-distance", "radius", "diameter", "angle"];
+}
+
+/// <summary>
+/// A 2D sketch: named points with their last solved coordinates, the entities between them, and constraints. It
+/// makes no solid of its own; extrudes and revolves sweep its regions. The points carry the solution, so a document
+/// regenerates the same every time and diffs as geometry; the constraints carry the intent.
+/// </summary>
+public sealed record Sketch(string Id, SketchPlacement On, IReadOnlyDictionary<string, double[]> Points,
+    IReadOnlyList<SketchEntity> Entities, IReadOnlyList<SketchConstraint> Constraints) : Feature(Id);
 
 /// <summary>
 /// Moves every face of the part so far by <paramref name="Distance"/> along its outward normal (negative: inward).
