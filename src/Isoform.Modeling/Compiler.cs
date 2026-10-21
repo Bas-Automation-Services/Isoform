@@ -147,6 +147,12 @@ public sealed class Compiler(ModelingSettings settings)
             if (sketch is null) return new SweptShape(plane!, [new SketchRegion(profile!, [])]);
             var (shape, _, why) = sketches[sketch];
             var (regions, problem) = shape is null || why is not null ? ([], $"its sketch {sketch} {why}") : SketchRegions.Select(shape.Regions, wanted);
+            if (problem is null && f is Revolve { Axis: { } axis })
+            {
+                var line = doc.Features.OfType<Sketch>().First(k => k.Id == sketch).Entities.OfType<SketchLine>().First(l => l.Id == axis);
+                var points = sketches[sketch].Solution!.Points;
+                return AboutAxis(shape! with { Regions = regions }, points[line.From], points[line.To]);
+            }
             if (problem is null) return shape! with { Regions = regions };
             if (diagnostics.All(d => d.FeatureId != reportAs || d.Code != SketchSolution.Invalid))
                 diagnostics.Add(new Diagnostic(SketchSolution.Invalid, reportAs, $"{reportAs} cannot sweep sketch {sketch}: {problem}"));
@@ -574,6 +580,27 @@ public sealed class Compiler(ModelingSettings settings)
         var regions = shape.Regions.Select(r => r.Holes.Count == 0 ? Loop(r.Outer)
             : (Field)new MaxField([Loop(r.Outer), .. r.Holes.Select(h => (Field)new NegateField(Loop(h)))])).ToList();
         return regions.Count == 1 ? regions[0] : new MinField(regions);
+    }
+
+    /// <summary>
+    /// The shape in a plane of its own whose y axis runs along the line from a to b, so a revolve turns round that
+    /// line: the same plane through a, turned in itself, and the regions in its coordinates. When the regions lie on the
+    /// line's other side the plane turns half round as well, as a revolve takes x as the distance from the axis.
+    /// </summary>
+    static SweptShape AboutAxis(SweptShape shape, (double X, double Y) a, (double X, double Y) b)
+    {
+        var length = Math.Sqrt((b.X - a.X) * (b.X - a.X) + (b.Y - a.Y) * (b.Y - a.Y));
+        var (dx, dy) = ((b.X - a.X) / length, (b.Y - a.Y) / length);
+        // The new x is the line's direction turned a quarter clockwise: (dy, -dx).
+        double Across(double[] p) => (p[0] - a.X) * dy - (p[1] - a.Y) * dx;
+        var side = shape.Regions.SelectMany(r => r.Outer.Edges).Sum(e => Across(e.To)) >= 0 ? 1 : -1;
+        double[] To(double[] p) => [side * Across(p), side * ((p[0] - a.X) * dx + (p[1] - a.Y) * dy)];
+        Profile Map(Profile p) => new(To(p.Start), [.. p.Edges.Select(e => e with { To = To(e.To) })]);
+        var frame = Profiles.FrameOf(shape.Plane);
+        var origin = frame.ToWorld(new Point3D(a.X, a.Y, 0));
+        var x = frame.X * (side * dy) + frame.Y * (-side * dx);
+        var plane = new SketchPlane([origin.X, origin.Y, origin.Z], [x.X, x.Y, x.Z], shape.Plane.Normal);
+        return new SweptShape(plane, [.. shape.Regions.Select(r => new SketchRegion(Map(r.Outer), [.. r.Holes.Select(Map)]))]);
     }
 
     /// <summary>A 2D box round every region's outer loop.</summary>
