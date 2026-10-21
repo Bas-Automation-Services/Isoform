@@ -168,7 +168,14 @@ export function createSketchMode(store, { viewer, view, column, call, latest, ap
   /** The geometry to draw: the sketch's points, or a conflicted solve's attempt. */
   function geo() {
     const r = s.reply && !s.reply.error ? s.reply : { points: {}, radii: {} };
-    return { sketch: s.sketch, points: { ...s.sketch.points, ...r.points }, radii: r.radii };
+    return { sketch: s.sketch, points: Object.fromEntries(Object.entries(s.sketch.points).map(([k, p]) => [k, r.points[k] ?? p])), radii: r.radii };
+  }
+
+  /** The last solve's regions as shapes, those whose entities are all still there (a change may be unsolved yet). */
+  function shownRegions(g) {
+    const ids = new Set(s.sketch.entities.map(e => e.id));
+    const regions = (s.reply?.regions ?? []).filter(r => [...r.outer, ...r.holes.flat()].every(id => ids.has(id)));
+    return shapes(regions, s.sketch, g.points, g.radii);
   }
 
   async function solve(drag) {
@@ -224,7 +231,7 @@ export function createSketchMode(store, { viewer, view, column, call, latest, ap
     parts.push(`<path class="outline" d="${s.outline.map(d).join('')}"/>`);
 
     // Regions: picked ones shaded, the one under the pointer lighter.
-    const regions = s.reply?.regions ? shapes(s.reply.regions, s.sketch, g.points, g.radii) : [];
+    const regions = shownRegions(g);
     const under = s.tool === 'select' && s.cursor && !s.hover ? regionAt(regions, fromScreen(v, s.cursor)) : -1;
     regions.forEach((r, i) => {
       const cls = s.picked.has(r.key) ? 'picked' : i === under ? 'hover' : '';
@@ -387,7 +394,7 @@ export function createSketchMode(store, { viewer, view, column, call, latest, ap
       const hit = down.hit;
       if (hit) s.selection = shift ? (s.selection.includes(hit) ? s.selection.filter(n => n !== hit) : [...s.selection, hit]) : [hit];
       else {
-        const g = geo(), regions = s.reply?.regions ? shapes(s.reply.regions, s.sketch, g.points, g.radii) : [];
+        const regions = shownRegions(geo());
         const i = regionAt(regions, at);
         if (i >= 0) s.picked.has(regions[i].key) ? s.picked.delete(regions[i].key) : s.picked.add(regions[i].key);
         else s.selection = [];
@@ -413,6 +420,7 @@ export function createSketchMode(store, { viewer, view, column, call, latest, ap
       case 'point': change(M.addPoint(s.sketch, a).sketch); done(); break;
       case 'line': {
         if (!b) break;
+        if (b.point && b.point === a.point) { d.picks.pop(); break; } // no line from a point to itself
         const r = M.addLine(s.sketch, a, b, { ...opts, hv: b.hv, tangent: b.tangent });
         change(r.sketch);
         // A polyline carries on from the end, unless it closed onto a point that was there.
