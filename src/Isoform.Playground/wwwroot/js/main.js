@@ -19,6 +19,7 @@ import { createGhosts } from './ghosts.js';
 import { createTour } from './panels/tour.js';
 import { createShare } from './panels/share.js';
 import { createFiles } from './panels/files.js';
+import { createChatPanel } from './panels/chat.js';
 
 const $ = id => document.getElementById(id);
 const store = createStore();
@@ -131,6 +132,14 @@ Object.assign(window.isoform, {
   undo: () => commits.undo().then(outcome),
   redo: () => commits.redo().then(outcome),
   history: () => ({ at: store.state.historyAt, entries: store.state.history.map(({ hash, edits, label, origin }) => ({ hash, edits, label, origin })) }),
+});
+
+// Chat (D1): Claude in the native server edits the document; a turn's edits commit as one history entry, origin
+// 'agent'. Its own connection, /chat beside /kernel, so a long turn does not hold up regenerations.
+const chatUrl = native ? kernelUrl.replace(/\/kernel$/, '/chat') : null;
+window.isoform.chat = createChatPanel(store, $('chat'), {
+  connect: chatUrl && (() => connectKernel(chatUrl)),
+  applyEdits: (edits, label) => commits.applyEdits(edits, label, 'agent').then(outcome),
 });
 
 // Diagnostics (J5) for the browser tests: the list as shown, the faces lit for the one in focus, the cell in use.

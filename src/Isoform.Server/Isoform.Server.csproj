@@ -10,6 +10,11 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- The official Anthropic SDK (MIT), for the chat panel's model calls. -->
+    <PackageReference Include="Anthropic" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="../Isoform.Interactive/Isoform.Interactive.csproj" />
   </ItemGroup>
 

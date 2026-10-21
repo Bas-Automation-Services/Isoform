@@ -1,16 +1,9 @@
 using System.ComponentModel;
-using System.Diagnostics;
-using System.Globalization;
-using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Json.Nodes;
-using BasAutomation.Geometry;
 using Isoform.Document;
-using Isoform.Geometry;
 using Isoform.Interactive;
-using Isoform.Meshing;
 using Isoform.Modeling;
-using Isoform.Sketching;
 using Isoform.Step;
 using ModelContextProtocol;
 using ModelContextProtocol.Server;
@@ -20,6 +13,7 @@ namespace Isoform.Mcp;
 /// <summary>
 /// The kernel as MCP tools. Each tool is a pure function from its arguments to one compact JSON object: summaries,
 /// names and numbers an agent can act on, never meshes. Bad input comes back as a tool error with the kernel's message.
+/// The work is <see cref="AgentTools"/>'s, which the playground's chat shares; here are the MCP names and descriptions.
 /// </summary>
 [McpServerToolType]
 public static class IsoformTools
@@ -29,7 +23,7 @@ public static class IsoformTools
     const string ChordHelp = "Largest distance in mm the mesh may stray from a curved face (default 0.01).";
 
     /// <summary>How tool results are written: one line, and + or ≥ as themselves (face names are full of + signs).</summary>
-    public static readonly JsonSerializerOptions Compact = new() { Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
+    public static readonly JsonSerializerOptions Compact = AgentTools.Compact;
 
     [McpServerTool(Name = "regenerate", ReadOnly = true, Idempotent = true)]
     [Description("Regenerates a part: diagnostics, every face by its stable source name per body, edge and vertex counts, " +
@@ -39,18 +33,8 @@ public static class IsoformTools
         [Description(CellHelp)] double cellSize = 0.5,
         [Description(ChordHelp)] double chordTolerance = 0.01,
         [Description("Mass per mm³; when given, mass and inertia are scaled by it (default: per unit density).")] double? density = null,
-        [Description("Also give a certified [lower, upper] range of each body's volume (slower).")] bool certifyVolume = false) => Run(() =>
-    {
-        var doc = Part(document);
-        var settings = Settings(cellSize, chordTolerance);
-        var clock = Stopwatch.StartNew();
-        var result = new FrepModeler(settings).Regenerate(doc);
-        var regenerate = clock.Elapsed.TotalMilliseconds;
-        var o = new JsonObject { ["hash"] = CanonicalFormat.Hash(doc) };
-        Summarize(o, result, full: true, density, certifyVolume ? settings.CellSize : null);
-        o["ms"] = new JsonObject { ["regenerate"] = Math.Round(regenerate), ["total"] = Math.Round(clock.Elapsed.TotalMilliseconds) };
-        return o;
-    });
+        [Description("Also give a certified [lower, upper] range of each body's volume (slower).")] bool certifyVolume = false) =>
+        Run(() => AgentTools.Regenerate(document, cellSize, chordTolerance, density, certifyVolume));
 
     [McpServerTool(Name = "apply_edits", Idempotent = true)]
     [Description("Applies edits to a part, assembly or bundle and returns the new document (compact JSON, same content and " +
@@ -68,45 +52,8 @@ public static class IsoformTools
         [Description("Regenerate for the summary and, for a part, reference stability (default true).")] bool regenerate = true,
         [Description("Write the new document here as canonical text (may be the input path) instead of returning it.")] string? outputPath = null,
         [Description(CellHelp)] double cellSize = 0.5,
-        [Description(ChordHelp)] double chordTolerance = 0.01) => Run(() =>
-    {
-        var before = Text(document);
-        var edited = DocumentEdits.TryApply(before, edits.Select(e => JsonNode.Parse(e.ValueKind == JsonValueKind.String ? e.GetString()! : e.GetRawText())!));
-        // The problem names the edit and why: "edit 2 {...}: 'slot' is not a feature id in the document".
-        if (edited.Problem is { } problem) throw new McpException(problem);
-        var text = edited.Text!;
-        var o = new JsonObject { ["hash"] = edited.Hash, ["previousHash"] = DocumentEdits.TryApply(before, []).Hash };
-        // As an object, not the indented text: a third of the tokens, and it reads back to the same hash.
-        if (outputPath is null) o["document"] = JsonNode.Parse(text);
-        else
-        {
-            File.WriteAllText(outputPath, text);
-            o["path"] = Path.GetFullPath(outputPath);
-        }
-        if (!regenerate) return o;
-
-        var settings = Settings(cellSize, chordTolerance);
-        if (CanonicalFormat.FormatOf(text) == PartDocument.FormatVersion)
-        {
-            var modeler = new FrepModeler(settings);
-            var (old, now) = (modeler.Regenerate(CanonicalFormat.Read(before)), modeler.Regenerate(CanonicalFormat.Read(text)));
-            var summary = new JsonObject();
-            Summarize(summary, now, full: false, density: null, certifyCell: null);
-            o["result"] = summary;
-            o["references"] = Stability(old.Topology, now.Topology);
-        }
-        // The parts come from the original file's folder: the edited assembly still names them from there.
-        else if (Assembled(document, text) is var (assembly, load))
-        {
-            var r = new AssemblyModeler(settings).Regenerate(assembly, load);
-            o["result"] = new JsonObject
-            {
-                ["ok"] = r.Diagnostics.Count == 0, ["diagnostics"] = Diagnostics(r.Diagnostics),
-                ["instances"] = r.Instances.Count, ["freeDegrees"] = r.FreeDegrees,
-            };
-        }
-        return o;
-    });
+        [Description(ChordHelp)] double chordTolerance = 0.01) =>
+        Run(() => AgentTools.ApplyEdits(document, AgentTools.Edits(edits), regenerate, outputPath, cellSize, chordTolerance));
 
     [McpServerTool(Name = "query", ReadOnly = true, Idempotent = true)]
     [Description("Geometric queries on a part, several per call: ray (first boundary hit: point, distance, face, normal), " +
@@ -115,76 +62,10 @@ public static class IsoformTools
                  "A query the kernel cannot settle is answered {\"kind\", \"error\"}; the others still stand.")]
     public static string Query(
         [Description(DocumentHelp)] string document,
-        [Description("The queries, answered in order.")] QuerySpec[] queries,
+        [Description("The queries, answered in order.")] AgentTools.QuerySpec[] queries,
         [Description(CellHelp)] double cellSize = 0.5,
-        [Description(ChordHelp)] double chordTolerance = 0.01) => Run(() =>
-    {
-        var doc = Part(document);
-        var settings = Settings(cellSize, chordTolerance);
-        var part = new Compiler(settings).Compile(doc);
-        if (part.Field is null) throw new McpException($"the document has no geometry: {string.Join("; ", part.Diagnostics.Select(d => d.Message))}");
-        // Only the wall query needs a mesh; regenerate once, and only if asked.
-        var regenerated = new Lazy<FrepResult>(() => new FrepModeler(settings).Regenerate(doc));
-        string Face(int owner) => part.Surfaces[owner].Source;
-        CompiledBody? BodyOf(string? name) => name is null ? null
-            : part.Bodies.FirstOrDefault(b => b.Name == name) ?? throw new McpException($"there is no body '{name}'; bodies: {string.Join(", ", part.Bodies.Select(b => b.Name))}");
-
-        var answers = new JsonArray();
-        foreach (var q in queries)
-        {
-            var body = BodyOf(q.Body);
-            var field = body?.Field ?? part.Field;
-            var (min, max) = body is null ? (part.Min, part.Max) : (body.Min, body.Max);
-            JsonObject a;
-            try
-            {
-                switch (q.Kind)
-                {
-                    case "ray":
-                        var origin = Point(q.Origin, "origin");
-                        // As far as the ray can still meet the box round the solid.
-                        var reach = Corners(min, max).Max(c => (c - origin).Length) + 1;
-                        a = Queries.Raycast(field, origin, Vector(q.Direction, "direction"), reach) is { } hit
-                            ? new JsonObject { ["hit"] = true, ["point"] = V(hit.Point), ["distance"] = N(hit.Distance), ["face"] = Face(hit.Owner), ["normal"] = V(hit.Normal) }
-                            : new JsonObject { ["hit"] = false };
-                        break;
-                    case "distance":
-                        var d = Queries.Distance(field, Point(q.Point, "point"));
-                        a = new JsonObject { ["lower"] = N(d.Lower), ["upper"] = N(d.Upper), ["closest"] = V(d.Closest), ["face"] = Face(d.Owner), ["inside"] = d.Inside };
-                        break;
-                    case "clearance":
-                        var names = (q.A, q.B) is ({ } x, { } y) ? (x, y)
-                            : part.Bodies.Count == 2 ? (part.Bodies[0].Name, part.Bodies[1].Name)
-                            : throw new McpException("a clearance names two bodies, a and b");
-                        var (ba, bb) = (BodyOf(names.Item1)!, BodyOf(names.Item2)!);
-                        var c = Queries.Clearance(ba.Field, Grown(ba.Min, ba.Max), bb.Field, Grown(bb.Min, bb.Max), 1e-4, 20_000);
-                        a = new JsonObject
-                        {
-                            ["a"] = ba.Name, ["b"] = bb.Name, ["lower"] = N(c.Lower), ["upper"] = N(c.Upper),
-                            ["onA"] = V(c.OnA), ["onB"] = V(c.OnB), ["interferes"] = c.Interferes,
-                        };
-                        break;
-                    case "wall":
-                        var r = regenerated.Value;
-                        a = Queries.MinimumWall(r) is { } w
-                            ? new JsonObject { ["thickness"] = N(w.Thickness), ["from"] = V(w.From), ["to"] = V(w.To), ["fromFace"] = Face(w.FromOwner), ["toFace"] = Face(w.ToOwner) }
-                            : new JsonObject { ["thickness"] = null };
-                        break;
-                    default:
-                        throw new McpException($"unknown query kind '{q.Kind}'; use ray, distance, clearance or wall");
-                }
-            }
-            // The kernel declining one query (a ray march that does not settle, a distance search out of budget) is
-            // that query's answer, not the call's failure: the other answers stand.
-            catch (InvalidOperationException e)
-            {
-                a = new JsonObject { ["error"] = e.Message };
-            }
-            a.Insert(0, "kind", q.Kind);
-            answers.Add(a);
-        }
-        return new JsonObject { ["hash"] = CanonicalFormat.Hash(doc), ["answers"] = answers };
-    });
+        [Description(ChordHelp)] double chordTolerance = 0.01) =>
+        Run(() => AgentTools.Query(document, queries, cellSize, chordTolerance));
 
     [McpServerTool(Name = "sketch", ReadOnly = true, Idempotent = true)]
     [Description("Solves one sketch of a part: every point [u,v] and circle radius, the degrees of freedom left and the points " +
@@ -197,31 +78,13 @@ public static class IsoformTools
         [Description("The sketch's feature id.")] string id,
         [Description("A point to drag, by name.")] string? dragPoint = null,
         [Description("Where to drag it, [u, v] in sketch coordinates.")] double[]? dragTo = null) =>
-        Run(() => SketchJson.Solve(Text(document), id, dragPoint, dragTo));
+        Run(() => SketchJson.Solve(AgentTools.Text(document), id, dragPoint, dragTo));
 
     [McpServerTool(Name = "validate", ReadOnly = true, Idempotent = true)]
     [Description("Fast check of a part without meshing: parses it, applies the document rules and compiles it. " +
                  "Returns ok, the hash, the bodies and the diagnostics. Parse errors come back as a diagnostic too.")]
-    public static string Validate([Description(DocumentHelp)] string document) => Run(() =>
-    {
-        PartDocument doc;
-        try
-        {
-            doc = Part(document);
-        }
-        catch (Exception e) when (e is JsonException or FormatException or InvalidOperationException or InvalidCastException or NullReferenceException or ArgumentException or KeyNotFoundException)
-        {
-            return new JsonObject { ["ok"] = false, ["diagnostics"] = new JsonArray(Diagnostic("parse-error", null, Message(e))) };
-        }
-        var settings = new ModelingSettings();
-        var problems = DocumentRules.FirstProblem(doc, settings.Tolerance) is { } first ? [first] : new Compiler(settings).Compile(doc).Diagnostics;
-        var bodies = doc.Features.Where(DocumentRules.StartsBody).Select(f => f.Body ?? f.Id);
-        return new JsonObject
-        {
-            ["ok"] = problems.Count == 0, ["hash"] = CanonicalFormat.Hash(doc), ["features"] = doc.Features.Count,
-            ["bodies"] = new JsonArray(bodies.Select(b => (JsonNode)b).ToArray()), ["diagnostics"] = Diagnostics(problems),
-        };
-    });
+    public static string Validate([Description(DocumentHelp)] string document) =>
+        Run(() => AgentTools.Validate(document));
 
     [McpServerTool(Name = "export_step")]
     [Description("Exports a part, assembly or bundle as exact STEP (AP214): analytic faces (fillets, chamfers, loop fillets, " +
@@ -235,17 +98,17 @@ public static class IsoformTools
         [Description(CellHelp)] double cellSize = 0.5,
         [Description(ChordHelp)] double chordTolerance = 0.01) => Run(() =>
     {
-        var settings = Settings(cellSize, chordTolerance);
-        var text = Text(document);
+        var settings = AgentTools.Settings(cellSize, chordTolerance);
+        var text = AgentTools.Text(document);
         var o = new JsonObject();
         string step;
         try
         {
             if (CanonicalFormat.FormatOf(text) is Bundle.FormatVersion or AssemblyDocument.FormatVersion)
             {
-                var (assembly, load) = Assembled(document, text) ?? throw new McpException(AssemblyTextHelp);
+                var (assembly, load) = AgentTools.Assembled(document, text) ?? throw new McpException(AgentTools.AssemblyTextHelp);
                 var result = new AssemblyModeler(settings).Regenerate(assembly, load);
-                o["diagnostics"] = Diagnostics(result.Diagnostics);
+                o["diagnostics"] = AgentTools.Diagnostics(result.Diagnostics);
                 step = StepWriter.Write(result, settings, name ?? "assembly");
                 o["ok"] = true;
                 o["instances"] = result.Instances.Count;
@@ -254,7 +117,7 @@ public static class IsoformTools
             else
             {
                 var result = new FrepModeler(settings).Regenerate(CanonicalFormat.Read(text));
-                o["diagnostics"] = Diagnostics(result.Diagnostics);
+                o["diagnostics"] = AgentTools.Diagnostics(result.Diagnostics);
                 if (result.Topology is null)
                 {
                     o["ok"] = false;
@@ -295,51 +158,15 @@ public static class IsoformTools
         [Description("Check clearance between instance pairs (default true).")] bool clearances = true,
         [Description("Only pairs whose boxes come within this many mm are checked (default 0: touching or overlapping boxes).")] double within = 0,
         [Description(CellHelp)] double cellSize = 0.5,
-        [Description(ChordHelp)] double chordTolerance = 0.01) => Run(() =>
-    {
-        var (assembly, load) = Assembled(document, Text(document)) ?? throw new McpException(AssemblyTextHelp);
-        var clock = Stopwatch.StartNew();
-        var result = new AssemblyModeler(Settings(cellSize, chordTolerance)).Regenerate(assembly, load);
-        var o = new JsonObject
-        {
-            ["hash"] = CanonicalFormat.Hash(assembly),
-            ["ok"] = result.Diagnostics.Count == 0,
-            ["diagnostics"] = Diagnostics(result.Diagnostics),
-            ["instances"] = new JsonArray(result.Instances.Select(i => (JsonNode)new JsonObject
-            {
-                ["id"] = i.Id, ["part"] = i.Part, ["faces"] = i.Result.Topology?.Faces.Count ?? 0,
-                ["origin"] = V(i.Placement.Origin), ["x"] = V(i.Placement.X), ["normal"] = V(i.Placement.Z),
-            }).ToArray()),
-            ["mates"] = assembly.Mates?.Count ?? 0,
-            ["freeDegrees"] = result.FreeDegrees,
-        };
-        if (clearances)
-            o["clearances"] = new JsonArray(result.Clearances(within).Select(c => (JsonNode)new JsonObject
-            {
-                ["a"] = c.A, ["b"] = c.B, ["lower"] = N(c.Clearance.Lower), ["upper"] = N(c.Clearance.Upper), ["interferes"] = c.Clearance.Interferes,
-            }).ToArray());
-        o["ms"] = Math.Round(clock.Elapsed.TotalMilliseconds);
-        return o;
-    });
+        [Description(ChordHelp)] double chordTolerance = 0.01) =>
+        Run(() => AgentTools.Assembly(document, clearances, within, cellSize, chordTolerance));
 
     [McpServerTool(Name = "describe_format", ReadOnly = true, Idempotent = true)]
     [Description("The document format in brief: every feature type with a JSON example and the face names it makes, face naming " +
                  "rules, bodies, edits, assemblies and diagnostic codes. Read this before writing a document.")]
     public static string DescribeFormat() => FormatGuide.Text;
 
-    /// <summary>One query of the <c>query</c> tool.</summary>
-    public sealed record QuerySpec(
-        [property: Description("ray | distance | clearance | wall")] string Kind,
-        [property: Description("ray: start point [x, y, z] in mm.")] double[]? Origin = null,
-        [property: Description("ray: direction [x, y, z], any length.")] double[]? Direction = null,
-        [property: Description("distance: the point [x, y, z] in mm.")] double[]? Point = null,
-        [property: Description("ray, distance: query this body only (default: the whole part).")] string? Body = null,
-        [property: Description("clearance: first body (default: the part's first of exactly two).")] string? A = null,
-        [property: Description("clearance: second body.")] string? B = null);
-
-    // ---- Shared pieces ----
-
-    /// <summary>Errors an agent can fix come back as tool errors carrying the kernel's message.</summary>
+    // Errors an agent can fix come back as tool errors carrying the kernel's message.
     static string Run(Func<JsonObject> tool)
     {
         try
@@ -348,158 +175,7 @@ public static class IsoformTools
         }
         catch (Exception e) when (e is not (McpException or OperationCanceledException))
         {
-            throw new McpException(Message(e), e);
+            throw new McpException(AgentTools.Message(e), e);
         }
     }
-
-    static string Message(Exception e) => e is NullReferenceException or ArgumentNullException ? "a required field is missing (see describe_format)" : e.Message;
-
-    static bool LooksLikeText(string document) => document.TrimStart().StartsWith('{');
-
-    static string Text(string document) => LooksLikeText(document) ? document : File.ReadAllText(document);
-
-    static PartDocument Part(string document)
-    {
-        var text = Text(document);
-        var format = CanonicalFormat.FormatOf(text);
-        if (format is Bundle.FormatVersion or AssemblyDocument.FormatVersion)
-            throw new McpException($"this is an {format} document; use the assembly tool");
-        return CanonicalFormat.Read(text);
-    }
-
-    const string AssemblyTextHelp = "an assembly given as text has no folder to find its parts in; pass a bundle or a path";
-
-    /// <summary>
-    /// An assembly and where its parts come from: a bundle's own documents, or the folder of the assembly file named by
-    /// <paramref name="document"/>. <paramref name="text"/> is the assembly or bundle itself (perhaps edited). Null for
-    /// an assembly given as text, which has no folder.
-    /// </summary>
-    static (AssemblyDocument Assembly, Func<string, string?> Load)? Assembled(string document, string text)
-    {
-        switch (CanonicalFormat.FormatOf(text))
-        {
-            case Bundle.FormatVersion:
-                var b = CanonicalFormat.ReadBundle(text);
-                return (b.Assembly, p => b.Documents.GetValueOrDefault(p));
-            case AssemblyDocument.FormatVersion:
-                return LooksLikeText(document) ? null : (CanonicalFormat.ReadAssembly(text), Resolver(Path.GetDirectoryName(Path.GetFullPath(document))!));
-            case var f:
-                throw new McpException($"expected a bundle or an assembly, got '{f}'");
-        }
-    }
-
-    static Func<string, string?> Resolver(string folder) => p =>
-    {
-        var path = Path.Combine(folder, p);
-        return File.Exists(path) ? File.ReadAllText(path) : null;
-    };
-
-    static ModelingSettings Settings(double cellSize, double chordTolerance)
-    {
-        if (!(cellSize > 0) || !(chordTolerance > 0)) throw new McpException("cellSize and chordTolerance must be positive");
-        return new ModelingSettings { CellSize = cellSize, ChordTolerance = chordTolerance };
-    }
-
-    /// <summary>
-    /// Diagnostics, topology counts, the box and per body its volume, area and centroid; <paramref name="full"/> adds
-    /// the face names and the inertia.
-    /// </summary>
-    static void Summarize(JsonObject o, FrepResult r, bool full, double? density, double? certifyCell)
-    {
-        o["ok"] = r.Diagnostics.Count == 0;
-        o["diagnostics"] = Diagnostics(r.Diagnostics);
-        if (r.Topology is not { } t || r.Mesh is not { } mesh) return;
-        o["faces"] = t.Faces.Count;
-        o["edges"] = t.Edges.Count;
-        o["vertices"] = t.Vertices.Count;
-        if (mesh.Vertices.Count > 0)
-        {
-            var (min, max) = Extent(mesh.Vertices);
-            o["box"] = new JsonObject { ["min"] = V(min), ["max"] = V(max) };
-        }
-        var bodies = new JsonArray();
-        for (var k = 0; k < r.Bodies.Count; k++)
-        {
-            var body = r.Bodies[k];
-            var compiled = r.Part.Bodies[k];
-            var mine = body.Faces.ToHashSet();
-            // A body's own quads: mass properties per solid, so overlapping bodies are not merged.
-            var own = new Mesh(mesh.Vertices, mesh.Quads.Where((_, q) => mine.Contains(r.FaceOfQuad[q])).ToList());
-            var m = MassProperties.Of(compiled.Field, own, density ?? 1);
-            var b = new JsonObject { ["name"] = body.Name };
-            if (full) b["faces"] = new JsonArray(body.Faces.Select(f => FaceName(t.Faces[f])).ToArray());
-            b["volume"] = N(m.Volume);
-            if (certifyCell is { } cell)
-            {
-                var bounds = MassProperties.VolumeBounds(compiled.Field, compiled.Min, compiled.Max, cell);
-                b["volumeBounds"] = new JsonArray(N(bounds.Lo), N(bounds.Hi));
-            }
-            b["area"] = N(m.Area);
-            if (density is not null) b["mass"] = N(m.Mass);
-            b["centroid"] = V(m.Centroid);
-            if (full)
-            {
-                var i = m.Inertia;
-                b["inertia"] = new JsonObject { ["xx"] = N(i.Xx), ["yy"] = N(i.Yy), ["zz"] = N(i.Zz), ["xy"] = N(i.Xy), ["yz"] = N(i.Yz), ["zx"] = N(i.Zx) };
-            }
-            bodies.Add(b);
-        }
-        o["bodies"] = bodies;
-    }
-
-    /// <summary>Face stability across an edit (<see cref="ReferencePins.Report"/>): kept, appeared, gone, changed.</summary>
-    static JsonObject Stability(Topology? before, Topology? after)
-    {
-        var r = ReferencePins.Report(before, after);
-        var changed = new JsonObject();
-        foreach (var (s, old, now) in r.Changed) changed[s] = $"{Lower(old)} -> {Lower(now)}";
-        return new JsonObject { ["kept"] = r.Kept, ["appeared"] = Names(r.Appeared), ["gone"] = Names(r.Gone), ["changed"] = changed };
-
-        static string Lower(ReferenceStatus s) => s.ToString().ToLowerInvariant();
-        static JsonArray Names(IEnumerable<string> names) => new(names.Select(n => (JsonNode)n).ToArray());
-    }
-
-    /// <summary>A face by its source name; a face several sources share lists them all.</summary>
-    static JsonNode FaceName(TopoFace f) => f.Sources.Count == 1 ? f.Sources[0] : new JsonArray(f.Sources.Select(s => (JsonNode)s).ToArray());
-
-    static JsonArray Diagnostics(IEnumerable<Diagnostic> diagnostics) =>
-        new(diagnostics.Select(d => (JsonNode)Diagnostic(d.Code, d.FeatureId, d.Message)).ToArray());
-
-    static JsonObject Diagnostic(string code, string? feature, string message)
-    {
-        var o = new JsonObject { ["code"] = code };
-        if (feature is not null) o["feature"] = feature;
-        o["message"] = message;
-        return o;
-    }
-
-    static (Point3D Min, Point3D Max) Extent(IEnumerable<Point3D> points)
-    {
-        var (lo, hi) = (new Point3D(double.MaxValue, double.MaxValue, double.MaxValue), new Point3D(double.MinValue, double.MinValue, double.MinValue));
-        foreach (var p in points)
-            (lo, hi) = (new Point3D(Math.Min(lo.X, p.X), Math.Min(lo.Y, p.Y), Math.Min(lo.Z, p.Z)), new Point3D(Math.Max(hi.X, p.X), Math.Max(hi.Y, p.Y), Math.Max(hi.Z, p.Z)));
-        return (lo, hi);
-    }
-
-    static IEnumerable<Point3D> Corners(Point3D min, Point3D max) =>
-        from x in new[] { min.X, max.X } from y in new[] { min.Y, max.Y } from z in new[] { min.Z, max.Z } select new Point3D(x, y, z);
-
-    // Grown a little, like the assembly's boxes, so the search has room round the solid.
-    static Box3D Grown(Point3D min, Point3D max) => new(min - new Vector3D(1, 1, 1), max + new Vector3D(1, 1, 1));
-
-    static Point3D Point(double[]? v, string name) =>
-        v is { Length: 3 } ? new Point3D(v[0], v[1], v[2]) : throw new McpException($"{name} must be three numbers [x, y, z]");
-
-    static Vector3D Vector(double[]? v, string name) =>
-        v is { Length: 3 } && v.Any(x => x != 0) ? new Vector3D(v[0], v[1], v[2]) : throw new McpException($"{name} must be three numbers [x, y, z], not all zero");
-
-    // Nine significant digits: finer than the kernel's accuracy on every measure it reports, and far fewer tokens. Below
-    // 1e-12 mm is solver noise (a solved placement's 1e-24), so 0, which also turns -0 into 0. JSON has no infinity: an
-    // unbounded end (nothing found) is null.
-    static JsonNode? N(double v) => !double.IsFinite(v) ? null
-        : JsonValue.Create(Math.Abs(v) < 1e-12 ? 0 : double.Parse(v.ToString("G9", CultureInfo.InvariantCulture), CultureInfo.InvariantCulture));
-
-    static JsonArray V(Point3D p) => new(N(p.X), N(p.Y), N(p.Z));
-
-    static JsonArray V(Vector3D v) => new(N(v.X), N(v.Y), N(v.Z));
 }

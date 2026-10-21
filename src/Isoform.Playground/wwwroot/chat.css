@@ -1,0 +1,46 @@
+/* The chat panel (js/panels/chat.js). */
+
+.chat {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 8px 10px;
+  background: var(--code);
+}
+.chat-head { display: flex; align-items: baseline; gap: 8px; }
+.chat-head .muted { margin-left: auto; }
+
+.chat-log { display: flex; flex-direction: column; gap: 6px; max-height: 260px; overflow: auto; }
+.chat-log:empty { display: none; }
+.chat-user, .chat-assistant, .chat-error { padding: 4px 8px; border-radius: 6px; }
+.chat-user { align-self: flex-end; max-width: 85%; background: var(--line); }
+.chat-assistant { border-left: 3px solid var(--accent); }
+.chat-text { white-space: pre-wrap; overflow-wrap: anywhere; }
+.chat-meta { font: 12px ui-monospace, Consolas, monospace; }
+.chat-problem, .chat-error { color: var(--error); }
+.chat-status:empty { display: none; }
+
+.chat-form { display: flex; gap: 6px; align-items: stretch; }
+.chat-form textarea {
+  flex: 1;
+  min-width: 0;
+  resize: vertical;
+  font: inherit;
+  color: var(--ink);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 4px 6px;
+}
+.chat-form button {
+  font: inherit;
+  color: var(--accent);
+  background: none;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 1px 10px;
+  cursor: pointer;
+}
+.chat-form button:disabled, .chat-form textarea:disabled { color: var(--muted); cursor: default; }

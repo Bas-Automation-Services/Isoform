@@ -83,6 +83,8 @@ try {
       stats = await page.waitFor(settled, { timeout });
       const used = await page.evaluate('window.isoform.kernel');
       if (used !== kernelKind) problems.push(`the kernel is ${used}, not ${kernelKind}`);
+      // The chat panel (D1) works only with the native server; in WebAssembly it is inert.
+      if (await page.evaluate('!!window.isoform.chat') !== (kernelKind === 'native')) problems.push(`the chat is ${kernelKind === 'native' ? 'off' : 'on'} with the ${kernelKind} kernel`);
       await page.frames();
       await page.screenshot(join(shots, `example-${i}.png`));
     } catch (e) {

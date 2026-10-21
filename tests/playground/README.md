@@ -14,7 +14,7 @@ node tests/playground/run.mjs --server             # the browser run against the
 The parts on their own:
 
 ```sh
-node --test tests/playground/{kernel-client,store,diagnose,references,diff,history,dragmath,features,preview,share,files}.test.mjs   # front end only, no publish
+node --test tests/playground/{kernel-client,store,diagnose,references,diff,history,dragmath,features,preview,share,files,chat}.test.mjs   # front end only, no publish
 node --test tests/playground/kernel.test.mjs       # kernel only; ISOFORM_PLAYGROUND=<wwwroot> to point elsewhere
 node --test tests/playground/server.test.mjs       # native kernel server; builds and starts one unless ISOFORM_SERVER=<its url>
 node tests/playground/e2e.mjs [wwwroot]            # browser only; ISOFORM_SERVER=<url>: the page from a running server
@@ -87,6 +87,12 @@ the example (`bracket.step`, `bracket-plate-z+.dxf`), else `part`; Save writes t
 the File System Access API exists, else downloads; a DXF is of the sketch selected in the tree, else of the one face
 selected; an export that failed says why, naming the faces STEP could not write exactly.
 
+**`chat.test.mjs`** (`wwwroot/js/lib/chat.js`, the chat panel) with a fake server: a turn sends the whole conversation
+and the committed document, and its edits go to `applyEdits` once, labelled with the question; a failed turn shows its
+error and is not resent; an empty answer still sends text next turn; a hash that differs from the agent's, or edits that
+do not apply, show as the turn's problem; one turn at a time. The sender opens one connection, passes progress frames
+on, rejects on a failed reply, and connects again after the connection closes.
+
 **`kernel.test.mjs`** loads `_framework/dotnet.js` from the published folder in Node and calls the same exports the
 page's worker calls. For every example from `Examples()`, at the page's default settings (0.5 mm cells, 0.05 mm chord):
 
@@ -111,7 +117,7 @@ answer exactly as the wasm exports do; a second connection is a session of its o
 refined). `kernel-client.test.mjs` checks `unpack`, the reading of the server's binary reply.
 
 **`e2e.mjs`** serves the folder with `serve.mjs` (with `ISOFORM_SERVER`, the native server serves it instead, and each
-example checks that the page uses the native kernel, `window.isoform.kernel`), opens `?example=N` for every example and waits (in real time) for the
+example checks that the page uses the native kernel, `window.isoform.kernel`, and that the chat panel is on only then), opens `?example=N` for every example and waits (in real time) for the
 stats line under the editor (`#stats`) to show a result. An example passes when that line names one or more faces,
 does not start with `Error:` or say the document does not parse, and the page logged no uncaught exception or console
 error. Per example it prints the kernel time from the stats line and the page time (navigation to result, including

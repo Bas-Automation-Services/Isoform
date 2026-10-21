@@ -8,6 +8,7 @@
   <link rel="stylesheet" href="model.css">
   <link rel="stylesheet" href="agent.css">
   <link rel="stylesheet" href="tour.css">
+  <link rel="stylesheet" href="chat.css">
   <!-- three r0.160.0, vendored (MIT, vendor/three/LICENSE): pinned, and the page works offline. -->
   <script type="importmap">
     {
@@ -65,6 +66,9 @@
     <div id="selection" class="selection" hidden></div>
     <div id="references" class="references"></div>
     <ul id="diagnostics" class="diagnostics"></ul>
+
+    <!-- Chat with Claude, in the native server (js/panels/chat.js; chat.css) -->
+    <section id="chat"></section>
 
     <!-- Agent view and document history (js/panels/agent.js, history.js; agent.css) -->
     <section id="agent"></section>

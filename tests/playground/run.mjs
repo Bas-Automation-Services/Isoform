@@ -21,7 +21,7 @@ console.log(`Testing the playground in ${root}\n`);
 const server = await startServer(root);
 console.log(`The native kernel server at ${server.url}\n`);
 
-const units = run(process.execPath, ['--test', ...['kernel-client', 'store', 'diagnose', 'references', 'diff', 'history', 'dragmath', 'features', 'preview', 'share', 'files'].map(n => join(here, `${n}.test.mjs`))]);
+const units = run(process.execPath, ['--test', ...['kernel-client', 'store', 'diagnose', 'references', 'diff', 'history', 'dragmath', 'features', 'preview', 'share', 'files', 'chat'].map(n => join(here, `${n}.test.mjs`))]);
 console.log();
 const kernel = run(process.execPath, ['--test', join(here, 'kernel.test.mjs'), join(here, 'server.test.mjs')], { ISOFORM_PLAYGROUND: root, ISOFORM_SERVER: server.url });
 console.log();

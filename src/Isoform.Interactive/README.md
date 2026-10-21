@@ -3,6 +3,8 @@
 The kernel behind an interactive front end, with no browser dependency: `Session` regenerates documents and keeps the
 last good result per slot, `ViewJson` writes results as JSON, `MeshBuffers` holds the mesh as flat arrays. The
 playground (`src/Isoform.Playground`) wraps it in `[JSExport]`s; tests and the MCP server use it directly.
+`AgentTools`, `SketchJson` and `FormatGuide` are the agent tools and the format guide, shared by the MCP server
+(`src/Isoform.Mcp`) and the native server's chat (`src/Isoform.Server`).
 
 ## Exports
 
