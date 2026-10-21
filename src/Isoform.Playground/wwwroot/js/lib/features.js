@@ -9,6 +9,8 @@ const BUNDLE = 'isoform-bundle/0', ASSEMBLY = 'isoform-assembly/0';
 /** The ops the format allows per type (BooleanOp); a combine joins or cuts a body it already has. */
 export const OPS = { block: ['new', 'join', 'cut'], extrude: ['new', 'join', 'cut'], revolve: ['new', 'join', 'cut'], combine: ['join', 'cut'] };
 export const MATE_KINDS = ['mate', 'flush', 'axis'];
+/** A lattice's kinds (Lattice.Kinds): sheets, then struts. */
+export const LATTICE_KINDS = ['gyroid', 'schwarz-p', 'diamond', 'bcc', 'octet', 'cubic'];
 
 /** The parsed document of a regeneration (its canonical text), or null. */
 export function documentOf(result) {
@@ -108,6 +110,7 @@ function withDefaults(json, type) {
   if (type === 'combine' && !('keep' in json)) out.keep = false;
   if (type === 'component' && !('grounded' in json)) out.grounded = false;
   if (type === 'mate' && !('offset' in json)) out.offset = 0;
+  if (type === 'lattice' && !('skin' in json)) out.skin = 0;
   return out;
 }
 
@@ -118,7 +121,7 @@ const axes = (n, sketch) => n === 2 ? (sketch ? ['u', 'v'] : ['x', 'y']) : n ===
  * The inspector's fields for an item, generated from its JSON. Every field carries the edit path it sets:
  *   scalar {path, label, value, integer}     a number or "=expression"
  *   vector {path, label, entries: scalar[]}  an array of scalars, one entry per index
- *   choice {path, label, value, options}     op, mate kind
+ *   choice {path, label, value, options}     op, mate kind, lattice kind
  *   faces  {path, label, value, count}       face names: edge (2, an array) or loop / mate face (1, a string)
  *   text   {path, label, value, list}        other strings; list: an array of ids (a pattern's features)
  *   bool   {path, label, value}
@@ -142,6 +145,7 @@ function walk(json, prefix, type, sketch) {
     const path = `${prefix}.${key}`;
     if (key === 'op' && OPS[type]) fields.push({ kind: 'choice', path, label: key, value, options: OPS[type] });
     else if (key === 'kind' && type === 'mate') fields.push({ kind: 'choice', path, label: key, value, options: MATE_KINDS });
+    else if (key === 'kind' && type === 'lattice') fields.push({ kind: 'choice', path, label: key, value, options: LATTICE_KINDS });
     else if (FACE_KEYS.has(key)) fields.push({ kind: 'faces', path, label: key, value, count: Array.isArray(value) ? 2 : 1 });
     else if (typeof value === 'boolean') fields.push({ kind: 'bool', path, label: key, value });
     else if (isScalar(value)) fields.push(scalar(path, key, value));

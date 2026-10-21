@@ -138,5 +138,25 @@ public static class Examples
             new Pattern("mirror", ["rib"], new MirrorMotion([50, 0, 0], [1, 0, 0])),
             new Offset("grow", 1),
         ])),
+        // Lattices: what an implicit kernel does that a B-rep one cannot. The lattice sits on the world grid.
+        ("Bracket with gyroid infill in a closed skin", new(
+        [
+            new Extrude("bracket", BooleanOp.New, Xy, new Profile([0, 0],
+            [
+                new ProfileEdge("bottom", [50, 0]), new ProfileEdge("tip", [50, 10]), new ProfileEdge("inner", [10, 10]),
+                new ProfileEdge("riser", [10, 40]), new ProfileEdge("top", [0, 40]), new ProfileEdge("back", [0, 0]),
+            ]), 0, 20),
+            new Lattice("infill", "gyroid", 10, 1, 1.5),
+        ])),
+        ("Strut lattice cube: body-centred cubic", new(
+        [
+            new Block("cube", BooleanOp.New, [0, 0, 0], [30, 30, 30]),
+            new Lattice("lattice", "bcc", 10, 1.5),
+        ])),
+        ("Cylinder with diamond infill", new(
+        [
+            new Extrude("can", BooleanOp.New, Xy, Circle(0, 0, 11), 0, 22),
+            new Lattice("infill", "diamond", 11, 1, 1.5),
+        ])),
     ];
 }

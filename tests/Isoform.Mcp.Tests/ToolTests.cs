@@ -241,6 +241,7 @@ public class ToolTests
 
         var r = Parse(IsoformTools.ExportStep(Doc(Plate, new Hole("hole", [30, 25], 10)), path, "plate"));
         var blend = Parse(IsoformTools.ExportStep(Doc(Plate, new Block("boss", BooleanOp.Join, [40, 15, 10], [20, 20, 10], Blend: 3))));
+        var lattice = Parse(IsoformTools.ExportStep(Doc(Plate, FormatGuide.Examples.Single(e => e.Feature is Lattice).Feature)));
         var text = Parse(IsoformTools.ExportStep(Doc(Plate)));
 
         r["ok"]!.GetValue<bool>().Should().BeTrue();
@@ -249,6 +250,8 @@ public class ToolTests
         File.ReadAllText(path).Should().StartWith("ISO-10303-21;").And.Contain("CYLINDRICAL_SURFACE");
         blend["ok"]!.GetValue<bool>().Should().BeFalse();
         blend["unsupported"]!.GetValue<string>().Should().Contain("boss/blend");
+        lattice["ok"]!.GetValue<bool>().Should().BeFalse();
+        lattice["unsupported"]!.GetValue<string>().Should().Contain("infill/struts (Lattice)");
         text["step"]!.GetValue<string>().Should().Contain("MANIFOLD_SOLID_BREP");
     }
 

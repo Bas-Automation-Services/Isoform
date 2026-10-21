@@ -213,7 +213,7 @@ public static class IsoformTools
     [Description("Exports a part, assembly or bundle as exact STEP (AP214): analytic faces (fillets, chamfers, loop fillets, " +
                  "shell cavities as voids), closed-form edges and vertices, one solid per body; an assembly as one product per " +
                  "distinct part, placed by its instances. Writes to outputPath, or returns the STEP text. Faces without a closed " +
-                 "form (smooth blends) are named in 'unsupported'.")]
+                 "form (smooth blends, lattices) are named in 'unsupported'.")]
     public static string ExportStep(
         [Description(DocumentHelp + " Or an assembly or bundle, as for the assembly tool.")] string document,
         [Description("Write the STEP file here; without it the STEP text is returned.")] string? outputPath = null,

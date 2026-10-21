@@ -700,10 +700,17 @@ public static partial class DualContouring
     /// </summary>
     static void FindThin(Node node, Grid grid, ConcurrentBag<ThinSpot> spots)
     {
+        foreach (var cavity in (bool[])[false, true])
+        {
+            var owners = new List<int>();
+            Surfaces(node.Field!, owners, cavity);
+            if (owners.Count >= 2) FindThin(node, grid, owners, spots);
+        }
+    }
+
+    static void FindThin(Node node, Grid grid, List<int> owners, ConcurrentBag<ThinSpot> spots)
+    {
         var field = node.Field!;
-        var owners = new List<int>();
-        Surfaces(field, owners);
-        if (owners.Count < 2) return;
         var box = grid.Box(node);
         var c = box.Center;
         var reach = grid.H * Math.Sqrt(3) / 2;
@@ -717,6 +724,8 @@ public static partial class DualContouring
             var (pa, pb) = (OntoSurface(field, a, c), OntoSurface(field, b, c));
             var mid = new Point3D((pa.X + pb.X) / 2, (pa.Y + pb.Y) / 2, (pa.Z + pb.Z) / 2);
             if (!Inside(box, mid, 0)) continue;
+            // Both must bound the part where they are: a lattice runs on past the faces that cut it.
+            if (Math.Abs(field.Value(pa)) > 1e-6 || Math.Abs(field.Value(pb)) > 1e-6) continue;
             var (va, vb, vf) = (field.SampleSurface(a, mid)!.Value.Value, field.SampleSurface(b, mid)!.Value.Value, field.Value(mid));
             if (!(va < 0 && vb < 0 && vf < 0) && !(va > 0 && vb > 0 && vf > 0)) continue;
             var q = Refine(field, c, [a, b]);
@@ -726,42 +735,60 @@ public static partial class DualContouring
         }
     }
 
-    static void Surfaces(Field f, List<int> owners)
+    /// <summary>
+    /// The owners a cell's field can show, as the thin-spot search pairs them: a shell gives its outside only. With
+    /// <paramref name="cavity"/> instead the inner faces of shells holding a lattice (the lattice is its own inner face),
+    /// paired among themselves: the lattice meets the inner faces, and the skin keeps both from the outside.
+    /// </summary>
+    static void Surfaces(Field f, List<int> owners, bool cavity = false)
     {
+        void Add(int id)
+        {
+            if (!cavity && !owners.Contains(id)) owners.Add(id);
+        }
         switch (f)
         {
             case LeafField l:
-                if (!owners.Contains(l.Surface.Id)) owners.Add(l.Surface.Id);
+                Add(l.Surface.Id);
                 break;
             case MaxField m:
-                foreach (var c in m.Children) Surfaces(c, owners);
+                foreach (var c in m.Children) Surfaces(c, owners, cavity);
                 break;
             case MinField m:
-                foreach (var c in m.Children) Surfaces(c, owners);
+                foreach (var c in m.Children) Surfaces(c, owners, cavity);
                 break;
             case NegateField n:
-                Surfaces(n.Child, owners);
+                Surfaces(n.Child, owners, cavity);
                 break;
             case RoundedEdgeField r:
-                Surfaces(r.A, owners);
-                Surfaces(r.B, owners);
+                Surfaces(r.A, owners, cavity);
+                Surfaces(r.B, owners, cavity);
                 break;
-            case ShellField s:
+            case ShellField s when !cavity:
                 Surfaces(s.Outer, owners);
                 break;
+            case ShellField s when s.InnerOf.Any(kv => kv.Key == kv.Value):
+                var child = new List<int>();
+                Surfaces(s.Child, child);
+                foreach (var o in child)
+                    if (s.InnerOf.TryGetValue(o, out var inner) && !owners.Contains(inner)) owners.Add(inner);
+                break;
             case ProfileField p:
-                foreach (var l in p.Leaves) Surfaces(l, owners);
+                foreach (var l in p.Leaves) Add(l.Surface.Id);
                 break;
             case BlendField b:
-                Surfaces(b.A, owners);
-                Surfaces(b.B, owners);
+                Surfaces(b.A, owners, cavity);
+                Surfaces(b.B, owners, cavity);
                 break;
             case LoopEdgeField l:
-                Surfaces(l.Cap, owners);
-                Surfaces(l.Side, owners);
+                Surfaces(l.Cap, owners, cavity);
+                Surfaces(l.Side, owners, cavity);
                 break;
             case TapeField t:
-                t.Tape.Surfaces(owners);
+                t.Tape.Surfaces(owners, cavity);
+                break;
+            case LatticeField l:
+                Add(l.Surface.Id);
                 break;
         }
     }

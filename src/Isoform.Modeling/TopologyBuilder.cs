@@ -12,7 +12,11 @@ namespace Isoform.Modeling;
 /// </summary>
 public static class TopologyBuilder
 {
-    public sealed record Result(Topology Topology, int[] FaceOfQuad);
+    /// <param name="Pinches">
+    /// Mesh edges that more than two quads share, as (midpoint, owners round it): one vertex there stands for surface
+    /// pieces the cells could not tell apart, so the mesh is not a closed manifold there.
+    /// </param>
+    public sealed record Result(Topology Topology, int[] FaceOfQuad, IReadOnlyList<(Point3D At, int[] Owners)> Pinches);
 
     /// <param name="surfaces">Best <see cref="Oriented"/>, so a face of a cut matches the coincident face it touches.</param>
     /// <param name="field">The body's field: with it, an edge between two planes that meet the part in one point collapses.</param>
@@ -69,6 +73,7 @@ public static class TopologyBuilder
         // Edges: connected chains of mesh edges separating two faces. Each mesh edge is visited once, from the
         // lowest-numbered quad around it.
         var segments = new List<Segment>();
+        var pinches = new List<(Point3D, int[])>();
         for (var q = 0; q < quadCount; q++)
             for (var e = 0; e < 4; e++)
             {
@@ -81,6 +86,11 @@ public static class TopologyBuilder
                 {
                     lowest &= around[k] >= q;
                     mixed |= faceOfQuad[around[k]] != faceOfQuad[q];
+                }
+                if (lowest && n > 2)
+                {
+                    var (va, vb) = (vertices[a], vertices[b]);
+                    pinches.Add((new Point3D((va.X + vb.X) / 2, (va.Y + vb.Y) / 2, (va.Z + vb.Z) / 2), [.. around[..n].ToArray().Select(r => quads[r].Owner).Distinct().Order()]));
                 }
                 if (!lowest || !mixed) continue;
                 var fs = new List<int>(n);
@@ -175,7 +185,7 @@ public static class TopologyBuilder
             .Select(g => new TopoVertex(g.Key, g.SelectMany(x => x.Faces).Distinct().Order().ToList()))
             .ToList();
 
-        return new Result(new Topology(topoFaces, topoEdges, topoVertices, bodyOfQuad.Count), faceOfQuad);
+        return new Result(new Topology(topoFaces, topoEdges, topoVertices, bodyOfQuad.Count), faceOfQuad, pinches);
     }
 
     /// <summary>

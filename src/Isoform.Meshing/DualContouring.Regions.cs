@@ -669,6 +669,19 @@ public static partial class DualContouring
                     Add(p.Placement);
                     Add(p.Child);
                     break;
+                case LatticeField l:
+                    // Every parameter it reads, and what a simplified copy still evaluates.
+                    Add(12);
+                    Add((int)l.Kind);
+                    Add(l.Cell);
+                    Add(l.Thickness);
+                    Add(l.Sign);
+                    Add(l.Complement);
+                    Add(l.Grow);
+                    Add(l.Active.Count);
+                    foreach (var i in l.Active) Add(i);
+                    Add(l.Surface);
+                    break;
                 default:
                     // A kind this hash does not know: unique per object, so it never matches another compile.
                     Add(11);

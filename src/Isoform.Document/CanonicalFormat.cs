@@ -210,6 +210,21 @@ public static partial class CanonicalFormat
                 w.WriteString("type", "offset");
                 Number(w, "distance", o.Distance);
                 break;
+            case Lattice l:
+                w.WriteString("type", "lattice");
+                w.WriteString("kind", l.Kind);
+                Number(w, "cell", l.Cell);
+                Number(w, "thickness", l.Thickness);
+                if (l.Skin != 0) Number(w, "skin", l.Skin);
+                if (l.Region is { Feature: { } within }) w.WriteString("region", within);
+                else if (l.Region is { } box)
+                {
+                    w.WriteStartObject("region");
+                    Numbers(w, "origin", box.Origin!);
+                    Numbers(w, "size", box.Size!);
+                    w.WriteEndObject();
+                }
+                break;
             case CombineBodies cb:
                 w.WriteString("type", "combine");
                 w.WriteString("tool", cb.Tool);
@@ -242,9 +257,18 @@ public static partial class CanonicalFormat
             "revolve" => new Revolve(id, Op(n), ReadPlane(n["plane"]!), ReadProfile(n["profile"]!), (double)n["angle"]!, (double?)n["blend"] ?? 0),
             "combine" => new CombineBodies(id, (string)n["tool"]!, Op(n), (bool?)n["keep"] ?? false),
             "pattern" => new Pattern(id, n["features"]!.AsArray().Select(f => (string)f!).ToArray(), ReadMotion(n)),
+            "lattice" => new Lattice(id, (string)n["kind"]!, (double)n["cell"]!, (double)n["thickness"]!, (double?)n["skin"] ?? 0, ReadRegion(n["region"])),
             var t => throw new FormatException($"Unknown feature type '{t}'."),
         };
     }
+
+    // A feature id, or a box {origin, size}.
+    static LatticeRegion? ReadRegion(JsonNode? n) => n switch
+    {
+        null => null,
+        JsonValue v => new LatticeRegion((string)v!),
+        _ => new LatticeRegion(null, Arr(n["origin"], 3), Arr(n["size"], 3)),
+    };
 
     static string[] Edge(JsonNode n) => n["edge"]?.AsArray().Select(e => (string)e!).ToArray() ?? [];
 

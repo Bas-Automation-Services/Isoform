@@ -59,6 +59,7 @@ public sealed class FrepModeler(ModelingSettings settings, RegionCache? cache = 
         var (faces, edges, corners) = (new List<TopoFace>(), new List<TopoEdge>(), new List<TopoVertex>());
         var faceOfQuad = new List<int>();
         var bodies = new List<BodyResult>();
+        var pinched = new List<(Point3D At, int[] Owners)>();
         var carried = new List<(HashSet<int> Owners, IReadOnlyList<Surface> Oriented)>();
         var pieces = 0;
         foreach (var (body, plan) in part.Bodies.Zip(plans))
@@ -67,6 +68,7 @@ public sealed class FrepModeler(ModelingSettings settings, RegionCache? cache = 
             var oriented = TopologyBuilder.Oriented(part.Surfaces, body.Field);
             carried.Add((bodyMesh.Quads.Select(q => q.Owner).ToHashSet(), oriented));
             var built = TopologyBuilder.Build(bodyMesh, oriented, Settings.Tolerance, body.Field);
+            pinched.AddRange(built.Pinches);
             var t = built.Topology;
             if (t.BodyCount > 1)
                 diagnostics.Add(new Diagnostic(Diagnostic.MultipleBodies, part.Bodies.Count == 1 ? null : body.Name,
@@ -86,6 +88,13 @@ public sealed class FrepModeler(ModelingSettings settings, RegionCache? cache = 
         var topology = new Topology(faces, edges, corners, pieces);
 
         diagnostics.AddRange(Resolution(document, part, mesh, diagnostics));
+        // Surface pieces the cells merged into one vertex: something there is thinner than a cell. The later feature's.
+        foreach (var g in pinched.GroupBy(x => string.Join(",", x.Owners)))
+        {
+            var (at, owners) = g.First();
+            diagnostics.Add(new Diagnostic(Diagnostic.BelowResolution, part.Surfaces[owners[^1]].Source.Split('/')[0],
+                Invariant($"{string.Join(" and ", owners.Select(o => part.Surfaces[o].Source).Distinct())} pinch the mesh near ({at.X:F2}, {at.Y:F2}, {at.Z:F2}): pieces of them there are below the resolved size of {2 * Settings.CellSize:G4} mm")));
+        }
 
         // A feature that already has a diagnostic (below resolution, rejected, unsupported) says enough.
         var unresolved = diagnostics.Select(d => d.FeatureId).ToHashSet();
@@ -129,7 +138,7 @@ public sealed class FrepModeler(ModelingSettings settings, RegionCache? cache = 
             var box = new Box3D(body.Min - pad, body.Max + pad);
             foreach (var s in part.Surfaces)
             {
-                if (owners.Contains(s.Id) || s.Kind is SurfaceKind.Fillet or SurfaceKind.Blend || settled.Contains(s.Source.Split('/')[0])) continue;
+                if (owners.Contains(s.Id) || !s.Analytic || settled.Contains(s.Source.Split('/')[0])) continue;
                 if (LostFaces.Find(body.Field, s.Id) is not { } path || owners.Any(o => oriented[o].SameGeometry(oriented[s.Id], Settings.Tolerance))) continue;
                 var r = LostFaces.Search(path, s, box, Settings.Tolerance);
                 // In several bodies: a face anywhere is a face, a doubt anywhere a doubt.
@@ -137,6 +146,24 @@ public sealed class FrepModeler(ModelingSettings settings, RegionCache? cache = 
             }
         }
         return result;
+    }
+
+    /// <summary>
+    /// A lattice's walls (sheets or struts), the gaps between them and its skin, each against the resolved size, with
+    /// the cell size that resolves it: the lattice has one face, so the mesher's thin spots, which pair two faces, never
+    /// see its own walls and gaps.
+    /// </summary>
+    static IEnumerable<Diagnostic> LatticeResolution(Lattice l, double smallest)
+    {
+        string Resolve(double size) => Invariant($"use a CellSize of {size / 2:G3} mm or less");
+        var walls = l.Sheets ? "sheets" : "struts";
+        if (l.Thickness < smallest)
+            yield return new Diagnostic(Diagnostic.BelowResolution, l.Id, Invariant($"{l.Id} ({l.Thickness:G4} mm) is below the resolved size of {smallest:G4} mm; {Resolve(l.Thickness)}"));
+        var gap = LatticeField.Gap(DocumentRules.LatticeKindOf(l.Kind)!.Value, l.Cell, l.Thickness);
+        if (gap < smallest)
+            yield return new Diagnostic(Diagnostic.BelowResolution, l.Id, Invariant($"the {walls} of {l.Id} are {gap:G3} mm apart, below the resolved size of {smallest:G4} mm; {Resolve(gap)}"));
+        if (l.Skin > 0 && l.Skin < smallest)
+            yield return new Diagnostic(Diagnostic.BelowResolution, l.Id, Invariant($"{l.Id} skin ({l.Skin:G4} mm) is below the resolved size of {smallest:G4} mm; {Resolve(l.Skin)}"));
     }
 
     /// <summary>
@@ -162,6 +189,8 @@ public sealed class FrepModeler(ModelingSettings settings, RegionCache? cache = 
             };
             if (size < smallest)
                 yield return new Diagnostic(Diagnostic.BelowResolution, feature.Id, Invariant($"{feature.Id} ({size:G4} mm) is below the resolved size of {smallest:G4} mm; use a smaller CellSize"));
+            if (feature is Lattice l)
+                foreach (var d in LatticeResolution(l, smallest)) yield return d;
             // A profile edge sweeps a face as wide as the edge is long.
             var profile = feature switch { Extrude e => e.Profile, Revolve r => r.Profile, _ => null };
             if (profile is not null && Profiles.CounterClockwise(profile).FirstOrDefault(x => Width(x.Edge) < smallest) is { Id: { } edge } narrow)

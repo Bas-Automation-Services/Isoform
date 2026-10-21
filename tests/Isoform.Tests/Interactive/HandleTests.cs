@@ -202,6 +202,7 @@ public class HandleTests
         Pattern { Motion: LinearMotion } => ["spacing"],
         Pattern { Motion: CircularMotion { Angle: < 360 } } => ["angle"],
         Pattern { Motion: MirrorMotion } => ["plane"],
+        Lattice l => l.Skin > 0 ? ["thickness", "cell", "skin"] : ["thickness", "cell"],
         _ => Array.Empty<string>(),
     }).Select(name => $"{f.Id}:{name}"));
 
@@ -244,7 +245,7 @@ public class HandleTests
         return r.Part.Surfaces.Where(s => s.Source == face).OrderBy(s => used.GetValueOrDefault(s.Id)).ThenBy(s => s.Id).LastOrDefault();
     }
 
-    static bool Analytic(Surface s) => s.Kind is not (SurfaceKind.Fillet or SurfaceKind.Blend);
+    static bool Analytic(Surface s) => s.Analytic;
 
     static double Field(JsonNode root, string path)
     {
