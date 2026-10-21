@@ -10,6 +10,7 @@ using Isoform.Geometry;
 using Isoform.Interactive;
 using Isoform.Meshing;
 using Isoform.Modeling;
+using Isoform.Sketching;
 using Isoform.Step;
 using ModelContextProtocol;
 using ModelContextProtocol.Server;
@@ -183,6 +184,47 @@ public static class IsoformTools
             answers.Add(a);
         }
         return new JsonObject { ["hash"] = CanonicalFormat.Hash(doc), ["answers"] = answers };
+    });
+
+    [McpServerTool(Name = "sketch", ReadOnly = true, Idempotent = true)]
+    [Description("Solves one sketch of a part: every point [u,v] and circle radius, the degrees of freedom left and the points " +
+                 "and circles that can still move, the problems (sketch-conflict naming the constraints that cannot all hold, " +
+                 "sketch-redundant, sketch-invalid), and its regions (entity ids round each outer loop and its holes). Also the " +
+                 "document with every sketch's stored points moved to its solution (text and hash): after editing a sketch, " +
+                 "continue from that text. dragPoint and dragTo move a point towards [u,v] first, as a user dragging it.")]
+    public static string Sketch(
+        [Description(DocumentHelp)] string document,
+        [Description("The sketch's feature id.")] string id,
+        [Description("A point to drag, by name.")] string? dragPoint = null,
+        [Description("Where to drag it, [u, v] in sketch coordinates.")] double[]? dragTo = null) => Run(() =>
+    {
+        var doc = Part(document);
+        var sketch = SketchDocuments.Resolved(doc, id);
+        (string, double, double)? drag = dragPoint is { } p && dragTo is [var u, var v] ? (p, u, v) : null;
+        var solution = SketchSolver.Solve(sketch, drag);
+        var (regions, problem) = solution.Solved ? SketchRegions.Of(sketch, solution) : ([], null);
+        var settled = CanonicalFormat.Write(SketchDocuments.Settle(doc, s => s.Id == id ? solution : null));
+        var problems = new JsonArray([.. solution.Problems.Select(x => new JsonObject
+        {
+            ["code"] = x.Code, ["message"] = x.Message, ["constraints"] = new JsonArray([.. x.Constraints.Select(c => (JsonNode)c)]),
+        })]);
+        if (problem is not null) problems.Add(new JsonObject { ["code"] = SketchSolution.Invalid, ["message"] = problem, ["constraints"] = new JsonArray() });
+        return new JsonObject
+        {
+            ["id"] = id,
+            ["solved"] = solution.Solved && problem is null,
+            ["freeDegrees"] = solution.FreeDegrees,
+            ["free"] = new JsonArray([.. solution.Free.Order(StringComparer.Ordinal).Select(f => (JsonNode)f)]),
+            ["points"] = new JsonObject(solution.Points.OrderBy(x => x.Key, StringComparer.Ordinal).Select(x => KeyValuePair.Create(x.Key, (JsonNode?)new JsonArray(x.Value.X, x.Value.Y)))),
+            ["radii"] = new JsonObject(solution.Radii.OrderBy(x => x.Key, StringComparer.Ordinal).Select(x => KeyValuePair.Create(x.Key, (JsonNode?)x.Value))),
+            ["problems"] = problems,
+            ["regions"] = new JsonArray([.. regions.Select(r => new JsonObject
+            {
+                ["outer"] = new JsonArray([.. r.Ids.Select(i => (JsonNode)i)]),
+                ["holes"] = new JsonArray([.. r.Holes.Select(h => (JsonNode)new JsonArray([.. h.Edges.Select(e => e.Id).Distinct().Select(i => (JsonNode)i)]))]),
+            })]),
+            ["settled"] = new JsonObject { ["text"] = settled, ["hash"] = CanonicalFormat.Hash(CanonicalFormat.Read(settled)) },
+        };
     });
 
     [McpServerTool(Name = "validate", ReadOnly = true, Idempotent = true)]

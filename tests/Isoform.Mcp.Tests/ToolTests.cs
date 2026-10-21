@@ -308,4 +308,52 @@ public class ToolTests
         File.WriteAllText(path, CanonicalFormat.Write(FormatGuide.AssemblyExample));
         return path;
     }
+
+    // ---- sketch ----
+
+    static Sketch Outline => (Sketch)FormatGuide.Examples.First(e => e.Feature is Sketch).Feature;
+
+    [Fact]
+    public void Sketch_reports_the_solution_its_freedom_and_regions()
+    {
+        var doc = Doc(Plate, Outline);
+        var r = Parse(IsoformTools.Sketch(doc, "outline"));
+
+        r["solved"]!.GetValue<bool>().Should().BeTrue();
+        r["freeDegrees"]!.GetValue<int>().Should().Be(0);
+        Strings(r["free"]).Should().BeEmpty();
+        Strings(r["points"]!["c"]).Should().Equal("90", "35");
+        Strings(r["regions"]![0]!["outer"]).Should().BeEquivalentTo("bottom", "right", "top", "left");
+        Strings(r["regions"]![0]!["holes"]![0]).Should().Equal("bore");
+        r["settled"]!["text"]!.GetValue<string>().Should().Be(doc, "a solved sketch is stored as it is");
+    }
+
+    [Fact]
+    public void Sketch_settles_an_edited_dimension_into_the_stored_points()
+    {
+        var edited = CanonicalFormat.Write(DocumentEdits.Apply(CanonicalFormat.Read(Doc(Plate, Outline)), [JsonNode.Parse("""{"set": "outline.constraints.5.value", "value": 40}""")!]));
+        var r = Parse(IsoformTools.Sketch(edited, "outline"));
+
+        Strings(r["points"]!["b"]).Should().Equal("100", "15");
+        var settled = (Sketch)CanonicalFormat.Read(r["settled"]!["text"]!.GetValue<string>()).Features[1];
+        settled.Points["c"].Should().Equal(100, 35);
+    }
+
+    [Fact]
+    public void Sketch_drags_a_free_point_and_names_a_conflict()
+    {
+        var triangle = new Sketch("tri", new SketchPlacement(Face: "plate/z+"),
+            new Dictionary<string, double[]> { ["a"] = [10, 10], ["b"] = [30, 10], ["c"] = [20, 30] },
+            [new SketchLine("ab", "a", "b"), new SketchLine("bc", "b", "c"), new SketchLine("ca", "c", "a")],
+            [new("fix", ["a"]), new("fix", ["b"])]);
+        var dragged = Parse(IsoformTools.Sketch(Doc(Plate, triangle), "tri", "c", [25, 40]));
+
+        dragged["freeDegrees"]!.GetValue<int>().Should().Be(2);
+        Strings(dragged["free"]).Should().Equal("c");
+        Strings(dragged["points"]!["c"]).Should().Equal("25", "40");
+
+        var conflict = Parse(IsoformTools.Sketch(Doc(Plate, triangle with { Constraints = [.. triangle.Constraints, new("length", ["ab"], 15)] }), "tri"));
+        conflict["solved"]!.GetValue<bool>().Should().BeFalse();
+        conflict["problems"]![0]!["code"]!.GetValue<string>().Should().Be("sketch-conflict");
+    }
 }
