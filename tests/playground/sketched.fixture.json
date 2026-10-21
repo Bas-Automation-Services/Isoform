@@ -1,0 +1,21 @@
+{
+  "format": "isoform/0",
+  "units": "mm",
+  "features": [
+    {
+      "id": "base",
+      "type": "sketch",
+      "on": {"plane": {"origin": [0, 0, 0], "x": [1, 0, 0], "normal": [0, 0, 1]}},
+      "points": {"a": [0, 0], "b": [60, 0], "c": [60, 40], "d": [0, 40], "h": [20, 20]},
+      "entities": [
+        {"id": "bottom", "line": ["a", "b"]},
+        {"id": "right", "line": ["b", "c"]},
+        {"id": "top", "line": ["c", "d"]},
+        {"id": "left", "line": ["d", "a"]},
+        {"id": "bore", "circle": {"center": "h", "radius": 4}}
+      ],
+      "constraints": []
+    },
+    {"id": "plate", "type": "extrude", "op": "new", "sketch": "base", "start": 0, "end": 5}
+  ]
+}

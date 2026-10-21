@@ -21,6 +21,8 @@ Strings in and out; meshes as MemoryViews (copy them before the next call). In t
 | `Examples()` | `{name: canonical text}` |
 | `Resolve(refsJson, slot)` | pinned references against the slot's last good result (below) |
 | `Share(doc, editsJson, cell, chord, snap, index, count)`, `Import(bytes)`, `Sweep()` | the worker pool's region exchange |
+| `Step(slot, name)` | STEP of the slot's last good regeneration (op `step {name, slot}`): `{text, solids, faces}` for a part, `{text, instances}` for an assembly; `{error, unsupported: [face]}` when faces have no exact form (`ExportJson`) |
+| `Dxf(slot, doc, sketch, face)` | DXF R12 (op `dxf {document, sketch}` or `dxf {face, slot}`): sketch `sketch` of `doc` solved, in its (u, v); else the exact outline of the flat face `face` of the slot's last good part, in the plane a sketch on it takes. `{text, entities, approximated}` (edges other than lines and circles, written as lines within the chord tolerance), or `{error}` |
 
 Slots: `"main"` for what is committed, `"preview"` for a drag in progress (any name works). A failed regeneration
 leaves its slot's last good result in place but empties the buffers. The region cache keeps what the last regeneration

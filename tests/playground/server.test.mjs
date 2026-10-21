@@ -2,6 +2,7 @@
 // to result v2 with its mesh buffers, as the published wasm kernel gives it, and the other ops answer as the worker's
 // do. Run with node --test; ISOFORM_SERVER is a running server's URL, else one is built and started.
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { after, test } from 'node:test';
 import { adaptResult, connectKernel, createClient } from '../../src/Isoform.Playground/wwwroot/js/kernel-client.js';
 import { loadKernel, publishedRoot } from './published.mjs';
@@ -81,6 +82,16 @@ test('apply, diff, handles and resolve answer as the wasm kernel does', async ()
   const refs = [{ id: 'p', face: 'plate/z+' }];
   assert.deepEqual(await call('resolve', { refs }), JSON.parse(wasm.Resolve(JSON.stringify(refs), 'main')));
   assert.ok((await call('memory')) > 0);
+});
+
+test('step and dxf answer as the wasm kernel does', async () => {
+  const [, document] = examples[0];
+  await call('regenerate', { document, cell, chord });
+  wasm.Regenerate(document, '[]', cell, chord, 'main', false);
+  assert.deepEqual(await call('step', { name: 'plate' }), JSON.parse(wasm.Step('main', 'plate')));
+  assert.deepEqual(await call('dxf', { face: 'plate/z+' }), JSON.parse(wasm.Dxf('main', '', '', 'plate/z+')));
+  const sketched = readFileSync(new URL('./sketched.fixture.json', import.meta.url), 'utf8');
+  assert.deepEqual(await call('dxf', { document: sketched, sketch: 'base' }), JSON.parse(wasm.Dxf('main', sketched, 'base', '')));
 });
 
 test('each connection is a session of its own: the previews\' slot is not the main one\'s', async () => {

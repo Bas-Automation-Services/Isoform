@@ -74,7 +74,7 @@ public sealed class Session
         }
         Buffers = MeshBuffers.Of(view.Mesh, view.FaceOfQuad);
         var timing = new Timing(editMs, regenerateMs, clock.Elapsed.TotalMilliseconds - editMs - regenerateMs);
-        return _slots[slot] = new Regeneration(slot, format, edited.Text, edited.Hash, null, null, view, Buffers, timing, reused, meshed, settings.Refinement);
+        return _slots[slot] = new Regeneration(slot, format, edited.Text, edited.Hash, null, null, view, Buffers, timing, reused, meshed, settings.Refinement) { Settings = settings };
     }
 
     /// <summary>
@@ -122,7 +122,11 @@ public sealed class Session
 /// <param name="Meshed">Regions meshed for it, here or (in a pool) elsewhere.</param>
 /// <param name="Refinement">The settings' <see cref="ModelingSettings.Refinement"/>: how many times the cells may be halved locally.</param>
 public sealed record Regeneration(string Slot, string? Format, string? Text, string? Hash, string? Error, int? FailedEdit, View? View,
-    MeshBuffers Buffers, Timing Timing, int Reused, int Meshed, int Refinement = 0);
+    MeshBuffers Buffers, Timing Timing, int Reused, int Meshed, int Refinement = 0)
+{
+    /// <summary>The settings it was made with, for what works on its mesh (the exact B-rep); null when it failed.</summary>
+    public ModelingSettings? Settings { get; init; }
+}
 
 /// <param name="Edits">Applying the edits and making the text canonical.</param>
 /// <param name="Buffers">Flattening the mesh into <see cref="MeshBuffers"/>.</param>
