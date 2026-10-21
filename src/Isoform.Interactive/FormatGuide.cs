@@ -5,7 +5,7 @@ using System.Text.Json.Nodes;
 using Isoform.Document;
 using Isoform.Modeling;
 
-namespace Isoform.Mcp;
+namespace Isoform.Interactive;
 
 /// <summary>
 /// The text of <c>describe_format</c>. Every JSON example is written by the kernel's own <see cref="CanonicalFormat"/>
@@ -170,7 +170,7 @@ public static class FormatGuide
         {
             var json = FormatGuide.Feature(e.Feature);
             s.AppendLine(CultureInfo.InvariantCulture, $"- {json["type"]}: {e.Summary}");
-            s.AppendLine(CultureInfo.InvariantCulture, $"  {json.ToJsonString(IsoformTools.Compact)}");
+            s.AppendLine(CultureInfo.InvariantCulture, $"  {json.ToJsonString(AgentTools.Compact)}");
             s.AppendLine(CultureInfo.InvariantCulture, $"  faces: {string.Join(", ", e.Faces)}");
         }
         s.AppendLine();
@@ -248,5 +248,5 @@ public static class FormatGuide
     /// <summary>A feature as its canonical JSON.</summary>
     public static JsonObject Feature(Feature f) => CanonicalFormat.ToNode(new PartDocument([f]))["features"]![0]!.AsObject();
 
-    static string Compact(string canonical) => JsonNode.Parse(canonical)!.ToJsonString(IsoformTools.Compact);
+    static string Compact(string canonical) => JsonNode.Parse(canonical)!.ToJsonString(AgentTools.Compact);
 }

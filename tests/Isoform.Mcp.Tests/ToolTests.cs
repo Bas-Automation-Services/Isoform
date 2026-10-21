@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Isoform.Document;
+using Isoform.Interactive;
 using Isoform.Mcp;
 using ModelContextProtocol;
 
