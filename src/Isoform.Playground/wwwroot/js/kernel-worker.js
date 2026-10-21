@@ -67,6 +67,9 @@ const ops = {
   handles: ({ slot = 'main' } = {}) => JSON.parse(kernel.Handles(slot)),
   // Pinned references against a slot's last good result (panels/references.js).
   resolve: ({ refs, slot = 'main' }) => JSON.parse(kernel.Resolve(JSON.stringify(refs), slot)),
+  // A sketch solved, optionally with a point dragged to [u, v]: {point, to}.
+  sketch: ({ document, id, drag }) => JSON.parse(kernel.Sketch(document, id, drag ? JSON.stringify(drag) : '')),
+  faceFrame: ({ face, slot = 'main' }) => JSON.parse(kernel.FaceFrame(slot, face)),
   memory: () => heap(),
 
   pool(args) {

@@ -196,36 +196,8 @@ public static class IsoformTools
         [Description(DocumentHelp)] string document,
         [Description("The sketch's feature id.")] string id,
         [Description("A point to drag, by name.")] string? dragPoint = null,
-        [Description("Where to drag it, [u, v] in sketch coordinates.")] double[]? dragTo = null) => Run(() =>
-    {
-        var doc = Part(document);
-        var sketch = SketchDocuments.Resolved(doc, id);
-        (string, double, double)? drag = dragPoint is { } p && dragTo is [var u, var v] ? (p, u, v) : null;
-        var solution = SketchSolver.Solve(sketch, drag);
-        var (regions, problem) = solution.Solved ? SketchRegions.Of(sketch, solution) : ([], null);
-        var settled = CanonicalFormat.Write(SketchDocuments.Settle(doc, s => s.Id == id ? solution : null));
-        var problems = new JsonArray([.. solution.Problems.Select(x => new JsonObject
-        {
-            ["code"] = x.Code, ["message"] = x.Message, ["constraints"] = new JsonArray([.. x.Constraints.Select(c => (JsonNode)c)]),
-        })]);
-        if (problem is not null) problems.Add(new JsonObject { ["code"] = SketchSolution.Invalid, ["message"] = problem, ["constraints"] = new JsonArray() });
-        return new JsonObject
-        {
-            ["id"] = id,
-            ["solved"] = solution.Solved && problem is null,
-            ["freeDegrees"] = solution.FreeDegrees,
-            ["free"] = new JsonArray([.. solution.Free.Order(StringComparer.Ordinal).Select(f => (JsonNode)f)]),
-            ["points"] = new JsonObject(solution.Points.OrderBy(x => x.Key, StringComparer.Ordinal).Select(x => KeyValuePair.Create(x.Key, (JsonNode?)new JsonArray(x.Value.X, x.Value.Y)))),
-            ["radii"] = new JsonObject(solution.Radii.OrderBy(x => x.Key, StringComparer.Ordinal).Select(x => KeyValuePair.Create(x.Key, (JsonNode?)x.Value))),
-            ["problems"] = problems,
-            ["regions"] = new JsonArray([.. regions.Select(r => new JsonObject
-            {
-                ["outer"] = new JsonArray([.. r.Ids.Select(i => (JsonNode)i)]),
-                ["holes"] = new JsonArray([.. r.Holes.Select(h => (JsonNode)new JsonArray([.. h.Edges.Select(e => e.Id).Distinct().Select(i => (JsonNode)i)]))]),
-            })]),
-            ["settled"] = new JsonObject { ["text"] = settled, ["hash"] = CanonicalFormat.Hash(CanonicalFormat.Read(settled)) },
-        };
-    });
+        [Description("Where to drag it, [u, v] in sketch coordinates.")] double[]? dragTo = null) =>
+        Run(() => SketchJson.Solve(Text(document), id, dragPoint, dragTo));
 
     [McpServerTool(Name = "validate", ReadOnly = true, Idempotent = true)]
     [Description("Fast check of a part without meshing: parses it, applies the document rules and compiles it. " +

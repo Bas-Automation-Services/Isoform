@@ -106,7 +106,7 @@ public sealed class Compiler(ModelingSettings settings)
             }
             var (regions, problem) = SketchRegions.Of(s, solution);
             if (problem is not null) diagnostics.Add(new Diagnostic(SketchSolution.Invalid, s.Id, $"sketch {s.Id}: {problem}"));
-            var plane = s.On.Plane ?? FacePlane(s.On.Face!, surfaces, tree);
+            var plane = s.On.Plane ?? SketchPlanes.OfFace(s.On.Face!, surfaces, tree);
             if (plane is null)
             {
                 diagnostics.Add(new Diagnostic(Diagnostic.SketchPlaneLost, s.Id, $"sketch {s.Id} lies on {s.On.Face}, which is not a flat face of the part here"));
@@ -122,7 +122,7 @@ public sealed class Compiler(ModelingSettings settings)
         List<(Point3D At, Vector3D Into, string Name)>? Spots(Hole h)
         {
             if (h.On is null && h.Sketch is null) return [(new Point3D(h.Center[0], h.Center[1], 0), new Vector3D(0, 0, -1), "")];
-            var plane = h.On is { } face ? FacePlane(face, surfaces, tree) : sketches[h.Sketch!].Shape?.Plane;
+            var plane = h.On is { } face ? SketchPlanes.OfFace(face, surfaces, tree) : sketches[h.Sketch!].Shape?.Plane;
             if (plane is null)
             {
                 diagnostics.Add(new Diagnostic(h.On is null ? SketchSolution.Invalid : Diagnostic.SketchPlaneLost, h.Id,
@@ -579,23 +579,6 @@ public sealed class Compiler(ModelingSettings settings)
     /// <summary>A 2D box round every region's outer loop.</summary>
     static (double U0, double V0, double U1, double V1) Bounds(SweptShape shape) => shape.Regions.Select(r => Profiles.Bounds(r.Outer))
         .Aggregate((a, b) => (Math.Min(a.U0, b.U0), Math.Min(a.V0, b.V0), Math.Max(a.U1, b.U1), Math.Max(a.V1, b.V1)));
-
-    /// <summary>
-    /// The plane of a flat face as a sketch plane: its outward normal as the part has it here, the world origin put onto
-    /// it as the origin and the world x put onto it as the x direction (world y where x runs along the normal), so a
-    /// sketch on a top face reads in world coordinates. The frame is right-handed with its normal out of the part, so on a
-    /// face looking the other way (a bottom face) sketch y runs along world −y. Null when no flat surface has that name yet.
-    /// </summary>
-    static SketchPlane? FacePlane(string face, List<Surface> surfaces, Field? tree)
-    {
-        if (tree is null || surfaces.LastOrDefault(s => s.Source == face) is not { Kind: SurfaceKind.Plane } found) return null;
-        var n = TopologyBuilder.Oriented(surfaces, tree)[found.Id].Axis.Normalized();
-        var o = n * n.Dot(found.Origin.AsVector());
-        var x = new Vector3D(1, 0, 0) - n * n.X;
-        if (x.Length < 0.1) x = new Vector3D(0, 1, 0) - n * n.Y;
-        x = x.Normalized();
-        return new SketchPlane([o.X, o.Y, o.Z], [x.X, x.Y, x.Z], [n.X, n.Y, n.Z]);
-    }
 
     /// <summary>The regions swept between two caps, and the corners of a box round them.</summary>
     static (Field, Point3D[]) ExtrudeField(Extrude e, SweptShape shape, Frame placement, Func<Surface, Surface> register)
