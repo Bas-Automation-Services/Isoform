@@ -145,7 +145,7 @@ Phase 1 demo, about 2 minutes:
 **Exports.** Strings in and out; meshes as MemoryView.
 
 ```
-Regenerate(doc, editsJson, cell, chord, slot)
+Regenerate(doc, editsJson, cell, chord, slot, snap)
 Apply(doc, editsJson)                      → {text, hash, problem}
 Diff(old, new)
 Handles(slot)

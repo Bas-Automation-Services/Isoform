@@ -1,13 +1,15 @@
 // The selected feature's handles in the view: the store's feature, which the tree sets and a picked face sets to its
-// own (panels/tree.js, which also tints the feature's faces). They show as arrows (linear), discs (planar) and arcs
-// (angle), a constant size on screen. Hovering one lights it and shows its label and value; dragging it computes the
-// edits every move (preview) and hands them to commit on release. Handles set by an expression are grey and do not drag. The handles come from the kernel (the C# contract
-// in docs/playground-plan.md) after every regeneration; the math is in lib/dragmath.js.
+// own (panels/tree.js, which also tints the feature's faces). They show as arrows (linear) and discs (planar) a
+// constant size on screen, and arcs (angle) round their axis through the part. Hovering one lights it and shows its
+// label and value; dragging it computes the edits every move (preview) and hands them to commit on release; shift
+// snaps to a tenth of the step. A pattern's handle has −/+ for its count. Handles set by an expression are grey and do
+// not drag. The handles come from the kernel (the C# contract in src/Isoform.Interactive/README.md) after every
+// regeneration; the math is in lib/dragmath.js.
 import * as THREE from 'three';
-import { anchorAt, frameOf, shownHandles, startDrag, valueAt } from './lib/dragmath.js';
+import { anchorAt, countEdits, frameOf, shownHandles, startDrag, valueAt } from './lib/dragmath.js';
 
 // Sizes in CSS pixels.
-const arrow = { length: 64, head: 16, radius: 6, shaft: 1.6 }, disc = 11, arc = { radius: 46, tube: 1.6, knob: 6 };
+const arrow = { length: 64, head: 16, radius: 6, shaft: 1.6 }, disc = 11, knob = 6;
 const reach = 9;  // how near the pointer must come to a handle's outline to grab it
 const color = { idle: 0x2f6fdb, hot: 0xf59e0b, readOnly: 0x9aa0a6 };
 
@@ -21,14 +23,27 @@ const headGeometry = new THREE.ConeGeometry(arrow.radius, arrow.head, 16)
   .rotateX(Math.PI / 2).translate(0, 0, arrow.length - arrow.head / 2);
 const discGeometry = new THREE.CircleGeometry(disc, 32);
 const rimGeometry = new THREE.RingGeometry(disc, disc + 2, 32);
-const knobGeometry = new THREE.SphereGeometry(arc.knob, 16, 8);
-const arcGeometry = degrees => new THREE.TorusGeometry(arc.radius, arc.tube, 6, 64, Math.min(Math.abs(degrees), 360) * Math.PI / 180);
+const knobGeometry = new THREE.SphereGeometry(knob, 16, 8);
+
+// An angle handle's arc in world units, in its frame (u towards the anchor): from the start of the sweep, value
+// degrees behind the anchor, round to t.
+function arcPoints(handle, t) {
+  const r = Math.hypot(...handle.anchor.map((x, i) => x - (handle.center ?? handle.anchor)[i]));
+  const from = -handle.value * Math.PI / 180, to = t * Math.PI / 180, points = [];
+  for (let k = 0; k <= 96; k++) {
+    const a = from + (to - from) * k / 96;
+    points.push(new THREE.Vector3(Math.cos(a) * r, Math.sin(a) * r, 0));
+  }
+  return { r, points };
+}
 
 /**
  * fetch() resolves to the handles of the main slot's last result; a kernel without the op rejects, which shows
- * none. preview(edits, handle) is called on every move of a drag, commit(edits, handle) once on release.
+ * none. start(handle) is called when a drag starts, preview(edits, handle, {t, value, edits}) on every move that
+ * changes the edits, end(handle, moved) on release, then commit(edits, handle) if it moved. A pattern's −/+ commit
+ * the count's edit straight away.
  */
-export function createHandles(viewer, store, { fetch, commit, preview = () => { } }) {
+export function createHandles(viewer, store, { fetch, commit, preview = () => { }, start = () => { }, end = () => { } }) {
   const { scene, camera, controls, canvas } = viewer;
   const host = canvas.parentElement;
   const group = new THREE.Group();
@@ -56,7 +71,7 @@ export function createHandles(viewer, store, { fetch, commit, preview = () => { 
   });
 
   function rebuild() {
-    for (const v of visuals) { v.arc?.dispose(); v.materials.forEach(m => m.dispose()); }
+    for (const v of visuals) { v.arc?.geometry.dispose(); v.counter?.remove(); v.materials.forEach(m => m.dispose()); }
     group.clear();
     if (drag) { drag = null; controls.enabled = true; }
     hot = null;
@@ -76,36 +91,64 @@ export function createHandles(viewer, store, { fetch, commit, preview = () => { 
     const mesh = (geometry, m = visual.materials[0]) => { const o = new THREE.Mesh(geometry, m); o.renderOrder = 10; object.add(o); return o; };
     if (handle.kind === 'linear') { mesh(shaftGeometry); mesh(headGeometry); }
     if (handle.kind === 'planar') {
-      visual.materials.push(material());
-      mesh(discGeometry, visual.materials[1]);
+      visual.fill = material();
+      visual.materials.push(visual.fill);
+      mesh(discGeometry, visual.fill);
       mesh(rimGeometry);
     }
     if (handle.kind === 'angle') {
-      visual.arc = arcGeometry(handle.value);
-      visual.arcMesh = mesh(visual.arc);
+      // Round the axis through center (the object sits there, unscaled): a line in world units, the knob on screen size.
+      const line = new THREE.LineBasicMaterial({ depthTest: false, transparent: true });
+      visual.materials.push(line);
+      visual.arc = new THREE.Line(new THREE.BufferGeometry(), line);
+      visual.arc.renderOrder = 10;
+      object.add(visual.arc);
       visual.knob = mesh(knobGeometry);
-      turn(visual, handle.value);
+      turn(visual, 0);
     }
+    if (handle.count) visual.counter = counterOf(visual);
     paint(visual);
     place(visual);
     return visual;
   }
 
-  // An angle handle's arc runs from u through its value; the knob sits at the end.
-  function turn(visual, degrees) {
-    const a = degrees * Math.PI / 180;
-    visual.knob.position.set(Math.cos(a) * arc.radius, Math.sin(a) * arc.radius, 0);
-    visual.arc.dispose();
-    visual.arc = visual.arcMesh.geometry = arcGeometry(degrees);
-    visual.arcMesh.scale.set(1, Math.sign(degrees) || 1, 1); // a negative angle runs the other way round
+  // An angle handle at t: the arc from the start of its sweep to the knob.
+  function turn(visual, t) {
+    const { r, points } = arcPoints(visual.handle, t);
+    visual.arc.geometry.dispose();
+    visual.arc.geometry = new THREE.BufferGeometry().setFromPoints(points);
+    visual.knob.position.set(Math.cos(t * Math.PI / 180) * r, Math.sin(t * Math.PI / 180) * r, 0);
+  }
+
+  // A pattern's copy count: − and + beside its handle; disabled at the minimum or when an expression sets it.
+  function counterOf(visual) {
+    const { handle } = visual, box = document.createElement('div');
+    box.className = 'handle-count';
+    box.dataset.handle = handle.id;
+    const button = (text, delta) => {
+      const b = document.createElement('button');
+      b.className = delta > 0 ? 'plus' : 'minus';
+      b.textContent = text;
+      const edits = countEdits(handle, delta);
+      b.disabled = !edits;
+      b.title = handle.count.path ? `${handle.label.replace(/ \w+$/, '')} count ${handle.count.value + delta}` : 'set by an expression';
+      b.onclick = e => { e.stopPropagation(); commit(edits, handle); };
+      return b;
+    };
+    const value = document.createElement('span');
+    value.textContent = `×${handle.count.value}`;
+    box.append(button('−', -1), value, button('+', 1));
+    host.append(box);
+    return box;
   }
 
   function paint(visual) {
     const { readOnly } = visual.handle;
     const c = readOnly ? color.readOnly : visual === hot || visual === drag?.visual ? color.hot : color.idle;
-    visual.materials[0].color.set(c);
-    visual.materials[0].opacity = readOnly ? 0.55 : 1;
-    if (visual.materials[1]) { visual.materials[1].color.set(c); visual.materials[1].opacity = readOnly ? 0.25 : 0.4; }
+    for (const m of visual.materials) {
+      m.color.set(c);
+      m.opacity = m === visual.fill ? (readOnly ? 0.25 : 0.4) : readOnly ? 0.55 : 1;
+    }
   }
 
   // World units per CSS pixel at a point, so handles keep their size on screen.
@@ -115,8 +158,18 @@ export function createHandles(viewer, store, { fetch, commit, preview = () => { 
   }
 
   function place(v) {
-    v.object.position.copy(vector(anchorAt(v.handle, v.t)));
-    v.object.scale.setScalar(pixel(v.object.position));
+    if (v.handle.kind === 'angle') {
+      v.object.position.copy(vector(v.handle.center ?? v.handle.anchor));
+      v.knob.scale.setScalar(pixel(vector(anchorAt(v.handle, v.t))));
+    } else {
+      v.object.position.copy(vector(anchorAt(v.handle, v.t)));
+      v.object.scale.setScalar(pixel(v.object.position));
+    }
+    if (v.counter) {
+      // Beside the arrow's foot, in view coordinates.
+      const [x, y] = screenOf(v.object.position), r = host.getBoundingClientRect();
+      v.counter.style.transform = `translate(${x - r.left + 14}px, ${y - r.top + 10}px)`;
+    }
   }
   viewer.onFrame(() => visuals.forEach(place));
 
@@ -138,10 +191,10 @@ export function createHandles(viewer, store, { fetch, commit, preview = () => { 
       const centre = at(0, 0, 0);
       return { line: [centre], grip: centre, toward: at(disc, 0, 0), wide: true };
     }
-    const end = valueAt(v.handle, v.t) * Math.PI / 180, line = [];
-    for (let k = 0; k <= 48; k++) line.push(at(Math.cos(end * k / 48) * arc.radius, Math.sin(end * k / 48) * arc.radius, 0));
-    const grip = line.at(-1);
-    return { line, grip, toward: at(Math.cos(end + 0.2) * arc.radius, Math.sin(end + 0.2) * arc.radius, 0) };
+    // The arc in world units round center; grabbed by the knob, t growing right-handed round the axis.
+    const { r, points } = arcPoints(v.handle, v.t), a = v.t * Math.PI / 180, step = Math.min(0.2, 30 / Math.max(r, 1e-9) * pixel(v.object.position));
+    const line = points.filter((_, k) => k % 2 === 0).map(p => at(p.x, p.y, p.z));
+    return { line, grip: at(Math.cos(a) * r, Math.sin(a) * r, 0), toward: at(Math.cos(a + step) * r, Math.sin(a + step) * r, 0) };
   }
 
   function distance([x, y], line) {
@@ -173,7 +226,7 @@ export function createHandles(viewer, store, { fetch, commit, preview = () => { 
   function readout(v, [x, y]) {
     const { handle } = v;
     const value = handle.kind === 'planar'
-      ? `(${(drag?.visual === v ? drag.state.edits : handle.edits.map(e => ({ value: e.base }))).map(e => shown(e.value)).join(', ')})`
+      ? `(${[valueAt(handle, v.t)].flat().map(shown).join(', ')})`
       : shown(valueAt(handle, v.t)) + (handle.kind === 'angle' ? '°' : '');
     label.textContent = `${handle.label}: ${value}` + (handle.readOnly ? ' · set by an expression' : '');
     label.hidden = false;
@@ -195,7 +248,7 @@ export function createHandles(viewer, store, { fetch, commit, preview = () => { 
 
   // Captured on the view, before picking and the orbit controls see the event: a drag on a handle is not theirs.
   host.addEventListener('pointerdown', e => {
-    if (e.button !== 0) return;
+    if (e.button !== 0 || e.target.closest?.('.handle-count')) return;
     const v = under([e.clientX, e.clientY]);
     if (!v || v.handle.readOnly) return;
     const move = startDrag(v.handle, rayAt(e.clientX, e.clientY));
@@ -206,6 +259,7 @@ export function createHandles(viewer, store, { fetch, commit, preview = () => { 
     drag = { visual: v, move, state: move.move(rayAt(e.clientX, e.clientY)) };
     canvas.style.cursor = 'grabbing';
     paint(v);
+    start(v.handle);
   }, { capture: true });
 
   host.addEventListener('pointermove', e => {
@@ -213,11 +267,11 @@ export function createHandles(viewer, store, { fetch, commit, preview = () => { 
     if (drag) {
       e.stopPropagation();
       const before = drag.state;
-      drag.state = drag.move.move(rayAt(...point));
+      drag.state = drag.move.move(rayAt(...point), e.shiftKey);
       drag.visual.t = drag.state.t;
-      if (drag.visual.handle.kind === 'angle') turn(drag.visual, drag.state.value);
+      if (drag.visual.handle.kind === 'angle') turn(drag.visual, drag.state.t);
       readout(drag.visual, point);
-      if (JSON.stringify(drag.state.edits) !== JSON.stringify(before.edits)) preview(drag.state.edits, drag.visual.handle);
+      if (JSON.stringify(drag.state.edits) !== JSON.stringify(before.edits)) preview(drag.state.edits, drag.visual.handle, drag.state);
       return;
     }
     const v = under(point);
@@ -235,15 +289,26 @@ export function createHandles(viewer, store, { fetch, commit, preview = () => { 
     paint(visual);
     hover(null);
     // The handle stays where it was let go until the new result brings the handles back.
-    if ([state.t].flat().some(t => t !== 0)) commit(state.edits, visual.handle);
+    const moved = [state.t].flat().some(t => t !== 0);
+    end(visual.handle, moved);
+    if (moved) commit(state.edits, visual.handle);
   }, { capture: true });
 
   return {
     /** The shown handles as plain data, with where to grab each on screen and the screen direction t grows in. */
     list: () => visuals.map(v => {
       const { grip, toward } = outline(v), length = Math.hypot(toward[0] - grip[0], toward[1] - grip[1]) || 1;
-      const { id, feature, kind, label: name, value, faces, readOnly = false } = v.handle;
-      return { id, feature, kind, label: name, value, faces, readOnly, screen: grip, direction: [(toward[0] - grip[0]) / length, (toward[1] - grip[1]) / length] };
+      const { id, feature, kind, label: name, value, faces, readOnly = false, count = null } = v.handle;
+      const handle = { id, feature, kind, label: name, value, faces, readOnly, count, screen: grip, direction: [(toward[0] - grip[0]) / length, (toward[1] - grip[1]) / length] };
+      if (kind === 'planar') {
+        // Planar: the screen direction of v too (direction is u's).
+        v.object.updateMatrixWorld();
+        const along = screenOf(new THREE.Vector3(0, disc, 0).applyMatrix4(v.object.matrixWorld)), l = Math.hypot(along[0] - grip[0], along[1] - grip[1]) || 1;
+        handle.directionV = [(along[0] - grip[0]) / l, (along[1] - grip[1]) / l];
+      }
+      return handle;
     }),
+    /** The drag under way: {id, t, value, edits}, or null. */
+    dragging: () => drag && { id: drag.visual.handle.id, t: drag.state.t, value: drag.state.value, edits: drag.state.edits },
   };
 }

@@ -13,8 +13,8 @@ public static partial class Playground
 
     [JSExport]
     [return: JSMarshalAs<JSType.MemoryView>]
-    public static ArraySegment<byte> Share(string document, string edits, double cellSize, double chordTolerance, int index, int count) =>
-        _share = Session.Share(document, edits, Settings(cellSize, chordTolerance), index, count);
+    public static ArraySegment<byte> Share(string document, string edits, double cellSize, double chordTolerance, bool snapGrid, int index, int count) =>
+        _share = Session.Share(document, edits, Settings(cellSize, chordTolerance, snapGrid), index, count);
 
     [JSExport]
     public static void Import(byte[] regions) => Session.Import(regions);

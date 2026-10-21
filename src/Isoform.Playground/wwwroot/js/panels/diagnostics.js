@@ -3,6 +3,7 @@
 // own with the camera flown to it. Focus is this panel's own: a diagnostic, kept across a regeneration while it is
 // still reported, dropped when the selection changes.
 import { diagnose, featureFaces, groups, mm, refind, verdict } from '../lib/diagnose.js';
+import { shown } from '../store.js';
 
 /** The status line for a state; the browser tests read the "<ms> ms · … faces" form. */
 export function statusLine(s, workers) {
@@ -48,7 +49,7 @@ export function createDiagnostics(store, { stats, list, workers, viewer, view, b
   }
 
   function show({ fly = false } = {}) {
-    const { result } = store.state;
+    const result = shown(store.state);
     const marks = marksOf(focus, result);
     viewer.mark(marks);
     if (fly && focus && (marks.length || focus.spot)) viewer.flyTo(marks.map(([f]) => f), focus.spot?.at);
@@ -92,13 +93,15 @@ export function createDiagnostics(store, { stats, list, workers, viewer, view, b
     return li;
   }
 
+  // A drag's preview is shown in place of the committed result (store.shown), with its own diagnostics.
   function render(s) {
-    const { result } = s;
+    const result = shown(s);
     items = diagnose(result);
     focus = refind(items, focus);
     if (!focus) whole = false;
-    const cell = result.cell && result.cell !== defaultCell
-      ? [el('li', 'cell', `Cells ${mm(result.cell)} `, Object.assign(el('button', 'resolve', `back to ${mm(defaultCell)}`), { onclick: () => resolve(defaultCell) }))]
+    const committed = s.result.cell; // a preview's coarser cell is not the one to go back from
+    const cell = committed && committed !== defaultCell
+      ? [el('li', 'cell', `Cells ${mm(committed)} `, Object.assign(el('button', 'resolve', `back to ${mm(defaultCell)}`), { onclick: () => resolve(defaultCell) }))]
       : [];
     list.replaceChildren(...cell, ...groups(items).map(g => el('li', `group ${g.error ? 'error' : 'warn'}`,
       el('div', 'group-head', el('b', null, g.title), el('span', 'muted', ` ${g.code} · ${g.items.length}`)),
@@ -116,20 +119,21 @@ export function createDiagnostics(store, { stats, list, workers, viewer, view, b
   }
 
   function renderBadge(s) {
+    s = { ...s, result: shown(s) };
     const v = verdict(s);
     badge.hidden = !v;
     if (!v) return;
     badge.className = `verdict ${v.kind}`;
     badge.replaceChildren(el('i'), el('b', null, v.text), el('span', 'muted', v.detail ? ` · ${v.detail}` : ''),
-      ...(s.result?.preview ? [el('span', 'preview', 'preview')] : []));
+      ...(s.result?.preview ? [el('span', 'preview', `preview · ${s.result.ms.toFixed(0)} ms`)] : []));
   }
   // The badge brings the first problem into focus.
   badge.onclick = () => focusOn(items.find(i => !i.stale) ?? null);
 
   store.subscribe((s, before) => {
     stats.textContent = statusLine(s, workers);
-    if (s.result !== before.result || s.problem !== before.problem) renderBadge(s);
-    if (s.result !== before.result) render(s);
+    if (shown(s) !== shown(before) || s.problem !== before.problem) renderBadge(s);
+    if (shown(s) !== shown(before)) render(s);
     else if (s.selection !== before.selection && focus) focusOn(null);
   });
 
