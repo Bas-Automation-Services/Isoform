@@ -149,6 +149,19 @@ test('fields: components and mates take assembly paths', () => {
     [['text', 'merge.tool', undefined], ['choice', 'merge.op', 'join,cut'], ['bool', 'merge.keep', undefined]]);
 });
 
+test('fields: a lattice has its kind as a choice, a skin at its default, and a region box or feature id', () => {
+  const lattice = (extra = {}) => itemsOf(treeOf({ format: 'isoform/0', features: [
+    { id: 'infill', type: 'lattice', kind: 'gyroid', cell: '=pitch', thickness: 1, ...extra }] }))[1];
+  const f = fieldsOf(lattice());
+  assert.deepEqual(f.map(x => [x.kind, x.path, x.value]),
+    [['choice', 'infill.kind', 'gyroid'], ['scalar', 'infill.cell', '=pitch'], ['scalar', 'infill.thickness', 1], ['scalar', 'infill.skin', 0]]);
+  assert.deepEqual(f[0].options, ['gyroid', 'schwarz-p', 'diamond', 'bcc', 'octet', 'cubic']);
+  const box = fieldsOf(lattice({ skin: 1.5, region: { origin: [0, 0, 0], size: [10, 10, 5] } }));
+  assert.equal(field(box, 'infill.skin').value, 1.5);
+  assert.deepEqual(field(box, 'infill.region.size').entries.map(e => [e.path, e.label]), [['infill.region.size.0', 'x'], ['infill.region.size.1', 'y'], ['infill.region.size.2', 'z']]);
+  assert.deepEqual(field(fieldsOf(lattice({ region: 'boss' })), 'infill.region'), { kind: 'text', path: 'infill.region', label: 'region', value: 'boss', list: false });
+});
+
 test('typed values: numbers, expressions with or without "=", nothing', () => {
   assert.equal(parseScalar(' 12.5 '), 12.5);
   assert.equal(parseScalar('-3e-1'), -0.3);

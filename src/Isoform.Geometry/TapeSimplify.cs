@@ -550,39 +550,52 @@ public sealed partial class Tape
 
     /// <summary>
     /// Appends the owner surfaces in the tape, depth first in tree order, as the mesher lists a tree's: a shell gives
-    /// its outside only, a profile all its leaves.
+    /// its outside only, a profile all its leaves; with <paramref name="cavity"/> the inner faces of shells holding a
+    /// lattice instead.
     /// </summary>
-    public void Surfaces(List<int> owners) => Surfaces(_code.Length - 1, owners);
+    public void Surfaces(List<int> owners, bool cavity = false) => Surfaces(_code.Length - 1, owners, cavity);
 
-    void Surfaces(int i, List<int> owners)
+    void Surfaces(int i, List<int> owners, bool cavity)
     {
+        void Add(int id)
+        {
+            if (!cavity && !owners.Contains(id)) owners.Add(id);
+        }
         var ins = _code[i];
         switch (ins.Op)
         {
             case TapeOp.Max:
             case TapeOp.Min:
-                for (var k = 0; k < ins.B; k++) Surfaces(_args[ins.A + k], owners);
+                for (var k = 0; k < ins.B; k++) Surfaces(_args[ins.A + k], owners, cavity);
                 break;
             case TapeOp.Negate:
-                Surfaces(ins.A, owners);
+                Surfaces(ins.A, owners, cavity);
+                break;
+            case TapeOp.Shell when !cavity:
+                Surfaces(ins.B, owners, false);
                 break;
             case TapeOp.Shell:
-                Surfaces(ins.B, owners);
+                var sh = _shells[ins.Data];
+                if (!sh.InnerOf.Any(kv => kv.Key == kv.Value)) break;
+                var child = new List<int>();
+                Surfaces(ins.A, child, false);
+                foreach (var o in child)
+                    if (sh.InnerOf.TryGetValue(o, out var inner) && !owners.Contains(inner)) owners.Add(inner);
                 break;
             case TapeOp.Rounded:
             case TapeOp.Blend:
             case TapeOp.Loop:
-                Surfaces(ins.A, owners);
-                Surfaces(ins.B, owners);
+                Surfaces(ins.A, owners, cavity);
+                Surfaces(ins.B, owners, cavity);
                 break;
             case TapeOp.Profile:
-                foreach (var (data, _) in _profiles[ins.Data].Leaves)
-                    if (!owners.Contains(_leaves[data].Id)) owners.Add(_leaves[data].Id);
+                foreach (var (data, _) in _profiles[ins.Data].Leaves) Add(_leaves[data].Id);
                 break;
             case TapeOp.Call:
+                if (_objects[ins.Data] is LatticeField l) Add(l.Surface.Id);
                 break;
             default:
-                if (!owners.Contains(_leaves[ins.Data].Id)) owners.Add(_leaves[ins.Data].Id);
+                Add(_leaves[ins.Data].Id);
                 break;
         }
     }

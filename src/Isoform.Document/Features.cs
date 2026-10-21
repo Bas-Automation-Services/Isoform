@@ -73,6 +73,28 @@ public sealed record Revolve(string Id, BooleanOp Op, SketchPlane Plane, Profile
 /// </summary>
 public sealed record Offset(string Id, double Distance) : Feature(Id);
 
+/// <summary>Where a lattice goes: an axis-aligned box, or the solid of an earlier block, extrude or revolve (by id).</summary>
+public sealed record LatticeRegion(string? Feature = null, double[]? Origin = null, double[]? Size = null);
+
+/// <summary>
+/// Fills the body with a periodic lattice of cell <paramref name="Cell"/> mm, on the world grid: TPMS sheets
+/// (<c>gyroid</c>, <c>schwarz-p</c>, <c>diamond</c>) at least <paramref name="Thickness"/> thick, or struts of that
+/// diameter (<c>bcc</c>, <c>octet</c>, <c>cubic</c>). With a <paramref name="Skin"/> above 0 the body keeps a closed
+/// wall that thick (faces <c>id/inner:&lt;face&gt;</c>, as a shell names them) and the lattice fills the cavity, joined
+/// to it. A <paramref name="Region"/> limits the lattice; the body stays solid outside it (faces <c>id/region:…</c>).
+/// The lattice is one face, <c>id/surface</c> for sheets and <c>id/struts</c> for struts.
+/// </summary>
+public sealed record Lattice(string Id, string Kind, double Cell, double Thickness, double Skin = 0, LatticeRegion? Region = null) : Feature(Id)
+{
+    public static readonly string[] Kinds = ["gyroid", "schwarz-p", "diamond", "bcc", "octet", "cubic"];
+
+    /// <summary>Sheets (triply periodic minimal surfaces) rather than struts.</summary>
+    public bool Sheets => Kind is "gyroid" or "schwarz-p" or "diamond";
+
+    /// <summary>The name of the lattice's face.</summary>
+    public string Face => $"{Id}/{(Sheets ? "surface" : "struts")}";
+}
+
 /// <summary>How a pattern places its copies.</summary>
 public abstract record PatternMotion;
 

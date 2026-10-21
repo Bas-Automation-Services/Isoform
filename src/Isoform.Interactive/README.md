@@ -105,6 +105,7 @@ where a handle sits, how it moves, and which document fields it edits. Dragging 
 | fillet / chamfer | `radius` / `distance`: arrow on the bisector at the middle of the face (a loop's largest) | per sin(φ/2)/(1 − sin(φ/2)) / 1/cos(φ/2), for faces φ apart |
 | shell | `thickness`: arrow on the largest outer face, pointing in | `thickness`; moves `<shell>/inner:<face>` |
 | offset | `distance`: arrow on the largest moved face, outward | `distance` |
+| lattice | `thickness`: arrow on the lattice face, along its normal; `cell`: arrow on it, away from the origin; `skin` as a shell's thickness | `thickness` (struts per 2), `cell` (per cell/\|q\| for the foot q of the strut's line: the lattice scales about the world origin), `skin`; a sheet lattice's arrows move its level set to first order only and name no face |
 | pattern | `spacing` (linear), `angle` (circular below 360°), `plane` (mirror): at the last copy | `linear.spacing` (per 1/(count − 1)), `circular.angle`, `mirror.point.i` (per nᵢ/2) |
 | assembly component | `placement`: a frame at the instance | `components.<id>.placement.origin/x/normal` |
 

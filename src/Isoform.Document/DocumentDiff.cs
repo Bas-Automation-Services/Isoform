@@ -142,8 +142,9 @@ public static class DocumentDiff
             if (!b.ContainsKey(key)) edits.Add(Remove($"{path}.{key}"));
         foreach (var (key, value) in b)
             if (a.TryGetPropertyValue(key, out var old)) Value($"{path}.{key}", old, value, edits);
-            // A new table (a component's first parameter) is its entries, as setting one adds the table.
-            else if (value is JsonObject { Count: > 0 } table) Fields($"{path}.{key}", [], table, edits);
+            // A new table (a component's first parameter) is its entries, as setting one adds the table. Any other new
+            // object (a lattice's region box) is set whole: its fields only read together.
+            else if (key == "parameters" && value is JsonObject { Count: > 0 } table) Fields($"{path}.{key}", [], table, edits);
             else edits.Add(Set($"{path}.{key}", value));
     }
 

@@ -73,7 +73,7 @@ public static class ExactBrep
                 }
             _interior = _meshVertices.Select(all => all.Where(v => faceSets[v].Count == 1).ToHashSet()).ToArray();
             _surface = _owner.Select((o, f) => Exact(o, f)).ToArray();
-            var unsupported = Enumerable.Range(0, faceCount).Where(f => _surface[f].Kind is SurfaceKind.Fillet or SurfaceKind.Blend)
+            var unsupported = Enumerable.Range(0, faceCount).Where(f => !_surface[f].Analytic)
                 .Select(f => $"{Name(f)} ({_surface[f].Kind})").ToList();
             if (unsupported.Count > 0) throw new NotSupportedException($"faces without a closed-form surface: {string.Join(", ", unsupported)}");
             var stray = Enumerable.Range(0, faceCount).Select(f => (f, Deviation(_surface[f], f))).Where(x => x.Item2 > Fit).ToList();
@@ -173,7 +173,7 @@ public static class ExactBrep
         double Fit => Math.Max(4 * settings.ChordTolerance, 0.05 * settings.CellSize);
 
         double Deviation(Surface s, int face) =>
-            s.Kind is SurfaceKind.Fillet or SurfaceKind.Blend ? 0 : _interior[face].Select(v => Math.Abs(s.Distance(_points[v]))).DefaultIfEmpty(0).Max();
+            !s.Analytic ? 0 : _interior[face].Select(v => Math.Abs(s.Distance(_points[v]))).DefaultIfEmpty(0).Max();
 
         /// <summary>The fillets, loops and shells of the tree, by the surfaces they own.</summary>
         void Collect(Field f)

@@ -122,7 +122,8 @@ public class TapeTests
         Bits(tree.Bounds(box).Hi, tape.Bounds(box).Hi, "bounds hi", box.Center);
         var (simpleTree, simpleTape) = (tree.Simplify(box), tape.Simplify(box));
         // A tape hands back the tree's own field once that is all it holds.
-        if (simpleTape is not TapeField && simpleTape is not (LeafField or ProfileField)) Assert.Fail($"simplified to a {simpleTape.GetType().Name}");
+        // Or the object a call stands for: a lattice.
+        if (simpleTape is not TapeField && simpleTape is not (LeafField or ProfileField or LatticeField)) Assert.Fail($"simplified to a {simpleTape.GetType().Name}");
         if (simpleTape is TapeField && ReferenceEquals(simpleTree, tree) != ReferenceEquals(simpleTape, tape)) Assert.Fail($"simplify changed one and not the other at {box.Center}");
         if (simpleTree.SinglePatch(box) is var a && simpleTape.SinglePatch(box) is var b && !Nullable.Equals(a, b))
             Assert.Fail($"single patch {a} vs {b} at {box.Center}");
@@ -197,6 +198,9 @@ public class TapeTests
                 break;
             case ShellField s:
                 Owners(s.Outer, owners);
+                break;
+            case LatticeField l:
+                if (!owners.Contains(l.Surface.Id)) owners.Add(l.Surface.Id);
                 break;
             case ProfileField p:
                 foreach (var l in p.Leaves) Owners(l, owners);

@@ -34,6 +34,10 @@ test('sizeOf: a thin spot\'s thickness, else the size in the message', () => {
   assert.equal(sizeOf('hole (0.6 mm) is below the resolved size of 1 mm; use a smaller CellSize'), 0.6);
   assert.equal(sizeOf('shell leaves a cavity about 0.25 mm thick, below the resolved size of 1 mm'), 0.25);
   assert.equal(sizeOf('shell leaves a cavity too thin to measure, if any'), null);
+  // A lattice's own reports (FrepModeler.LatticeResolution): its wall, the gap between walls, its skin.
+  assert.equal(sizeOf('infill (0.8 mm) is below the resolved size of 1 mm; use a CellSize of 0.4 mm or less'), 0.8);
+  assert.equal(sizeOf('the struts of infill are 0.8 mm apart, below the resolved size of 1 mm; use a CellSize of 0.4 mm or less'), 0.8);
+  assert.equal(sizeOf('infill skin (0.6 mm) is below the resolved size of 1 mm; use a CellSize of 0.3 mm or less'), 0.6);
 });
 
 test('resolveCell: size / 2 and at least half the current cell, on a round value', () => {

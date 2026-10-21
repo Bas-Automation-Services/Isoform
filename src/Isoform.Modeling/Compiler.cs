@@ -140,8 +140,21 @@ public sealed class Compiler(ModelingSettings settings)
             // Edge features and patterns work where their faces or copies are, then hand the current body back.
             var resume = current;
 
+            // These reshape the faces of the solid they find; a lattice has no faces of that kind to reshape.
+            if (feature is Fillet or Chamfer or Shell or Offset && tree is not null && HasLattice(tree))
+            {
+                diagnostics.Add(new Diagnostic(Diagnostic.InvalidParameter, feature.Id,
+                    $"{feature.Id} comes after a lattice on this body; put fillets, chamfers, shells and offsets before the lattice (a lattice's skin is its shell)"));
+                if (resume is not null && bodies.ContainsKey(resume)) Switch(resume);
+                continue;
+            }
+
             switch (feature)
             {
+                case Lattice l:
+                    tree = LatticeOf(l, FieldAlgebra.Normalize(tree!), doc, Register, min, max, diagnostics);
+                    break;
+
                 case Pattern p:
                     // Each copy goes into the body of the feature it copies.
                     var copies = p.Motion is MirrorMotion ? 1 : p.Motion switch { LinearMotion l => l.Count, CircularMotion c => c.Count, _ => 1 } - 1;
@@ -222,6 +235,47 @@ public sealed class Compiler(ModelingSettings settings)
             (lo, hi) = (new Point3D(Math.Min(lo.X, b.Min.X), Math.Min(lo.Y, b.Min.Y), Math.Min(lo.Z, b.Min.Z)), new Point3D(Math.Max(hi.X, b.Max.X), Math.Max(hi.Y, b.Max.Y), Math.Max(hi.Z, b.Max.Z)));
         return new CompiledPart(whole, surfaces, lo, hi, diagnostics, compiled);
     }
+
+    /// <summary>
+    /// The body filled with a lattice f: max(s, f), or max(s, min(f, −r)) within a region R, so the body stays solid
+    /// outside it. With a skin of wall t, max(s, min(−s − t, f)): the shell's wall and the lattice in its cavity, joined
+    /// where they meet. That is a shell of the child max(s, −f − t) with the outside s (−max(s, −f − t) − t = min(−s −
+    /// t, f)), the lattice its own inner face and the others named as a shell names them; near the outside, where the
+    /// cavity cannot reach, it simplifies to s alone. A region then joins the solid outside it: min(that, max(s, −r)).
+    /// </summary>
+    Field LatticeOf(Lattice l, Field solid, PartDocument doc, Func<Surface, Surface> register, Point3D min, Point3D max, List<Diagnostic> diagnostics)
+    {
+        var face = register(new Surface(0, l.Face, SurfaceKind.Lattice, new Point3D(0, 0, 0), new Vector3D(0, 0, 1), l.Cell));
+        var lattice = new LatticeField(DocumentRules.LatticeKindOf(l.Kind)!.Value, l.Cell, l.Thickness, face);
+        var outside = l.Region is { } region ? new NegateField(RegionOf(l.Id, region, doc, register)) : null;
+        var skinned = l.Skin > 0 && !FieldAlgebra.Descendants(solid).Any(n => n is ShellField);
+        if (l.Skin > 0 && !skinned)
+            diagnostics.Add(new Diagnostic(Diagnostic.InvalidParameter, l.Id, "this body is already shelled; give the lattice no skin, or let the skin be the shell"));
+        if (!skinned) return FieldAlgebra.Normalize(new MaxField([solid, outside is null ? lattice : new MinField([lattice, outside])]));
+
+        var skin = new Shell(l.Id, l.Skin);
+        if (ThinCavity(skin, solid, min, max) is { } thin) diagnostics.Add(thin);
+        var inner = new Dictionary<int, int>(ShellOf(skin, solid, register).InnerOf) { [face.Id] = face.Id };
+        Field filled = new ShellField(FieldAlgebra.Normalize(new MaxField([solid, lattice.Outside(l.Skin)])), l.Skin, inner).WithOuter(solid);
+        return outside is null ? filled : new MinField([filled, FieldAlgebra.Normalize(new MaxField([solid, outside]))]);
+    }
+
+    /// <summary>A lattice's region as a solid, its faces named after the lattice: id/region:x- for a box, id/region:&lt;face&gt; for a feature.</summary>
+    static Field RegionOf(string id, LatticeRegion region, PartDocument doc, Func<Surface, Surface> register)
+    {
+        Surface Named(Surface s) => register(s with { Source = $"{id}/region:{(region.Feature is null ? s.Source[(s.Source.IndexOf('/') + 1)..] : s.Source)}" });
+        return (region.Feature is not { } feature
+            ? BlockField(new Block("box", BooleanOp.New, region.Origin!, region.Size!), Frame.Identity, Named)
+            : doc[feature] switch
+            {
+                Block b => BlockField(b, Frame.Identity, Named),
+                Extrude e => ExtrudeField(e, Frame.Identity, Named),
+                var r => RevolveField((Revolve)r, Frame.Identity, Named),
+            }).Item1;
+    }
+
+    /// <summary>Whether a lattice is in the tree, also inside a shell (a lattice's skin is one).</summary>
+    static bool HasLattice(Field tree) => FieldAlgebra.Descendants(tree).Any(n => n is LatticeField || n is ShellField s && HasLattice(s.Child));
 
     /// <summary>
     /// A cavity no grid edge may cross: the shell's inside lies where the solid is deeper than the thickness, and if

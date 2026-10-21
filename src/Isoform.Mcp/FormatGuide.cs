@@ -66,6 +66,14 @@ public static class FormatGuide
             "up unless keep is true; its faces keep their names.",
             new CombineBodies("merge", "tab", BooleanOp.Join) { Body = "plate" }, ["tab/z+", "plate/z+"],
             [new Block("tab", BooleanOp.New, [40, 20, 5], [20, 10, 10])]),
+        new("Fills the body with a periodic lattice of period cell (mm) on the world grid: kind gyroid, schwarz-p or diamond " +
+            "(sheets at least thickness thick, face <id>/surface) or bcc, octet or cubic (struts of diameter thickness, face " +
+            "<id>/struts). skin > 0 keeps a closed wall that thick, faces <id>/inner:<face> as a shell's, with the lattice joined " +
+            "inside. Optional region, a box {origin, size} or the id of an earlier block, extrude or revolve, limits it; the body " +
+            "stays solid outside, faces <id>/region:<face>. Fillets, chamfers, shells and offsets go before it; STEP export " +
+            "names the lattice face unsupported. Walls and gaps under 2 × cellSize are below-resolution.",
+            new Lattice("infill", "bcc", 10, 2, Region: new LatticeRegion(null, [60, 10, -1], [30, 30, 12])),
+            ["infill/struts", "infill/region:x-", "infill/region:y+", "plate/z+"], []),
     ];
 
     /// <summary>Edits shown in the guide, valid on <see cref="EditTarget"/>.</summary>
@@ -156,6 +164,7 @@ public static class FormatGuide
         s.AppendLine("- extrude/revolve <id>/<profile edge id>, <id>/start, <id>/end; blend <id>/blend");
         s.AppendLine("- loop fillet/chamfer <id>/<face across the edge>, e.g. round/rib/a; shell <id>/inner:<outer face>");
         s.AppendLine("- pattern copy k: <id>/<k>:<source face>, e.g. row/2:hole/wall; offset corners <id>/corner:<face>+<face>");
+        s.AppendLine("- lattice <id>/surface (sheets) or <id>/struts, one face however many pieces; skin <id>/inner:<face>; region <id>/region:<face>");
         s.AppendLine("- in an assembly: <component id>/<face>, sub-assemblies first, e.g. left/plate/z+");
         s.AppendLine();
         s.AppendLine("## Bodies");

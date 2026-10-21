@@ -51,7 +51,7 @@ public sealed record Handle(string Id, string Feature, HandleKind Kind, string L
 /// <summary>
 /// The handles of a regeneration, one contract for every feature (see the README): block faces, hole centre and
 /// diameter, extrude caps and profile corners, revolve angle, fillet radius, chamfer distance, shell thickness, offset
-/// distance, pattern spacing, and in an assembly a frame per component. Handles sit on the feature's own instance:
+/// distance, pattern spacing, lattice cell, thickness and skin, and in an assembly a frame per component. Handles sit on the feature's own instance:
 /// pattern copies get none of their own.
 /// </summary>
 public static partial class Handles
@@ -104,7 +104,8 @@ public static partial class Handles
                     case Revolve r: Revolve(r); break;
                     case Fillet f: Edge(f, f.Edge, f.Loop, f.Radius, "radius", round: true); break;
                     case Chamfer c: Edge(c, c.Edge, c.Loop, c.Distance, "distance", round: false); break;
-                    case Shell s: Shell(s); break;
+                    case Shell s: Skin(s, "thickness", s.Thickness); break;
+                    case Lattice l: Lattice(l); break;
                     case Offset o: Offset(o); break;
                     case Pattern p: Pattern(p); break;
                 }
@@ -206,8 +207,11 @@ public static partial class Handles
                 (field, size, [per])) with { Min = MinSize, Step = 0.5 });
         }
 
-        /// <summary>The arrow sits on the largest outer face and points in: thickening moves that face's inner face along it.</summary>
-        void Shell(Shell sh)
+        /// <summary>
+        /// A shell's thickness or a lattice's skin: the arrow sits on the largest outer face and points in, and thickening
+        /// moves that face's inner face along it.
+        /// </summary>
+        void Skin(Feature sh, string field, double thickness)
         {
             var prefix = $"{sh.Id}/inner:";
             var chosen = _surfaces.Select(s => s.Source).Where(s => s.StartsWith(prefix)).Distinct()
@@ -217,7 +221,7 @@ public static partial class Handles
             if (chosen.Middle is not { } middle) return;
             var (at, s) = (middle.At, chosen.Surface!);
             var axis = (s.Gradient(at) * -s.Distance(at)).Normalized();
-            _handles.Add(Make(sh, "thickness", HandleKind.Linear, $"{sh.Id} thickness", at, axis, [chosen.Inner], ("thickness", sh.Thickness, [1.0])) with { Min = MinSize, Step = 0.5 });
+            _handles.Add(Make(sh, field, HandleKind.Linear, $"{sh.Id} {field}", at, axis, [chosen.Inner], (field, thickness, [1.0])) with { Min = MinSize, Step = 0.5 });
         }
 
         /// <summary>
@@ -346,7 +350,7 @@ public static partial class Handles
         static int[] Corners(Quad q) => q.IsTriangle ? [q.A, q.B, q.C] : [q.A, q.B, q.C, q.D];
     }
 
-    static bool Analytic(Surface s) => s.Kind is not (SurfaceKind.Fillet or SurfaceKind.Blend);
+    static bool Analytic(Surface s) => s.Analytic;
 
     /// <summary>The point moved onto an analytic surface along its gradient (a fillet or blend face keeps the mesh point).</summary>
     static Point3D OnSurface(Surface s, Point3D p)

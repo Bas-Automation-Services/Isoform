@@ -1,5 +1,6 @@
 using System.Globalization;
 using Isoform.Document;
+using Isoform.Geometry;
 using static System.FormattableString;
 
 namespace Isoform.Modeling;
@@ -49,6 +50,7 @@ public static class DocumentRules
                 Revolve r when !(r.Angle > tolerance && r.Angle <= 360) => Invariant($"revolve angle must be in (0, 360], got {r.Angle}"),
                 Revolve r => Profiles.Problem(r.Plane, r.Profile, tolerance, revolve: true),
                 Pattern p => PatternProblem(p, doc.Features.Take(i).ToList(), tolerance),
+                Lattice l => LatticeProblem(l, doc.Features.Take(i).ToList(), tolerance),
                 _ when i == 0 && !StartsBody(feature) => "the first feature must start a new body",
                 _ => null,
             };
@@ -79,6 +81,27 @@ public static class DocumentRules
             CircularMotion c when Length(c.Axis) <= tolerance => "a circular pattern needs an axis",
             CircularMotion c when !(c.Angle > tolerance && c.Angle <= 360) => Invariant($"a circular pattern angle must be in (0, 360], got {c.Angle}"),
             MirrorMotion m when Length(m.Normal) <= tolerance => "a mirror needs a plane normal",
+            _ => null,
+        };
+    }
+
+    /// <summary>The geometry's lattice kind for the format's name (both list them in the same order), or null.</summary>
+    public static LatticeKind? LatticeKindOf(string kind) => Array.IndexOf(Lattice.Kinds, kind) is var i and >= 0 ? (LatticeKind)i : null;
+
+    static string? LatticeProblem(Lattice l, List<Feature> earlier, double tolerance)
+    {
+        if (LatticeKindOf(l.Kind) is not { } kind) return $"lattice kind must be one of {string.Join(", ", Lattice.Kinds)}, got '{l.Kind}'";
+        if (l.Cell <= tolerance) return Invariant($"lattice cell must be positive, got {l.Cell}");
+        if (l.Thickness <= tolerance) return Invariant($"lattice thickness must be positive, got {l.Thickness}");
+        if (l.Skin < 0) return Invariant($"lattice skin must not be negative, got {l.Skin}");
+        if (LatticeField.Gap(kind, l.Cell, l.Thickness) <= 0)
+            return Invariant($"a {l.Kind} lattice of cell {l.Cell} mm closes its voids at thickness {l.Thickness} mm; keep the thickness below {LatticeField.MaxThickness(kind, l.Cell):G4} mm");
+        return l.Region switch
+        {
+            { Feature: { } id } when earlier.FirstOrDefault(f => f.Id == id) is not (Block or Extrude or Revolve) =>
+                $"a lattice region is a box or an earlier block, extrude or revolve; '{id}' is not one",
+            { Feature: null, Origin: var o, Size: var s } when o?.Length != 3 || s?.Length != 3 || s.Any(x => x <= tolerance) =>
+                "a lattice region box needs an origin and a positive size",
             _ => null,
         };
     }
