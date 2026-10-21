@@ -174,11 +174,12 @@ public static partial class DualContouring
         for (var v = 0; v < cellCount; v++) cellOfLeaf[(int)(pairs[cellStart[v]] >> 32)] = v;
 
         // A cell cut into several surface pieces gets a vertex per piece: its first vertex and the piece of each edge.
+        // Only a leaf holding several surfaces can be (one analytic patch passes a finest cell once).
         var pieces = new sbyte[]?[cellCount];
         Parallel.For(0, cellCount, v =>
         {
             var node = leaves[(int)(pairs[cellStart[v]] >> 32)];
-            if (node.Size == 1 && cellStart[v + 1] - cellStart[v] >= 6) pieces[v] = Pieces(node, grid);
+            if ((prune ? node.Multi : node.Size == 1) && cellStart[v + 1] - cellStart[v] >= 6) pieces[v] = Pieces(node, grid);
         });
         var firstVertex = new int[cellCount + 1];
         for (var v = 0; v < cellCount; v++) firstVertex[v + 1] = firstVertex[v] + PieceCount(pieces[v]);
@@ -197,12 +198,12 @@ public static partial class DualContouring
                 for (var k = 0; k < n; k++)
                 {
                     var e = (int)(uint)pairs[cellStart[v] + k];
-                    if (pieces[v] is not { } t || t[LocalEdge(node, hits[e].I, hits[e].J, hits[e].K, hits[e].Axis)] == piece) local[m++] = crossings[e];
+                    if (pieces[v] is not { } t || t[LocalEdge(node, hits[e])] == piece) local[m++] = crossings[e];
                 }
                 // A vertex on one surface is projected onto that surface.
                 var near = !prune ? field : SingleOwner(local[..m]) ? node.Field! : Near(field, grid, node,
-                    regions.GetOrAdd(grid.UnitOf(node), u => field.Simplify(grid.Box(u, NearMargin))), out _);
-                positions[firstVertex[v] + piece] = CellVertex(near, grid, node, local[..m], prune ? spots : null);
+                    regions.GetOrAdd(grid.UnitOf(node), u => field.Simplify(grid.Box(u, 1))), out _);
+                positions[firstVertex[v] + piece] = CellVertex(near, field, grid, node, local[..m], prune ? spots : null, out _);
             }
         });
         Stage($"cell vertices ({cellCount:N0} cells)");
@@ -210,7 +211,7 @@ public static partial class DualContouring
         int Vertex(Node node, in Hit hit)
         {
             var v = cellOfLeaf[node.Id];
-            return firstVertex[v] + (pieces[v] is { } t ? t[LocalEdge(node, hit.I, hit.J, hit.K, hit.Axis)] : 0);
+            return firstVertex[v] + (pieces[v] is { } t ? t[LocalEdge(node, hit)] : 0);
         }
         var quads = new List<Quad>(hits.Count);
         for (var e = 0; e < hits.Count; e++)
@@ -246,27 +247,24 @@ public static partial class DualContouring
     }
 
     /// <summary>
-    /// Where several surfaces meet the vertex may sit outside the node: half a cell, or <see cref="Reach"/> cells on an
-    /// acute edge. So it gets a field exact that far around it (at least a node size), simplified from the field of
-    /// the node's region grown by <see cref="NearMargin"/> cells (which region keys hash), so a region's vertices
-    /// depend on nothing outside it. Only a coarse node at the side of its region reaches further and takes the whole
-    /// field; <paramref name="local"/> is then false.
+    /// Where several surfaces meet the vertex may sit up to half a cell outside the node, so it gets a field exact one
+    /// node size around it. That field is simplified from the field of the node's region grown by one cell (which
+    /// region keys hash), so a region's vertices depend on nothing outside it. Only a coarse node at the side of its
+    /// region reaches further and takes the whole field; <paramref name="local"/> is then false. A vertex that strays
+    /// further (<see cref="Reach"/>) reads the whole field too.
     /// </summary>
     static Field Near(Field field, Grid grid, Node node, Field region, out bool local)
     {
         var u = grid.UnitOf(node);
-        var (s, m, r) = (node.Size, Math.Max(node.Size, Reach), NearMargin);
-        local = node.I - m >= u.I - r && node.J - m >= u.J - r && node.K - m >= u.K - r
-            && node.I + s + m <= u.I + u.Size + r && node.J + s + m <= u.J + u.Size + r && node.K + s + m <= u.K + u.Size + r;
-        return (local ? region : field).Simplify(grid.Box(node, m));
+        var s = node.Size;
+        local = node.I - s >= u.I - 1 && node.J - s >= u.J - 1 && node.K - s >= u.K - 1
+            && node.I + 2 * s <= u.I + u.Size + 1 && node.J + 2 * s <= u.J + u.Size + 1 && node.K + 2 * s <= u.K + u.Size + 1;
+        return (local ? region : field).Simplify(grid.Box(node, s));
     }
 
     // Cells a vertex may stray from its cell to sit on a real edge of the solid: the tip of a wedge too thin to hold
     // grid points. Beyond that the wedge is reported (FindThin), so the two agree on four cells.
     const int Reach = 4;
-
-    // The margin of a region's vertex field: every finest node in it sees Reach cells around.
-    const int NearMargin = Reach;
 
     static void Subdivide(Node node, Field field, Context ctx, int depth)
     {
@@ -481,11 +479,11 @@ public static partial class DualContouring
         return a + dir * ((t0 + t1) / 2);
     }
 
-    /// <summary>An edge of a finest leaf from its start (i, j, k): axis·4, plus its offsets along the next two axes.</summary>
-    static int LocalEdge(Node leaf, int i, int j, int k, int axis)
+    /// <summary>The edge of a hit in a finest leaf: axis·4, plus its offsets along the next two axes.</summary>
+    static int LocalEdge(Node leaf, in Hit hit)
     {
-        Span<int> d = [i - leaf.I, j - leaf.J, k - leaf.K];
-        return 4 * axis + d[(axis + 1) % 3] + 2 * d[(axis + 2) % 3];
+        Span<int> d = [hit.I - leaf.I, hit.J - leaf.J, hit.K - leaf.K];
+        return 4 * hit.Axis + d[(hit.Axis + 1) % 3] + 2 * d[(hit.Axis + 2) % 3];
     }
 
     static int PieceCount(sbyte[]? pieces)
@@ -584,8 +582,12 @@ public static partial class DualContouring
         return true;
     }
 
-    static Point3D CellVertex(Field field, Grid grid, Node node, ReadOnlySpan<Crossing> crossings, ConcurrentBag<ThinSpot>? spots)
+    /// <param name="field">Exact on the node grown by its size.</param>
+    /// <param name="whole">The whole field, for a vertex beyond that; <paramref name="wide"/> tells it was read.</param>
+    /// <param name="spots">Where a cell one vertex cannot hold is reported.</param>
+    static Point3D CellVertex(Field field, Field whole, Grid grid, Node node, ReadOnlySpan<Crossing> crossings, ConcurrentBag<ThinSpot>? spots, out bool wide)
     {
+        wide = false;
         var mass = new Vector3D(0, 0, 0);
         foreach (var c in crossings) mass += c.Point.AsVector();
         var m = mass / crossings.Length;
@@ -618,15 +620,18 @@ public static partial class DualContouring
         var box = grid.Box(node);
         if (Inside(box, v, node.Size * grid.H / 2)) return v;
         // The tip of a wedge too thin to hold grid points lies beyond the cells it cuts; where the vertex is on every
-        // owner and on the solid it is that edge, and goes there.
-        if (Inside(box, v, Reach * grid.H) && OnEvery(field, v, owners[..ownerCount])) return v;
+        // owner and on the solid it is that edge, and goes there. That far out only the whole field is exact.
+        wide = true;
+        var far = whole.Simplify(grid.Box(node, Math.Max(node.Size, Reach)));
+        v = Project(far, edge);
+        if (Inside(box, v, Reach * grid.H) && OnEvery(far, v, owners[..ownerCount])) return v;
         // Or the edge ends nearby on a surface no crossing saw, as where a wedge's tip runs into a side face: the corner.
-        var cut = field.Sample(edge).Owner;
+        var cut = far.Sample(edge).Owner;
         if (!owners[..ownerCount].Contains(cut))
         {
             owners[ownerCount++] = cut;
-            v = Project(field, Refine(field, edge, owners[..ownerCount]));
-            if (Inside(box, v, Reach * grid.H) && OnEvery(field, v, owners[..ownerCount])) return v;
+            v = Project(far, Refine(far, edge, owners[..ownerCount]));
+            if (Inside(box, v, Reach * grid.H) && OnEvery(far, v, owners[..ownerCount])) return v;
         }
         // One vertex cannot hold this cell's surfaces. Where two of them face each other, the material or gap between
         // them is thinner than the cell (a wedge cut short by a side face), and is reported.

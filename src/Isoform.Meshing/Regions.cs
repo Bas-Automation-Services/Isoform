@@ -23,7 +23,7 @@ public sealed class MeshRegion
 
     internal DualContouring.Node Node { get; }
 
-    /// <summary>The field simplified for the region grown by a few cells: what its vertices on several surfaces use.</summary>
+    /// <summary>The field simplified for the region grown by one cell: what its vertices on several surfaces use.</summary>
     internal Field Near { get; }
 
     /// <summary>
@@ -53,7 +53,7 @@ public sealed class RegionMesh
     internal int[] ThinOwners = [];   // per thin spot: two owners
     internal double[] Thin = [];      // per thin spot: x, y, z, thickness
 
-    /// <summary>False when a vertex needed the whole field (a coarse node at the region's side): not reusable.</summary>
+    /// <summary>False when a vertex needed the whole field (a coarse node at the region's side, an acute edge): not reusable.</summary>
     public bool Cacheable { get; internal set; } = true;
 
     public int VertexCount => Cells.Length / 4;

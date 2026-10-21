@@ -75,7 +75,7 @@ public static partial class DualContouring
     static MeshRegion Region(int index, Field field, Context ctx, Node root, Node u, Dictionary<Node, (bool Empty, Field? Field)[]> children)
     {
         var g = ctx.Grid;
-        var near = field.Simplify(g.Box((u.I, u.J, u.K, u.Size), NearMargin));
+        var near = field.Simplify(g.Box((u.I, u.J, u.K, u.Size), 1));
         var neighbours = new List<Node>();
         Touching(root, u, neighbours);
         var reach = neighbours.Count == 0 ? 0 : neighbours.Max(n => n.Size);
@@ -156,11 +156,12 @@ public static partial class DualContouring
         }
 
         var crossings = new List<Crossing>(hits.Count);
-        var at = new List<Hit>(hits.Count);
+        var at = new List<int>(hits.Count); // the hit of each crossing
         var pairs = new List<long>(hits.Count * 4);
-        var owned = new List<int>(hits.Count); // crossings whose polygon this region owns
-        foreach (var hit in hits)
+        var owned = new List<(int E, int A, int B, int C, int D)>(hits.Count); // crossings whose polygon this region owns
+        for (var h = 0; h < hits.Count; h++)
         {
+            var hit = hits[h];
             var (a, b, c, d) = (hit.N0, hit.N1, hit.N2, hit.N3);
             var (ia, ib, ic, id) = (Own(a), Own(b), Own(c), Own(d));
             if (ia < 0 && ib < 0 && ic < 0 && id < 0) continue;
@@ -169,13 +170,13 @@ public static partial class DualContouring
             var point = FindRoot(f, hit.P0, hit.P1);
             var sample = f.Sample(point);
             crossings.Add(new(point, sample.Gradient.Normalized(), sample.Owner));
-            at.Add(hit);
+            at.Add(h);
             // As in Build: a leaf filling two quadrants takes the crossing once.
             if (ia >= 0) pairs.Add(((long)ia << 32) | (uint)e);
             if (ib >= 0 && b != a) pairs.Add(((long)ib << 32) | (uint)e);
             if (ic >= 0 && c != a && c != b) pairs.Add(((long)ic << 32) | (uint)e);
             if (id >= 0 && d != a && d != b && d != c) pairs.Add(((long)id << 32) | (uint)e);
-            if (ic >= 0) owned.Add(e); // the (+,+) quadrant's region owns the polygon
+            if (ic >= 0) owned.Add((e, ia, ib, ic, id)); // the (+,+) quadrant's region owns the polygon
         }
 
         pairs.Sort();
@@ -186,7 +187,8 @@ public static partial class DualContouring
         var spots = new ConcurrentBag<ThinSpot>();
         // The pieces of the finest leaves round the polygons, the neighbours' too: each from the leaf's own field, as
         // Build finds them.
-        var pieces = new Dictionary<Node, sbyte[]?>(ReferenceEqualityComparer.Instance);
+        var pieces = new sbyte[]?[leaves.Count];
+        var others = new Dictionary<Node, sbyte[]?>(ReferenceEqualityComparer.Instance);
         Span<Crossing> buffer = stackalloc Crossing[48];
         for (var start = 0; start < pairs.Count;)
         {
@@ -196,14 +198,14 @@ public static partial class DualContouring
             var n = end - start;
             Span<Crossing> local = n <= 48 ? buffer : new Crossing[n];
             var node = leaves[leaf];
-            var table = pieces[node] = node.Size == 1 && n >= 6 ? Pieces(node, grid) : null;
+            var table = pieces[leaf] = node.Multi && n >= 6 ? Pieces(node, grid) : null;
             for (var piece = 0; piece < PieceCount(table); piece++)
             {
                 var m = 0;
                 for (var k = start; k < end; k++)
                 {
                     var e = (int)(uint)pairs[k];
-                    if (table is null || table[LocalEdge(node, at[e].I, at[e].J, at[e].K, at[e].Axis)] == piece) local[m++] = crossings[e];
+                    if (table is null || table[LocalEdge(node, hits[at[e]])] == piece) local[m++] = crossings[e];
                 }
                 var near = node.Field!;
                 if (!SingleOwner(local[..m]))
@@ -211,7 +213,8 @@ public static partial class DualContouring
                     near = Near(plan.Field, grid, node, region.Near, out var inside);
                     cacheable &= inside;
                 }
-                var p = CellVertex(near, grid, node, local[..m], spots);
+                var p = CellVertex(near, plan.Field, grid, node, local[..m], spots, out var wide);
+                cacheable &= !wide;
                 cells.Add(oi + node.I);
                 cells.Add(oj + node.J);
                 cells.Add(ok + node.K);
@@ -224,37 +227,33 @@ public static partial class DualContouring
         }
 
         var polygons = new List<int>(owned.Count * RegionMesh.PolygonInts);
-        void Corner(Node n, in Hit hit)
+        void Corner(Node n, int id, in Hit hit)
         {
             polygons.Add(oi + n.I);
             polygons.Add(oj + n.J);
             polygons.Add(ok + n.K);
-            if (n.Size != 1) polygons.Add(0);
-            else
-            {
-                if (!pieces.TryGetValue(n, out var table)) pieces[n] = table = Pieces(n, grid);
-                polygons.Add(table is null ? 0 : table[LocalEdge(n, hit.I, hit.J, hit.K, hit.Axis)]);
-            }
+            var table = !n.Multi ? null : id >= 0 ? pieces[id] : others.TryGetValue(n, out var t) ? t : others[n] = Pieces(n, grid);
+            polygons.Add(table is null ? 0 : table[LocalEdge(n, hit)]);
         }
-        foreach (var e in owned)
+        foreach (var (e, ia, ib, ic, id) in owned)
         {
-            var hit = at[e];
+            var hit = hits[at[e]];
             polygons.Add(oi + hit.I);
             polygons.Add(oj + hit.J);
             polygons.Add(ok + hit.K);
             polygons.Add(hit.Axis);
             polygons.Add(hit.Smallest.Size);
-            Corner(hit.N0, hit);
-            Corner(hit.N1, hit);
-            Corner(hit.N2, hit);
-            Corner(hit.N3, hit);
+            Corner(hit.N0, ia, hit);
+            Corner(hit.N1, ib, hit);
+            Corner(hit.N2, ic, hit);
+            Corner(hit.N3, id, hit);
             polygons.Add(region.Local[crossings[e].Owner]);
             polygons.Add(hit.StartInside ? 1 : 0);
         }
 
         // Vertices in leaf order, which is Build's (depth-first is Morton order of the leaves' corners), then by piece:
         // the region's leaves are one depth-first block, so the assembly only concatenates the regions.
-        var keys = new UInt128[cells.Count / 4];
+        var keys = new ulong[cells.Count / 4];
         var order = new int[keys.Length];
         for (var k = 0; k < keys.Length; k++) (keys[k], order[k]) = (VertexKey(cells[4 * k] - oi, cells[4 * k + 1] - oj, cells[4 * k + 2] - ok, cells[4 * k + 3]), k);
         Array.Sort(keys, order);
@@ -309,12 +308,12 @@ public static partial class DualContouring
     {
         var grid = plan.Context.Grid;
         var (oi, oj, ok) = grid.Offset;
-        UInt128 Cell(int[] a, int at) => VertexKey(a[at] - oi, a[at + 1] - oj, a[at + 2] - ok, a[at + 3]);
+        ulong Cell(int[] a, int at) => VertexKey(a[at] - oi, a[at + 1] - oj, a[at + 2] - ok, a[at + 3]);
 
         // Vertices in leaf order, as Build numbers them: the regions are in depth-first order and each has its
         // vertices in Morton order, the depth-first order of the leaves' corners. Sorted only if a cached result came
         // from a plan with another root, which could break that.
-        var keys = new UInt128[results.Sum(r => r.VertexCount)];
+        var keys = new ulong[results.Sum(r => r.VertexCount)];
         var positions = new Point3D[keys.Length];
         var v = 0;
         foreach (var r in results)
@@ -327,7 +326,7 @@ public static partial class DualContouring
             Array.Sort(keys, byKey);
             positions = byKey.Select(k => positions[k]).ToArray();
         }
-        var index = new Dictionary<UInt128, int>(keys.Length);
+        var index = new Dictionary<ulong, int>(keys.Length);
         for (var k = 0; k < keys.Length; k++) index[keys[k]] = k;
 
         // Polygons in the traversal's order, owners renumbered from the regions' keys to this plan's ids. Each
@@ -362,10 +361,10 @@ public static partial class DualContouring
         return new Mesh(positions, quads, Sorted(spots));
     }
 
-    /// <summary>A vertex by its leaf's corner in Morton order, then its piece of the leaf.</summary>
-    static UInt128 VertexKey(int i, int j, int k, int piece) => (UInt128)Morton(i, j, k) << 8 | (uint)piece;
+    /// <summary>A vertex by its leaf's corner in Morton order (2²⁰ cells a side), then its piece (a cube holds at most four).</summary>
+    static ulong VertexKey(int i, int j, int k, int piece) => Morton(i, j, k) << 2 | (uint)piece;
 
-    static bool Ascending(UInt128[] keys)
+    static bool Ascending(ulong[] keys)
     {
         for (var k = 1; k < keys.Length; k++)
             if (keys[k] < keys[k - 1]) return false;
