@@ -70,8 +70,22 @@ public class KernelSocketTests(WebApplicationFactory<Program> factory) : IClassF
         }
     }
 
-    Task<WebSocket> Connect() =>
-        factory.Server.CreateWebSocketClient().ConnectAsync(new Uri(factory.Server.BaseAddress, "kernel"), CancellationToken.None);
+    [Fact]
+    public async Task Only_the_servers_own_page_may_open_a_kernel()
+    {
+        var own = await Connect($"http://{factory.Server.BaseAddress.Authority}");
+        own.State.Should().Be(WebSocketState.Open);
+
+        var other = () => Connect("https://some-other-site.example");
+        await other.Should().ThrowAsync<Exception>("a page from another site must not reach the kernel");
+    }
+
+    Task<WebSocket> Connect(string? origin = null)
+    {
+        var client = factory.Server.CreateWebSocketClient();
+        if (origin is not null) client.ConfigureRequest = r => r.Headers.Origin = origin;
+        return client.ConnectAsync(new Uri(factory.Server.BaseAddress, "kernel"), CancellationToken.None);
+    }
 
     static async Task<(byte[] Bytes, WebSocketMessageType Type)> Call(WebSocket socket, object request)
     {

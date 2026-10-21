@@ -73,8 +73,9 @@ dotnet run -c Release --project src/Isoform.Server -- --port 5260 --root <publis
 
 It serves the published playground (`out/playground/wwwroot`, else the page's sources) on localhost only, and runs the
 kernel natively behind a WebSocket at `/kernel`, a session per connection, speaking the same protocol as the page's
-workers. The page uses it when the server served it, or when `?kernel=ws://localhost:5250/kernel` points at one; the
-status line says `native` or `wasm`. Without a server, or with `?kernel=wasm`, the page runs the kernel in WebAssembly
+workers. The page uses it when the server served it, or when `?kernel=ws://localhost:5250/kernel` points at one (a page
+from another origin needs `--allow-origin <origin>`: other sites cannot reach the kernel); the status line says `native`
+or `wasm`. Without a server, or with `?kernel=wasm`, the page runs the kernel in WebAssembly
 as before, so a shared link works from any static host.
 
 ## About
