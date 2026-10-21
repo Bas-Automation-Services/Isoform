@@ -42,3 +42,9 @@ public sealed record BrepSolid(string Name, BrepShell Outer, IReadOnlyList<BrepS
     /// <summary>Every face: the outer shell's, then the voids'.</summary>
     public IReadOnlyList<BrepFace> Faces => [.. Outer.Faces, .. Voids.SelectMany(v => v.Faces)];
 }
+
+/// <summary>Faces the exact B-rep cannot have: no closed-form surface, or not one. <see cref="Faces"/> by their first source name.</summary>
+public sealed class UnsupportedFacesException(string message, IReadOnlyList<string> faces) : NotSupportedException(message)
+{
+    public IReadOnlyList<string> Faces { get; } = faces;
+}
