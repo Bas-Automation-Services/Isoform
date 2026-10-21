@@ -23,8 +23,26 @@ public abstract record Feature(string Id)
 /// <remarks>A <paramref name="Blend"/> above 0 joins or cuts smoothly: the faces merge through an <c>id/blend</c> face about that wide.</remarks>
 public sealed record Block(string Id, BooleanOp Op, double[] Origin, double[] Size, double Blend = 0) : Feature(Id);
 
-/// <summary>Through-all hole along Z at <paramref name="Center"/> (x, y).</summary>
-public sealed record Hole(string Id, double[] Center, double Diameter) : Feature(Id);
+/// <summary>
+/// A hole. Without <see cref="On"/> or <see cref="Sketch"/> it runs along Z through all at <paramref name="Center"/>
+/// (x, y), face <c>id/wall</c>. With <see cref="On"/> it is drilled into that flat face at <paramref name="Center"/> in
+/// the face's sketch coordinates; with <see cref="Sketch"/> at each of that sketch's <see cref="Points"/>, faces
+/// <c>id/&lt;point&gt;:wall</c>. A <see cref="Depth"/> makes it blind, with a floor (<c>id/floor</c>,
+/// <c>id/&lt;point&gt;:floor</c>); without one it goes through all.
+/// </summary>
+public sealed record Hole(string Id, double[] Center, double Diameter) : Feature(Id)
+{
+    /// <summary>A flat face by name, to drill into along its inward normal.</summary>
+    public string? On { get; init; }
+
+    /// <summary>An earlier sketch whose <see cref="Points"/> place the holes, on its plane.</summary>
+    public string? Sketch { get; init; }
+
+    public string[]? Points { get; init; }
+
+    /// <summary>How deep into the part (mm), or null for through all.</summary>
+    public double? Depth { get; init; }
+}
 
 /// <summary>Removes all material on the side <paramref name="Normal"/> points to, starting at <paramref name="Point"/>.</summary>
 public sealed record PlaneCut(string Id, double[] Point, double[] Normal) : Feature(Id);

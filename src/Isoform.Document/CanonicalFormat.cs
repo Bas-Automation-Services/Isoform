@@ -139,8 +139,16 @@ public static partial class CanonicalFormat
                 break;
             case Hole h:
                 w.WriteString("type", "hole");
-                Numbers(w, "center", h.Center);
+                // A plain hole keeps the bytes it always had.
+                if (h.On is { } on) w.WriteString("on", on);
+                if (h.Sketch is { } sketch)
+                {
+                    w.WriteString("sketch", sketch);
+                    Strings(w, "points", h.Points ?? []);
+                }
+                else Numbers(w, "center", h.Center);
                 Number(w, "diameter", h.Diameter);
+                if (h.Depth is { } depth) Number(w, "depth", depth);
                 break;
             case PlaneCut c:
                 w.WriteString("type", "plane-cut");
@@ -250,7 +258,13 @@ public static partial class CanonicalFormat
         {
             "block" => new Block(id, Enum.Parse<BooleanOp>((string)n["op"]!, ignoreCase: true), Arr(n["origin"], 3), Arr(n["size"], 3), (double?)n["blend"] ?? 0),
             "offset" => new Offset(id, (double)n["distance"]!),
-            "hole" => new Hole(id, Arr(n["center"], 2), (double)n["diameter"]!),
+            "hole" => new Hole(id, n["sketch"] is null ? Arr(n["center"], 2) : [], (double)n["diameter"]!)
+            {
+                On = (string?)n["on"],
+                Sketch = (string?)n["sketch"],
+                Points = n["points"]?.AsArray().Select(p => (string)p!).ToArray(),
+                Depth = (double?)n["depth"],
+            },
             "plane-cut" => new PlaneCut(id, Arr(n["point"], 3), Arr(n["normal"], 3)),
             "shell" => new Shell(id, (double)n["thickness"]!),
             "fillet" => new Fillet(id, Edge(n), (double)n["radius"]!, (string?)n["loop"]),

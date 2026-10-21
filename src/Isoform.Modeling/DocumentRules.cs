@@ -36,6 +36,11 @@ public static class DocumentRules
                 CombineBodies c when bodies.Count < 2 => "combine needs a second body to use as the tool",
                 Block b when b.Size.Any(s => s <= tolerance) => $"block size must be positive, got [{string.Join(", ", b.Size.Select(s => s.ToString(CultureInfo.InvariantCulture)))}]",
                 Hole h when h.Diameter <= tolerance => Invariant($"hole diameter must be positive, got {h.Diameter}"),
+                Hole h when h.Depth <= tolerance => Invariant($"hole depth must be positive, got {h.Depth}"),
+                Hole { On: not null, Sketch: not null } => "a hole goes on a face or at sketch points, not both",
+                Hole { On: { } face } when !doc.Features.Take(i).Any(f => f.Id == face.Split('/')[0]) => $"a hole on a face needs that face made earlier; '{face.Split('/')[0]}' is not an earlier feature",
+                Hole { Sketch: { } s } h when !AtSketchPoints(h, doc.Features.Take(i).FirstOrDefault(f => f.Id == s) as Sketch) =>
+                    "a hole at sketch points names an earlier sketch and one or more of its points",
                 PlaneCut c when Math.Sqrt(c.Normal.Sum(x => x * x)) <= tolerance => "plane-cut normal must not be zero",
                 Shell sh when sh.Thickness <= tolerance => Invariant($"shell thickness must be positive, got {sh.Thickness}"),
                 Fillet f when f.Radius <= tolerance => Invariant($"fillet radius must be positive, got {f.Radius}"),
@@ -65,6 +70,8 @@ public static class DocumentRules
         }
         return null;
     }
+
+    static bool AtSketchPoints(Hole h, Sketch? sketch) => sketch is not null && h.Points is { Length: > 0 } points && points.All(sketch.Points.ContainsKey);
 
     /// <summary>An extrude or revolve of a sketch: an earlier sketch, and region names that are not empty.</summary>
     static string? SweepProblem(string sketch, IReadOnlyList<string[]>? regions, List<Feature> earlier) =>

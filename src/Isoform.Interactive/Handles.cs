@@ -99,7 +99,7 @@ public static partial class Handles
                 switch (feature)
                 {
                     case Block b: Block(b); break;
-                    case Hole h: Hole(h); break;
+                    case Hole { On: null, Sketch: null } h: Hole(h); break;
                     // A sketch's extrude or revolve gets its handles from the sketch (later); its own are for inline profiles.
                     case Extrude { Sketch: null } e: Extrude(e); break;
                     case Revolve { Sketch: null } r: Revolve(r); break;

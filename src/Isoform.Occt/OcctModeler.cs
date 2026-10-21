@@ -41,7 +41,8 @@ public sealed class OcctModeler(ModelingSettings settings) : IModeler
                         var block = BlockShape(b);
                         (part, tags) = Combine(part, tags, block, TagBlock(block, b.Id), b.Op == BooleanOp.Join ? OcctBoolean.Fuse : OcctBoolean.Cut);
                         break;
-                    case Hole h:
+                    // Plain holes along Z only; a hole on a face, at sketch points or blind is not in the baseline.
+                    case Hole { On: null, Sketch: null, Depth: null } h:
                         var cyl = OcctShape.Cylinder(h.Center[0], h.Center[1], bounds.Min[2] - 1, 0, 0, 1, h.Diameter / 2, bounds.Max[2] - bounds.Min[2] + 2);
                         var cylTags = Enumerable.Range(0, cyl.FaceCount)
                             .Select(f => Tag(cyl.Face(f).Kind == OcctFaceKind.Cylinder ? $"{h.Id}/wall" : $"{h.Id}/cap")).ToList();

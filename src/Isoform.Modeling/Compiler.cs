@@ -93,7 +93,7 @@ public sealed class Compiler(ModelingSettings settings)
         doc = Parametric.Resolve(doc);
 
         // Sketches, solved where they stand in the history: a face sketch takes the face as the part has it there.
-        var sketches = new Dictionary<string, (SweptShape? Shape, string? Problem)>();
+        var sketches = new Dictionary<string, (SweptShape? Shape, SketchSolution? Solution, string? Problem)>();
         void Prepare(Sketch s)
         {
             var solution = SketchSolver.Solve(s);
@@ -101,15 +101,38 @@ public sealed class Compiler(ModelingSettings settings)
                 diagnostics.Add(new Diagnostic(p.Code, s.Id, $"sketch {s.Id}: {p.Message}"));
             if (!solution.Solved)
             {
-                sketches[s.Id] = (null, "does not solve");
+                sketches[s.Id] = (null, null, "does not solve");
                 return;
             }
             var (regions, problem) = SketchRegions.Of(s, solution);
             if (problem is not null) diagnostics.Add(new Diagnostic(SketchSolution.Invalid, s.Id, $"sketch {s.Id}: {problem}"));
             var plane = s.On.Plane ?? FacePlane(s.On.Face!, surfaces, tree);
             if (plane is null)
+            {
                 diagnostics.Add(new Diagnostic(Diagnostic.SketchPlaneLost, s.Id, $"sketch {s.Id} lies on {s.On.Face}, which is not a flat face of the part here"));
-            sketches[s.Id] = plane is null || problem is not null ? (null, plane is null ? "has no plane" : "has no regions") : (new SweptShape(plane, regions), null);
+                sketches[s.Id] = (null, null, "has no plane");
+                return;
+            }
+            // Points serve holes even where the loops do not make regions.
+            sketches[s.Id] = (new SweptShape(plane, problem is null ? regions : []), solution, problem is null ? null : "has no regions");
+        }
+
+        // Where a hole goes: one centre on a face, or one per sketch point, with the drilling direction (into the part)
+        // and the name of each wall; null with a diagnostic when its face or sketch is not there.
+        List<(Point3D At, Vector3D Into, string Name)>? Spots(Hole h)
+        {
+            if (h.On is null && h.Sketch is null) return [(new Point3D(h.Center[0], h.Center[1], 0), new Vector3D(0, 0, -1), "")];
+            var plane = h.On is { } face ? FacePlane(face, surfaces, tree) : sketches[h.Sketch!].Shape?.Plane;
+            if (plane is null)
+            {
+                diagnostics.Add(new Diagnostic(h.On is null ? SketchSolution.Invalid : Diagnostic.SketchPlaneLost, h.Id,
+                    h.On is { } f ? $"{h.Id} is on {f}, which is not a flat face of the part here" : $"{h.Id} uses sketch {h.Sketch}, which {sketches[h.Sketch!].Problem}"));
+                return null;
+            }
+            var frame = Profiles.FrameOf(plane);
+            if (h.On is not null) return [(frame.ToWorld(new Point3D(h.Center[0], h.Center[1], 0)), -frame.Z, "")];
+            var points = sketches[h.Sketch!].Solution!.Points;
+            return [.. h.Points!.Select(p => (frame.ToWorld(new Point3D(points[p].X, points[p].Y, 0)), -frame.Z, p + ":"))];
         }
 
         // The plane and regions an extrude or revolve sweeps: its own profile, or its sketch's regions.
@@ -122,8 +145,8 @@ public sealed class Compiler(ModelingSettings settings)
                 _ => throw new ArgumentException(f.Id),
             };
             if (sketch is null) return new SweptShape(plane!, [new SketchRegion(profile!, [])]);
-            var (shape, why) = sketches[sketch];
-            var (regions, problem) = shape is null ? ([], $"its sketch {sketch} {why}") : SketchRegions.Select(shape.Regions, wanted);
+            var (shape, _, why) = sketches[sketch];
+            var (regions, problem) = shape is null || why is not null ? ([], $"its sketch {sketch} {why}") : SketchRegions.Select(shape.Regions, wanted);
             if (problem is null) return shape! with { Regions = regions };
             if (diagnostics.All(d => d.FeatureId != reportAs || d.Code != SketchSolution.Invalid))
                 diagnostics.Add(new Diagnostic(SketchSolution.Invalid, reportAs, $"{reportAs} cannot sweep sketch {sketch}: {problem}"));
@@ -159,9 +182,21 @@ public sealed class Compiler(ModelingSettings settings)
                     break;
 
                 case Hole h:
-                    var wall = Named(new Surface(0, $"{h.Id}/wall", SurfaceKind.Cylinder, m.ToWorld(new Point3D(h.Center[0], h.Center[1], 0)), m.ToWorld(new Vector3D(0, 0, 1)), h.Diameter / 2));
-                    diagnostics.AddRange(TangentContacts(reportAs, wall, tree!, surfaces, min, max));
-                    tree = new MaxField([tree!, new LeafField(wall, complement: true)]);
+                    if (Spots(h) is not { } spots) break;
+                    foreach (var (at, into, spot) in spots)
+                    {
+                        // The axis points out of the face, +Z for a plain hole as it always has (exact export reads it).
+                        var wall = Named(new Surface(0, $"{h.Id}/{spot}wall", SurfaceKind.Cylinder, m.ToWorld(at), m.ToWorld(-into), h.Diameter / 2));
+                        diagnostics.AddRange(TangentContacts(reportAs, wall, tree!, surfaces, min, max));
+                        if (h.Depth is not { } depth)
+                        {
+                            tree = new MaxField([tree!, new LeafField(wall, complement: true)]);
+                            continue;
+                        }
+                        // Blind: the drill is the cylinder down to a floor depth below the face, open above it.
+                        var floor = Named(new Surface(0, $"{h.Id}/{spot}floor", SurfaceKind.Plane, m.ToWorld(at + into * depth), m.ToWorld(into)));
+                        tree = new MaxField([tree!, new NegateField(new MaxField([new LeafField(wall), new LeafField(floor)]))]);
+                    }
                     break;
 
                 case PlaneCut c:

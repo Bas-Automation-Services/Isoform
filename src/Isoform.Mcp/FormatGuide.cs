@@ -44,6 +44,9 @@ public static class FormatGuide
             "Faces <id>/x-, x+, y-, y+, z-, z+. Optional blend (mm, join/cut only) merges it smoothly through a face <id>/blend.",
             new Block("boss", BooleanOp.Join, [60, 15, 10], [20, 20, 12]), ["boss/x-", "boss/x+", "boss/y-", "boss/y+", "boss/z+"], []),
         new("Through-all hole along Z at center [x,y]. Face <id>/wall.", Bore, ["hole/wall"], []),
+        new("Hole into a flat face (on) at center in the face's sketch coordinates, or at points of a sketch (sketch, points; " +
+            "faces <id>/<point>:wall). depth makes it blind with a floor <id>/floor; without it, through all.",
+            new Hole("drill", [25, 5], 4) { On = "plate/x+", Depth = 12 }, ["drill/wall", "drill/floor"], []),
         new("Removes all material on the side the normal points to, from point. Face <id>/face.",
             new PlaneCut("cut", [90, 0, 0], [1, 0, 1]), ["cut/face"], []),
         new("Constant-radius fillet on the edge between two source faces. Face <id>/face.",
@@ -193,7 +196,7 @@ public static class FormatGuide
         s.AppendLine("Every face is named by the feature that made it: <feature id>/<face>. Names survive parameter edits, so refer to");
         s.AppendLine("faces by name (fillet edges, loops, mates), never by index. A face that two features share (flush faces, a merge)");
         s.AppendLine("lists both names; a source face cut in pieces appears once per piece.");
-        s.AppendLine("- block <id>/x- x+ y- y+ z- z+; hole <id>/wall; plane-cut and single-edge fillet/chamfer <id>/face");
+        s.AppendLine("- block <id>/x- x+ y- y+ z- z+; hole <id>/wall, <id>/floor, <id>/<point>:wall; plane-cut and single-edge fillet/chamfer <id>/face");
         s.AppendLine("- extrude/revolve <id>/<profile edge id> or <id>/<sketch entity id>, <id>/start, <id>/end; blend <id>/blend");
         s.AppendLine("- loop fillet/chamfer <id>/<face across the edge>, e.g. round/rib/a; shell <id>/inner:<outer face>");
         s.AppendLine("- pattern copy k: <id>/<k>:<source face>, e.g. row/2:hole/wall; offset corners <id>/corner:<face>+<face>");
