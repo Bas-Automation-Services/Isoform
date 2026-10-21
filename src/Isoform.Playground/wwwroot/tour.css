@@ -1,0 +1,52 @@
+/* Guided tour and share link (T1): js/panels/tour.js, js/panels/share.js. */
+:root { --good: #1a7f37; }
+@media (prefers-color-scheme: dark) {
+  :root { --good: #56d364; }
+}
+
+.header-actions { margin-left: auto; display: flex; gap: 6px; }
+.header-actions button, .tour button {
+  font: inherit;
+  color: var(--accent);
+  background: none;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 1px 9px;
+  cursor: pointer;
+}
+.header-actions button:disabled, .tour button:disabled { color: var(--muted); cursor: default; }
+
+.share-status { font-size: 12px; color: var(--muted); }
+.share-status:empty { display: none; }
+.share-status.good { color: var(--good); }
+.share-status.bad { color: var(--error); }
+
+/* The tour card, over the bottom of the 3D view. */
+.tour {
+  position: absolute;
+  left: 50%;
+  bottom: 34px;
+  transform: translateX(-50%);
+  width: min(580px, calc(100% - 32px));
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 14px 12px;
+  background: var(--panel);
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.18);
+}
+.tour[hidden] { display: none; }
+.tour-head { display: flex; align-items: baseline; gap: 10px; }
+.tour-head b { flex: 1; }
+.tour-head button { border: none; color: var(--muted); font-size: 16px; padding: 0 4px; }
+.tour-caption { margin: 0; }
+.tour-facts, .tour-pins { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; font-size: 12px; }
+.tour-facts:empty, .tour-pins:empty { display: none; }
+.tour-facts code, .tour-pins code { font: 12px ui-monospace, Consolas, monospace; }
+.tour-facts code { color: var(--accent); }
+.tour .good { color: var(--good); }
+.tour .bad { color: var(--error); }
+.tour-pin.expected code { font-weight: 600; }
+.tour-controls { display: flex; gap: 6px; justify-content: flex-end; }

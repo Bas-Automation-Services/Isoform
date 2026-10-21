@@ -1,6 +1,7 @@
 // Opens every example in headless Edge or Chrome, waits for the part to regenerate, checks the stats line and
 // saves a screenshot to tests/playground/out/screenshots; then picks a face, resolves a thin spot from the
-// diagnostics, pins a face, commits, undoes and redoes an edit, and drags a handle. Exits non-zero if anything fails.
+// diagnostics, pins a face, commits, undoes and redoes an edit, and drags a handle; runs the guided tour and opens a
+// share link. Exits non-zero if anything fails.
 // node tests/playground/e2e.mjs [published wwwroot]      (env: ISOFORM_BROWSER, ISOFORM_TIMEOUT in ms)
 import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -62,6 +63,7 @@ async function dragHandle(page) {
 const site = await serve(root);
 const browser = await launch();
 let failures = 0, picking = false, diagnosing = false, pinning = false, committing = false, handles = 'skipped', inspector = false;
+let touring = false, sharing = false;
 try {
   const page = await browser.newPage();
   for (const [i, name] of names.entries()) {
@@ -120,13 +122,15 @@ try {
   committing = await commits(page);
   handles = await dragHandle(page);
   inspector = await inspecting(page);
+  [touring, sharing] = [await tour(page), await share(page)]; // T1
 } finally {
   await browser.close();
   await site.close();
 }
 console.log(`\n${names.length - failures}/${names.length} examples passed, picking ${picking ? 'passed' : 'FAILED'}, `
-  + `diagnostics ${diagnosing ? 'passed' : 'FAILED'}, pins ${pinning ? 'passed' : 'FAILED'}, history ${committing ? 'passed' : 'FAILED'}, handles ${handles}, inspector ${inspector ? 'passed' : 'FAILED'}; screenshots in ${relative(repo, shots)}`);
-process.exitCode = failures || !picking || !diagnosing || !pinning || !committing || handles === 'FAILED' || !inspector ? 1 : 0;
+  + `diagnostics ${diagnosing ? 'passed' : 'FAILED'}, pins ${pinning ? 'passed' : 'FAILED'}, history ${committing ? 'passed' : 'FAILED'}, handles ${handles}, inspector ${inspector ? 'passed' : 'FAILED'}, `
+  + `tour ${touring ? 'passed' : 'FAILED'}, share ${sharing ? 'passed' : 'FAILED'}; screenshots in ${relative(repo, shots)}`);
+process.exitCode = failures || !picking || !diagnosing || !pinning || !committing || handles === 'FAILED' || !inspector || !touring || !sharing ? 1 : 0;
 
 /**
  * Diagnostics in place: example 0 with its hole moved to leave a 0.6 mm wall gives a below-resolution thin spot at
@@ -297,6 +301,97 @@ async function inspecting(page) {
   }
   problems.push(...page.errors);
   console.log(`${problems.length ? 'FAIL' : 'pass'}  inspector: hole.diameter set to ${seen.join(', then scrubbed to ')}; fillet edge re-picked; a face selects its feature`);
+  for (const p of problems) console.log(`        ${p}`);
+  return !problems.length;
+}
+
+/**
+ * Guided tour (T1): start it on example 0, step to the end with Next (and once Back), and check that every step's
+ * expected diagnostic appeared, the pins changed status, the edits were committed as the tour's, and the last undo
+ * gave the hash it started from. Escape exits.
+ */
+async function tour(page) {
+  const problems = [];
+  const { script, pinned } = await import(new URL('../../src/Isoform.Playground/wwwroot/js/panels/tour.js', import.meta.url));
+  let log = [];
+  // After the camera's flight to what the step is about (650 ms).
+  const still = async i => {
+    await page.evaluate('new Promise(done => setTimeout(done, 800))');
+    await page.frames();
+    await page.screenshot(join(shots, `tour-${i}.png`));
+  };
+  try {
+    await page.open(`${site.url}?example=0`);
+    await page.waitFor(settled, { timeout });
+    await page.evaluate('window.isoform.tour.start()');
+    const faces = (await page.evaluate('window.isoform.pins()')).map(p => p.ref.face);
+    if (pinned.some(f => !faces.includes(f))) problems.push(`pinned ${JSON.stringify(faces)}`);
+    for (let i = 1; i < script.length; i++) {
+      await page.evaluate('window.isoform.tour.next()');
+      if (i === 2) {
+        // Back returns to the step before, its hash; Next runs the step again.
+        await page.evaluate('window.isoform.tour.back()');
+        const { index, log: [, widened] } = await page.evaluate('window.isoform.tour.state()');
+        if (index !== 1 || await page.evaluate('window.isoform.hash()') !== widened.hash) problems.push(`back went to step ${index}`);
+        await page.evaluate('window.isoform.tour.next()');
+      }
+      if (i === 2 || i === 5) await still(i);
+    }
+    ({ log } = await page.evaluate('window.isoform.tour.state()'));
+    for (const [i, step] of script.entries()) {
+      const entry = log[i];
+      if (!entry) { problems.push(`step ${i} did not run`); continue; }
+      if (step.expect && !entry.codes.includes(step.expect)) problems.push(`step ${i} (${step.title}): no ${step.expect} in ${JSON.stringify(entry.codes)}`);
+      if (step.gone && entry.codes.includes(step.gone)) problems.push(`step ${i} (${step.title}): ${step.gone} still reported`);
+      if (!entry.ok) problems.push(`step ${i} (${step.title}): ${entry.problems.join('; ')}`);
+    }
+    if (log.at(-1)?.hash !== log[0]?.hash) problems.push(`the tour ended at ${log.at(-1)?.hash}, not the original ${log[0]?.hash}`);
+    if (await page.evaluate('window.isoform.hash()') !== log[0]?.hash) problems.push('the page does not show the original hash');
+    const { entries } = await page.evaluate('window.isoform.history()');
+    if (entries.filter(e => e.origin === 'tour').length < 4) problems.push(`history ${JSON.stringify(entries.map(e => e.origin))}`);
+    await still(script.length - 1);
+    await page.evaluate(`dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))`);
+    if (await page.evaluate('window.isoform.tour.state().active || !document.querySelector(".tour").hidden')) problems.push('Escape did not exit the tour');
+  } catch (e) {
+    problems.push(e.message);
+  }
+  problems.push(...page.errors);
+  const codes = script.flatMap((s, i) => s.expect && log[i]?.codes.includes(s.expect) ? [s.expect] : []);
+  console.log(`${problems.length ? 'FAIL' : 'pass'}  tour: ${log.length} steps (${codes.join(', ')}), back to the original hash ${log[0]?.hash.slice(0, 8)}`);
+  for (const p of problems) console.log(`        ${p}`);
+  return !problems.length;
+}
+
+/** Share link (T1): an edited example 0 shared as #doc=, opened in the page again, regenerates to the same hash. */
+async function share(page) {
+  const problems = [];
+  let link = '';
+  try {
+    await page.open(`${site.url}?example=0`);
+    await page.waitFor(settled, { timeout });
+    const { hash } = await page.evaluate(`window.isoform.applyEdits([{ set: 'hole.diameter', value: 12 }], 'e2e', 'test')`);
+    link = await page.evaluate('window.isoform.shareLink()');
+    const fragment = new URL(link).hash;
+    if (!/^#doc=[A-Za-z0-9_-]+&hash=[0-9a-f]{16}$/.test(fragment)) problems.push(`link fragment ${fragment.slice(0, 80)}`);
+    // The Share button puts the same link in the address bar (headless, the clipboard may refuse).
+    await page.evaluate(`document.getElementById('share').click()`);
+    await page.waitFor(`/hash/.test(window.isoform.shareStatus()) && location.href === ${JSON.stringify(link)}`, { timeout: 5000 })
+      .catch(() => problems.push('the Share button did not show the link'));
+    // From another page: opening the address bar's own URL would only scroll to its fragment.
+    await page.open('about:blank');
+    await page.open(link);
+    await page.waitFor(settled, { timeout });
+    const opened = await page.evaluate('window.isoform.hash()');
+    if (opened !== hash) problems.push(`the link opened ${opened}, not ${hash}`);
+    const status = await page.evaluate('window.isoform.shareStatus()');
+    if (!/identical/.test(status)) problems.push(`share status: ${status}`);
+    if (await page.evaluate('location.hash')) problems.push('the fragment stays in the address bar');
+    if (await page.evaluate(`document.getElementById('examples').selectedOptions[0].textContent`) !== '(shared link)') problems.push('the example picker does not say shared');
+  } catch (e) {
+    problems.push(e.message);
+  }
+  problems.push(...page.errors);
+  console.log(`${problems.length ? 'FAIL' : 'pass'}  share: a ${link.length}-character #doc= link opens the same document, same hash`);
   for (const p of problems) console.log(`        ${p}`);
   return !problems.length;
 }
