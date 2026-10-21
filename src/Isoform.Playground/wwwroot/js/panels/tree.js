@@ -2,6 +2,7 @@
 // assembly), each with its type and a badge for the diagnostics that name it. Clicking selects the item (its key in
 // the store's `feature`) and tints its faces; hovering tints them too. Picking a face selects the item that made it.
 import { describe, diagnosticsOf, documentOf, facesOf, itemsOf, keyOfFace, treeOf } from '../lib/features.js';
+import { shown } from '../store.js';
 
 const ICONS = {
   block: '▭', hole: '◯', 'plane-cut': '◪', fillet: '◜', chamfer: '◸', shell: '▢', extrude: '⇡', revolve: '↻',
@@ -14,7 +15,8 @@ export function createTree(store, viewer, list) {
 
   function tint() {
     const keys = new Set([store.state.feature, hovered]);
-    viewer.tint([...keys].flatMap(k => facesOf(store.state.result, item(k))));
+    // Faces of the mesh on screen: a drag's preview while there is one (J2).
+    viewer.tint([...keys].flatMap(k => facesOf(shown(store.state), item(k))));
   }
 
   function mark() {
@@ -68,7 +70,7 @@ export function createTree(store, viewer, list) {
       const key = s.selection.length ? keyOfFace(doc, s.selection[0]) : null;
       if (key !== s.feature) queueMicrotask(() => store.set({ feature: item(key) ? key : null }));
     }
-    if (s.result !== before.result || s.feature !== before.feature) {
+    if (shown(s) !== shown(before) || s.feature !== before.feature) {
       mark();
       tint();
     }

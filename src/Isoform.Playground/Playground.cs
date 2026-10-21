@@ -14,7 +14,10 @@ public static partial class Playground
 {
     static readonly Session Session = new();
 
-    static ModelingSettings Settings(double cellSize, double chordTolerance) => new() { CellSize = cellSize, ChordTolerance = chordTolerance };
+    // snapGrid puts the lattice on a fixed world grid: a drag's previews keep one lattice (no shimmer) and the regions
+    // an edit leaves alone stay in the cache, even when the part's bounding box moves.
+    static ModelingSettings Settings(double cellSize, double chordTolerance, bool snapGrid) =>
+        new() { CellSize = cellSize, ChordTolerance = chordTolerance, SnapGrid = snapGrid };
 
     /// <summary>The example documents, name → canonical text.</summary>
     [JSExport]

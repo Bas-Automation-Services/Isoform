@@ -11,7 +11,7 @@ Strings in and out; meshes as MemoryViews (copy them before the next call). In t
 
 | Export | Returns |
 |---|---|
-| `Regenerate(doc, editsJson, cell, chord, slot)` | result v2 (below); `editsJson` is an edit, an array of edits, or `[]` |
+| `Regenerate(doc, editsJson, cell, chord, slot, snap)` | result v2 (below); `editsJson` is an edit, an array of edits, or `[]`; `snap` puts the lattice on the world grid (`ModelingSettings.SnapGrid`): a drag's previews |
 | `Positions()`, `Faces()` | last regeneration: 9 doubles and one face index per triangle |
 | `Lines()`, `LineEdges()` | sharp segments: 6 doubles each, and per segment its index in `lineFaces` |
 | `SmoothLines()`, `SmoothLineEdges()` | the same for tangent segments |
@@ -20,7 +20,7 @@ Strings in and out; meshes as MemoryViews (copy them before the next call). In t
 | `Handles(slot)` | `{slot, hash, handles}`: the drag handles of the slot's last good regeneration (below) |
 | `Examples()` | `{name: canonical text}` |
 | `Resolve(refsJson, slot)` | pinned references against the slot's last good result (below) |
-| `Share(doc, editsJson, cell, chord, index, count)`, `Import(bytes)`, `Sweep()` | the worker pool's region exchange |
+| `Share(doc, editsJson, cell, chord, snap, index, count)`, `Import(bytes)`, `Sweep()` | the worker pool's region exchange |
 
 Slots: `"main"` for what is committed, `"preview"` for a drag in progress (any name works). A failed regeneration
 leaves its slot's last good result in place but empties the buffers. The region cache keeps what the last regeneration

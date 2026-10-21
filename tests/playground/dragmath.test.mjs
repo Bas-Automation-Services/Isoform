@@ -1,10 +1,11 @@
 // Handle drag math (wwwroot/js/lib/dragmath.js): pointer ray → t → snapped, clamped edits. node --test
-// The handles are a fixture in the C# contract (docs/playground-plan.md), so this runs without the kernel.
+// The handles are a fixture in the kernel's shape (src/Isoform.Interactive/README.md; kernel.test.mjs checks the ones
+// example 0 has against the kernel), so this runs without it.
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import {
-  anchorAt, constrain, editsAt, frameOf, paramAt, shownHandles, startDrag, valueAt,
+  anchorAt, constrain, countEdits, editsAt, featureOf, frameOf, paramAt, shownHandles, startDrag, valueAt,
 } from '../../src/Isoform.Playground/wwwroot/js/lib/dragmath.js';
 
 const handles = JSON.parse(readFileSync(new URL('./handles.fixture.json', import.meta.url), 'utf8'));
@@ -23,6 +24,10 @@ test('frameOf: right-handed, u from world x unless the axis runs along x, or the
   // A sketch plane on xz with normal -y: its x is world x and its y world z.
   near(frameOf({ axis: [0, -1, 0], u: [1, 0, 0] }).v, [0, 0, 1]);
   near(frameOf({ axis: [0, 0, 1], u: [1, 1, 0] }).u, [Math.SQRT1_2, Math.SQRT1_2, 0]);
+  // The kernel's v as given, even when it is not n × u.
+  near(frameOf(handle('sketch:corner:b')).v, [0, 0, -1]);
+  // An angle's u points from its center to its anchor.
+  near(frameOf({ kind: 'angle', axis: [0, 0, 1], anchor: [0, 5, 3], center: [0, 0, 3] }).u, [0, 1, 0]);
 });
 
 test('linear: the point on the axis closest to the ray, from any side', () => {
@@ -40,9 +45,11 @@ test('planar: the ray\'s hit on the plane, in the plane\'s u and v', () => {
   near(paramAt(h, down(33, 21)), [3, -4]);
   near(paramAt(h, { origin: [30, 25, 20], direction: [1, 1, -1] }), [10, 10]);
   assert.equal(paramAt(h, front(0, 10)), null, 'a ray in the plane');
+  // Along the kernel's u and v: here v is -z.
+  near(paramAt(handle('sketch:corner:b'), front(8, 3)), [3, 4]);
 });
 
-test('angle: degrees about the axis from u, counter-clockwise looking down it', () => {
+test('angle: degrees about the axis through center (not the anchor), counter-clockwise looking down it', () => {
   const h = handle('shaft:angle');
   near(paramAt(h, down(10, 0)), 0);
   near(paramAt(h, down(0, 10)), 90);
@@ -60,28 +67,37 @@ test('constrain: the value snaps to its step and stays within min and max', () =
   near(constrain(angle, 52), 50); // 322° snaps to 320°
   near(constrain(angle, 100), 90);
   near(constrain(angle, -400), 1 - 270);
-  // A plane snaps each coordinate.
+  // A plane snaps each of its values, not t: from 30.5 a hole lands on 31, not 30.5 + 1.
   near(constrain(handle('hole:center'), [2.4, -3.6]), [2, -4]);
+  near(constrain({ ...handle('hole:center'), value: [30.5, 25] }, [0.2, 0.4]), [0.5, 0]);
+  // Fine (shift): a tenth of the step.
+  near(constrain(handle('plate:x+'), 2.44, true), 2.4);
+  near(constrain(handle('hole:center'), [2.44, -3.66], true), [2.4, -3.7]);
 });
 
 test('edits: base + per·t for every path, with no float noise', () => {
   assert.deepEqual(editsAt(handle('plate:x+'), 3), [{ set: 'plate.size.0', value: 103 }]);
   // The -x face moves out by 3: the origin goes 3 down and the width 3 up.
-  assert.deepEqual(editsAt(handle('plate:x-'), 3), [{ set: 'plate.origin.0', value: -3 }, { set: 'plate.size.0', value: 103 }]);
+  assert.deepEqual(editsAt(handle('plate:x-'), 3), [{ set: 'plate.size.0', value: 103 }, { set: 'plate.origin.0', value: -3 }]);
   assert.deepEqual(editsAt(handle('hole:center'), [2, -4]), [{ set: 'hole.center.0', value: 32 }, { set: 'hole.center.1', value: 21 }]);
   assert.deepEqual(editsAt(handle('hole:diameter'), 1.25), [{ set: 'hole.diameter', value: 12.5 }]);
   assert.deepEqual(editsAt({ edits: [{ path: 'a', base: 0.1, per: 2 }] }, 0.1), [{ set: 'a', value: 0.3 }], 'per may be a number');
 });
 
-test('valueAt follows the edit whose base is the value, not just the first', () => {
+test('valueAt, min and max are edits[0]\'s; a plane has two values', () => {
   assert.equal(valueAt(handle('plate:x-'), 3), 103);
   assert.equal(valueAt(handle('hole:diameter'), 1.25), 12.5);
+  assert.deepEqual(valueAt(handle('hole:center'), [2, -4]), [32, 21]);
+  // The -x face: min bounds the width (edits[0]), not the origin.
+  near(constrain(handle('plate:x-'), -150), 0.001 - 100, 1e-6);
 });
 
 test('anchorAt: moved along the axis or in the plane', () => {
   assert.deepEqual(anchorAt(handle('plate:x-'), 3), [-3, 25, 5]);
   assert.deepEqual(anchorAt(handle('hole:center'), [2, -4]), [32, 21, 10]);
-  assert.deepEqual(anchorAt(handle('shaft:angle'), 40), [0, 0, 0]);
+  // An angle turns its anchor about the axis through center.
+  near(anchorAt(handle('shaft:angle'), 90), [0, 12, 10]);
+  near(anchorAt(handle('shaft:angle'), -30), [12 * Math.cos(Math.PI / 6), -6, 10]);
 });
 
 test('a linear drag is relative to where it was grabbed, snapped and clamped', () => {
@@ -112,9 +128,26 @@ test('an angle drag accumulates past half a turn and clamps', () => {
   assert.equal(back.move(down(-10, 10)).value, 45);
 });
 
+test('featureOf: the name up to the first slash', () => {
+  assert.equal(featureOf('plate/x+'), 'plate');
+  assert.equal(featureOf('round/plate/x+'), 'round');
+  assert.equal(featureOf('row/2:bore/wall'), 'row');
+  assert.equal(featureOf('shell/inner:plate/z+'), 'shell');
+});
+
+test('countEdits: the count stepped, within its minimum, none when an expression sets it', () => {
+  const row = handle('row:spacing');
+  assert.deepEqual(countEdits(row, 1), [{ set: 'row.linear.count', value: 4 }]);
+  assert.deepEqual(countEdits(row, -1), [{ set: 'row.linear.count', value: 2 }]);
+  assert.equal(countEdits({ count: { ...row.count, value: 2 } }, -1), null);
+  assert.equal(countEdits({ count: { ...row.count, path: null } }, 1), null);
+  assert.equal(countEdits(handle('plate:x+'), 1), null);
+});
+
 test('shownHandles: the first selected face\'s feature, never assembly frames', () => {
   assert.deepEqual(shownHandles(handles, ['plate/x+']).map(h => h.id), ['plate:x+', 'plate:x-', 'plate:z+']);
   assert.deepEqual(shownHandles(handles, ['hole/wall', 'plate/x+']).map(h => h.id), ['hole:center', 'hole:diameter']);
+  assert.deepEqual(shownHandles(handles, ['row/2:bore/wall']).map(h => h.id), ['row:spacing'], 'a pattern copy\'s face');
   assert.deepEqual(shownHandles(handles, []), []);
   assert.deepEqual(shownHandles(handles, ['upper/plate/z+']), []);
 });

@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { launch } from './browser.mjs';
 import { loadKernel, publishedRoot, repo } from './published.mjs';
 import { serve } from './serve.mjs';
+import { createDrags } from './drags.mjs'; // J2: a drag per handle kind, and the phase-1 demo
 
 const root = publishedRoot(process.argv[2]);
 const shots = join(dirname(fileURLToPath(import.meta.url)), 'out', 'screenshots');
@@ -62,6 +63,7 @@ async function dragHandle(page) {
 const site = await serve(root);
 const browser = await launch();
 let failures = 0, picking = false, diagnosing = false, pinning = false, committing = false, handles = 'skipped', inspector = false;
+let dragging = false, demo = false; // J2
 try {
   const page = await browser.newPage();
   for (const [i, name] of names.entries()) {
@@ -120,13 +122,20 @@ try {
   committing = await commits(page);
   handles = await dragHandle(page);
   inspector = await inspecting(page);
+
+  // J2: dragging, previews and ghosts (drags.mjs).
+  const drags = createDrags(page, { url: site.url, settled, timeout, shots });
+  dragging = !(await drags.kinds()).length;
+  demo = !(await drags.demo()).length;
+  await drags.costs();
 } finally {
   await browser.close();
   await site.close();
 }
 console.log(`\n${names.length - failures}/${names.length} examples passed, picking ${picking ? 'passed' : 'FAILED'}, `
-  + `diagnostics ${diagnosing ? 'passed' : 'FAILED'}, pins ${pinning ? 'passed' : 'FAILED'}, history ${committing ? 'passed' : 'FAILED'}, handles ${handles}, inspector ${inspector ? 'passed' : 'FAILED'}; screenshots in ${relative(repo, shots)}`);
-process.exitCode = failures || !picking || !diagnosing || !pinning || !committing || handles === 'FAILED' || !inspector ? 1 : 0;
+  + `diagnostics ${diagnosing ? 'passed' : 'FAILED'}, pins ${pinning ? 'passed' : 'FAILED'}, history ${committing ? 'passed' : 'FAILED'}, handles ${handles}, inspector ${inspector ? 'passed' : 'FAILED'}, `
+  + `drags ${dragging ? 'passed' : 'FAILED'}, demo ${demo ? 'passed' : 'FAILED'}; screenshots in ${relative(repo, shots)}`);
+process.exitCode = failures || !picking || !diagnosing || !pinning || !committing || handles === 'FAILED' || !inspector || !dragging || !demo ? 1 : 0;
 
 /**
  * Diagnostics in place: example 0 with its hole moved to leave a 0.6 mm wall gives a below-resolution thin spot at

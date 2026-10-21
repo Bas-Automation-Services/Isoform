@@ -1,6 +1,7 @@
 // The published wasm kernel in Node: every example regenerates cleanly to result v2, and edits round-trip. Run with
 // node --test; the published wwwroot comes from ISOFORM_PLAYGROUND, else out/playground/wwwroot.
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import { loadKernel } from './published.mjs';
 
@@ -14,7 +15,7 @@ test('there are examples', () => assert.ok(examples.length > 0));
 
 for (const [i, [name, document]] of examples.entries()) {
   test(`example ${i}: ${name}`, t => {
-    const r = JSON.parse(kernel.Regenerate(document, '[]', cell, chord, 'main'));
+    const r = JSON.parse(kernel.Regenerate(document, '[]', cell, chord, 'main', false));
     assert.equal(r.error, undefined);
     assert.equal(r.version, 2);
     assert.equal(r.slot, 'main');
@@ -38,17 +39,17 @@ for (const [i, [name, document]] of examples.entries()) {
 }
 
 test('a broken document gives an error, not an exception', () => {
-  const r = JSON.parse(kernel.Regenerate('{"format": "isoform-part/', '[]', cell, chord, 'main'));
+  const r = JSON.parse(kernel.Regenerate('{"format": "isoform-part/', '[]', cell, chord, 'main', false));
   assert.equal(typeof r.error, 'string');
   assert.equal(kernel.Faces().length, 0);
 });
 
 test('edits are applied before regenerating; a bad one is named', () => {
   const [, document] = examples[0];
-  const r = JSON.parse(kernel.Regenerate(document, '[{"set": "plate.size.0", "value": 120}]', cell, chord, 'main'));
+  const r = JSON.parse(kernel.Regenerate(document, '[{"set": "plate.size.0", "value": 120}]', cell, chord, 'main', false));
   assert.equal(r.error, undefined);
   assert.equal(r.hash, JSON.parse(kernel.Apply(document, '{"set": "plate.size.0", "value": 120}')).hash);
-  const bad = JSON.parse(kernel.Regenerate(document, '[{"remove": "slot"}]', cell, chord, 'main'));
+  const bad = JSON.parse(kernel.Regenerate(document, '[{"remove": "slot"}]', cell, chord, 'main', false));
   assert.equal(bad.failedEdit, 0);
   assert.match(bad.error, /slot/);
 });
@@ -67,7 +68,7 @@ test('Apply(old, Diff(old, new)) gives new', () => {
 
 test('Handles(slot) gives the handles of the slot\'s last regeneration', () => {
   const [, document] = examples[0];
-  const r = JSON.parse(kernel.Regenerate(document, '[]', cell, chord, 'main'));
+  const r = JSON.parse(kernel.Regenerate(document, '[]', cell, chord, 'main', false));
   const { slot, hash, handles } = JSON.parse(kernel.Handles('main'));
   assert.equal(slot, 'main');
   assert.equal(hash, r.hash);
@@ -78,14 +79,40 @@ test('Handles(slot) gives the handles of the slot\'s last regeneration', () => {
   assert.deepEqual(JSON.parse(kernel.Handles('nothing')).handles, []);
 });
 
+test('the drag math\'s fixture is in the kernel\'s shape: example 0\'s handles as they are, the rest like one of the kernel\'s', () => {
+  const fixture = JSON.parse(readFileSync(new URL('./handles.fixture.json', import.meta.url), 'utf8'));
+  // Which fields a handle has, and how many entries its value and each edit's per have.
+  const shape = h => JSON.stringify([h.kind, Object.keys(h).filter(k => k !== 'readOnly' && k !== 'expression').sort(), [h.value].flat().length,
+    h.edits.map(e => [e.per].flat().length), Object.keys(h.count ?? {}).sort()]);
+  const read = n => (kernel.Regenerate(examples[n][1], '[]', cell, chord, 'main', false), JSON.parse(kernel.Handles('main')).handles);
+  const first = read(0), all = [...first, ...read(1), ...read(2), ...read(examples.length - 1)];
+  // The kernel's anchors are on the mesh's faces, the fixture's round numbers; and the kernel writes -0.
+  const strip = ({ anchor, ...h }) => JSON.parse(JSON.stringify(h));
+  for (const id of ['plate:x+', 'plate:x-', 'hole:center', 'hole:diameter'])
+    assert.deepEqual(strip(fixture.find(h => h.id === id)), strip(first.find(h => h.id === id)), id);
+  for (const h of fixture.filter(h => !h.readOnly))
+    assert.ok(all.some(k => shape(k) === shape(h)), `no kernel handle is shaped like ${h.id}: ${shape(h)}`);
+});
+
+test('snap puts the lattice on the world grid: a coarse preview of plate/x- keeps the hole\'s mesh', () => {
+  const [, document] = examples[0];
+  const wall = (x, snap) => {
+    const r = JSON.parse(kernel.Regenerate(document, JSON.stringify([{ set: 'plate.origin.0', value: x }, { set: 'plate.size.0', value: 100 - x }]), 2, 0.2, 'preview', snap));
+    const positions = kernel.Positions().slice(), faces = kernel.Faces().slice();
+    return [...faces].flatMap((f, t) => (r.faces[f][0] === 'hole/wall' ? [positions.slice(9 * t, 9 * t + 9).join()] : [])).sort().join(';');
+  };
+  assert.equal(wall(-1, true), wall(-2, true));
+  assert.notEqual(wall(-1, false), wall(-2, false));
+});
+
 test('Resolve: a pin by index comes back by name, and a cut across plate/z+ splits it', () => {
   const [, document] = examples[0];
-  const r = JSON.parse(kernel.Regenerate(document, '[]', cell, chord, 'main'));
+  const r = JSON.parse(kernel.Regenerate(document, '[]', cell, chord, 'main', false));
   const top = r.faces.findIndex(f => f[0] === 'plate/z+');
   const [pin] = JSON.parse(kernel.Resolve(JSON.stringify([{ id: 'top', face: top }]), 'main')).pins;
   assert.deepEqual(pin, { id: 'top', ref: { face: 'plate/z+' }, status: 'resolved', faces: [top] });
   const slot = { insert: { id: 'slot', type: 'block', op: 'cut', origin: [60, -1, 5], size: [5, 52, 10] }, before: 'fillet' };
-  kernel.Regenerate(document, JSON.stringify([slot]), cell, chord, 'main');
+  kernel.Regenerate(document, JSON.stringify([slot]), cell, chord, 'main', false);
   const after = JSON.parse(kernel.Resolve(JSON.stringify([{ id: 'top', ...pin.ref }]), 'main'));
   assert.equal(after.pins[0].status, 'split');
   assert.equal(after.pins[0].faces.length, 2);
