@@ -32,7 +32,7 @@ public static class SketchJson
         {
             ["code"] = x.Code, ["message"] = x.Message, ["constraints"] = new JsonArray([.. x.Constraints.Select(c => (JsonNode)c)]),
         })]);
-        if (problem is not null) problems.Add(new JsonObject { ["code"] = SketchSolution.Invalid, ["message"] = problem, ["constraints"] = new JsonArray() });
+        if (problem is not null) problems.Add((JsonNode)new JsonObject { ["code"] = SketchSolution.Invalid, ["message"] = problem, ["constraints"] = new JsonArray() });
         return new JsonObject
         {
             ["id"] = id,
@@ -78,7 +78,8 @@ public static class SketchJson
         var plane = part?.Field is null ? null : SketchPlanes.OfFace(face, part.Surfaces, part.Field);
         if (plane is null) return new JsonObject { ["face"] = face, ["error"] = $"{face} is not a flat face of the part" }.ToJsonString(Compact);
         var frame = Profiles.FrameOf(plane);
-        JsonArray V(double x, double y, double z) => [x, y, z];
+        // JsonNodes, not doubles: JsonArray.Add<double> needs reflection, which the trimmed wasm kernel has not.
+        JsonArray V(double x, double y, double z) => [(JsonNode)x, (JsonNode)y, (JsonNode)z];
         return new JsonObject
         {
             ["face"] = face,
