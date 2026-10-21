@@ -81,7 +81,7 @@ public static partial class DualContouring
         var reach = neighbours.Count == 0 ? 0 : neighbours.Max(n => n.Size);
 
         var f = new Fingerprint();
-        f.Add(1); // format version
+        f.Add(2); // format version
         f.Add(g.H);
         f.Add(ctx.ChordTolerance);
         f.Add(g.Origin);
@@ -156,17 +156,12 @@ public static partial class DualContouring
         }
 
         var crossings = new List<Crossing>(hits.Count);
+        var at = new List<int>(hits.Count); // the hit of each crossing
         var pairs = new List<long>(hits.Count * 4);
-        var polygons = new List<int>(hits.Count * RegionMesh.PolygonInts);
-        var (oi, oj, ok) = grid.Offset;
-        void Corner(Node n)
+        var owned = new List<(int E, int A, int B, int C, int D)>(hits.Count); // crossings whose polygon this region owns
+        for (var h = 0; h < hits.Count; h++)
         {
-            polygons.Add(oi + n.I);
-            polygons.Add(oj + n.J);
-            polygons.Add(ok + n.K);
-        }
-        foreach (var hit in hits)
-        {
+            var hit = hits[h];
             var (a, b, c, d) = (hit.N0, hit.N1, hit.N2, hit.N3);
             var (ia, ib, ic, id) = (Own(a), Own(b), Own(c), Own(d));
             if (ia < 0 && ib < 0 && ic < 0 && id < 0) continue;
@@ -175,29 +170,25 @@ public static partial class DualContouring
             var point = FindRoot(f, hit.P0, hit.P1);
             var sample = f.Sample(point);
             crossings.Add(new(point, sample.Gradient.Normalized(), sample.Owner));
+            at.Add(h);
             // As in Build: a leaf filling two quadrants takes the crossing once.
             if (ia >= 0) pairs.Add(((long)ia << 32) | (uint)e);
             if (ib >= 0 && b != a) pairs.Add(((long)ib << 32) | (uint)e);
             if (ic >= 0 && c != a && c != b) pairs.Add(((long)ic << 32) | (uint)e);
             if (id >= 0 && d != a && d != b && d != c) pairs.Add(((long)id << 32) | (uint)e);
-            if (ic < 0) continue; // the (+,+) quadrant's region owns the polygon
-            polygons.Add(oi + hit.I);
-            polygons.Add(oj + hit.J);
-            polygons.Add(ok + hit.K);
-            polygons.Add(hit.Axis);
-            polygons.Add(hit.Smallest.Size);
-            Corner(a);
-            Corner(b);
-            Corner(c);
-            Corner(d);
-            polygons.Add(region.Local[sample.Owner]);
-            polygons.Add(hit.StartInside ? 1 : 0);
+            if (ic >= 0) owned.Add((e, ia, ib, ic, id)); // the (+,+) quadrant's region owns the polygon
         }
 
         pairs.Sort();
-        var cells = new List<int>(leaves.Count * 3);
+        var (oi, oj, ok) = grid.Offset;
+        var cells = new List<int>(leaves.Count * 4);
         var positions = new List<double>(leaves.Count * 3);
         var cacheable = true;
+        var spots = new ConcurrentBag<ThinSpot>();
+        // The pieces of the finest leaves round the polygons, the neighbours' too: each from the leaf's own field, as
+        // Build finds them.
+        var pieces = new sbyte[]?[leaves.Count];
+        var others = new Dictionary<Node, sbyte[]?>(ReferenceEqualityComparer.Instance);
         Span<Crossing> buffer = stackalloc Crossing[48];
         for (var start = 0; start < pairs.Count;)
         {
@@ -205,40 +196,75 @@ public static partial class DualContouring
             var end = start;
             while (end < pairs.Count && (int)(pairs[end] >> 32) == leaf) end++;
             var n = end - start;
-            Span<Crossing> local = n <= 48 ? buffer[..n] : new Crossing[n];
-            for (var k = 0; k < n; k++) local[k] = crossings[(int)(uint)pairs[start + k]];
+            Span<Crossing> local = n <= 48 ? buffer : new Crossing[n];
             var node = leaves[leaf];
-            var near = node.Field!;
-            if (!SingleOwner(local))
+            var table = pieces[leaf] = node.Multi && n >= 6 ? Pieces(node, grid) : null;
+            for (var piece = 0; piece < PieceCount(table); piece++)
             {
-                near = Near(plan.Field, grid, node, region.Near, out var inside);
-                cacheable &= inside;
+                var m = 0;
+                for (var k = start; k < end; k++)
+                {
+                    var e = (int)(uint)pairs[k];
+                    if (table is null || table[LocalEdge(node, hits[at[e]])] == piece) local[m++] = crossings[e];
+                }
+                var near = node.Field!;
+                if (!SingleOwner(local[..m]))
+                {
+                    near = Near(plan.Field, grid, node, region.Near, out var inside);
+                    cacheable &= inside;
+                }
+                var p = CellVertex(near, plan.Field, grid, node, local[..m], spots, out var wide);
+                cacheable &= !wide;
+                cells.Add(oi + node.I);
+                cells.Add(oj + node.J);
+                cells.Add(ok + node.K);
+                cells.Add(piece);
+                positions.Add(p.X);
+                positions.Add(p.Y);
+                positions.Add(p.Z);
             }
-            var p = CellVertex(near, grid, node, local);
-            cells.Add(oi + node.I);
-            cells.Add(oj + node.J);
-            cells.Add(ok + node.K);
-            positions.Add(p.X);
-            positions.Add(p.Y);
-            positions.Add(p.Z);
             start = end;
         }
 
-        // Vertices in leaf order, which is Build's (depth-first is Morton order of the leaves' corners): the region's
-        // leaves are one depth-first block, so the assembly only concatenates the regions.
-        var morton = new ulong[cells.Count / 3];
-        var order = new int[morton.Length];
-        for (var k = 0; k < morton.Length; k++) (morton[k], order[k]) = (Morton(cells[3 * k] - oi, cells[3 * k + 1] - oj, cells[3 * k + 2] - ok), k);
-        Array.Sort(morton, order);
+        var polygons = new List<int>(owned.Count * RegionMesh.PolygonInts);
+        void Corner(Node n, int id, in Hit hit)
+        {
+            polygons.Add(oi + n.I);
+            polygons.Add(oj + n.J);
+            polygons.Add(ok + n.K);
+            var table = !n.Multi ? null : id >= 0 ? pieces[id] : others.TryGetValue(n, out var t) ? t : others[n] = Pieces(n, grid);
+            polygons.Add(table is null ? 0 : table[LocalEdge(n, hit)]);
+        }
+        foreach (var (e, ia, ib, ic, id) in owned)
+        {
+            var hit = hits[at[e]];
+            polygons.Add(oi + hit.I);
+            polygons.Add(oj + hit.J);
+            polygons.Add(ok + hit.K);
+            polygons.Add(hit.Axis);
+            polygons.Add(hit.Smallest.Size);
+            Corner(hit.N0, ia, hit);
+            Corner(hit.N1, ib, hit);
+            Corner(hit.N2, ic, hit);
+            Corner(hit.N3, id, hit);
+            polygons.Add(region.Local[crossings[e].Owner]);
+            polygons.Add(hit.StartInside ? 1 : 0);
+        }
 
-        var spots = new ConcurrentBag<ThinSpot>();
+        // Vertices in leaf order, which is Build's (depth-first is Morton order of the leaves' corners), then by piece:
+        // the region's leaves are one depth-first block, so the assembly only concatenates the regions.
+        var keys = new ulong[cells.Count / 4];
+        var order = new int[keys.Length];
+        for (var k = 0; k < keys.Length; k++) (keys[k], order[k]) = (VertexKey(cells[4 * k] - oi, cells[4 * k + 1] - oj, cells[4 * k + 2] - ok, cells[4 * k + 3]), k);
+        Array.Sort(keys, order);
+
         var multi = new List<Node>();
         Multi(own!, multi);
         foreach (var leaf in multi) FindThin(leaf, grid, spots);
         var thin = spots.ToList();
         return new RegionMesh
         {
-            Cells = [.. order.SelectMany(k => new[] { cells[3 * k], cells[3 * k + 1], cells[3 * k + 2] })],
+            Cells = [.. order.SelectMany(k => new[] { cells[4 * k], cells[4 * k + 1], cells[4 * k + 2], cells[4 * k + 3] })],
             Positions = [.. order.SelectMany(k => new[] { positions[3 * k], positions[3 * k + 1], positions[3 * k + 2] })],
             Polygons = [.. polygons],
             ThinOwners = [.. thin.SelectMany(s => new[] { region.Local[s.OwnerA], region.Local[s.OwnerB] })],
@@ -282,7 +308,7 @@ public static partial class DualContouring
     {
         var grid = plan.Context.Grid;
         var (oi, oj, ok) = grid.Offset;
-        ulong Cell(int[] a, int at) => Morton(a[at] - oi, a[at + 1] - oj, a[at + 2] - ok);
+        ulong Cell(int[] a, int at) => VertexKey(a[at] - oi, a[at + 1] - oj, a[at + 2] - ok, a[at + 3]);
 
         // Vertices in leaf order, as Build numbers them: the regions are in depth-first order and each has its
         // vertices in Morton order, the depth-first order of the leaves' corners. Sorted only if a cached result came
@@ -292,7 +318,7 @@ public static partial class DualContouring
         var v = 0;
         foreach (var r in results)
             for (var k = 0; k < r.VertexCount; k++, v++)
-                (keys[v], positions[v]) = (Cell(r.Cells, 3 * k), new Point3D(r.Positions[3 * k], r.Positions[3 * k + 1], r.Positions[3 * k + 2]));
+                (keys[v], positions[v]) = (Cell(r.Cells, 4 * k), new Point3D(r.Positions[3 * k], r.Positions[3 * k + 1], r.Positions[3 * k + 2]));
         if (!Ascending(keys))
         {
             var byKey = new int[keys.Length];
@@ -315,8 +341,8 @@ public static partial class DualContouring
             for (var at = 0; at < p.Length; at += RegionMesh.PolygonInts, q++)
             {
                 order[q] = TraversalKey(p[at] - oi, p[at + 1] - oj, p[at + 2] - ok, p[at + 3], p[at + 4], grid.RootSize);
-                quads[q] = Polygon(index[Cell(p, at + 5)], index[Cell(p, at + 8)], index[Cell(p, at + 11)], index[Cell(p, at + 14)],
-                    p[at + 18] == 1, surfaces[p[at + 17]]);
+                quads[q] = Polygon(index[Cell(p, at + 5)], index[Cell(p, at + 9)], index[Cell(p, at + 13)], index[Cell(p, at + 17)],
+                    p[at + 22] == 1, surfaces[p[at + 21]]);
             }
             if (q > runs[^1]) runs.Add(q);
         }
@@ -334,6 +360,9 @@ public static partial class DualContouring
         }
         return new Mesh(positions, quads, Sorted(spots));
     }
+
+    /// <summary>A vertex by its leaf's corner in Morton order (2²⁰ cells a side), then its piece (a cube holds at most four).</summary>
+    static ulong VertexKey(int i, int j, int k, int piece) => Morton(i, j, k) << 2 | (uint)piece;
 
     static bool Ascending(ulong[] keys)
     {

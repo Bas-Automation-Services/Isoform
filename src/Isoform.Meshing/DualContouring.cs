@@ -65,7 +65,8 @@ public sealed class Mesh(IReadOnlyList<Point3D> vertices, IReadOnlyList<Quad> qu
 /// </list>
 /// Polygons are dual to the octree's minimal edges, so cells of different size never leave cracks. Crossings are
 /// roots of the exact field, normals its exact gradients, and each cell vertex minimises the quadric error of its
-/// crossings' tangent planes, so sharp edges and corners are reproduced. Output is deterministic.
+/// crossings' tangent planes, so sharp edges and corners are reproduced. A finest cell the surface passes through in
+/// several pieces gets a vertex per piece, so the mesh stays manifold. Output is deterministic.
 /// </summary>
 public static partial class DualContouring
 {
@@ -169,33 +170,57 @@ public static partial class DualContouring
             if (k == 0 || pairs[k] >> 32 != pairs[k - 1] >> 32) cellStart.Add(k);
         cellStart.Add(pairs.Count);
         var cellCount = cellStart.Count - 1;
-        var vertexOfCell = new int[leaves.Count];
-        for (var v = 0; v < cellCount; v++) vertexOfCell[(int)(pairs[cellStart[v]] >> 32)] = v;
+        var cellOfLeaf = new int[leaves.Count];
+        for (var v = 0; v < cellCount; v++) cellOfLeaf[(int)(pairs[cellStart[v]] >> 32)] = v;
 
+        // A cell cut into several surface pieces gets a vertex per piece: its first vertex and the piece of each edge.
+        // Only a leaf holding several surfaces can be (one analytic patch passes a finest cell once).
+        var pieces = new sbyte[]?[cellCount];
+        Parallel.For(0, cellCount, v =>
+        {
+            var node = leaves[(int)(pairs[cellStart[v]] >> 32)];
+            if ((prune ? node.Multi : node.Size == 1) && cellStart[v + 1] - cellStart[v] >= 6) pieces[v] = Pieces(node, grid);
+        });
+        var firstVertex = new int[cellCount + 1];
+        for (var v = 0; v < cellCount; v++) firstVertex[v + 1] = firstVertex[v] + PieceCount(pieces[v]);
+
+        var spots = new ConcurrentBag<ThinSpot>();
         var regions = new ConcurrentDictionary<(int, int, int, int), Field>();
-        var positions = new Point3D[cellCount];
+        var positions = new Point3D[firstVertex[cellCount]];
         Parallel.For(0, cellCount, v =>
         {
             var n = cellStart[v + 1] - cellStart[v];
             Span<Crossing> local = n <= 48 ? stackalloc Crossing[48] : new Crossing[n];
-            for (var k = 0; k < n; k++) local[k] = crossings[(int)(uint)pairs[cellStart[v] + k]];
             var node = leaves[(int)(pairs[cellStart[v]] >> 32)];
-            // A vertex on one surface is projected onto that surface.
-            var near = !prune ? field : SingleOwner(local[..n]) ? node.Field! : Near(field, grid, node,
-                regions.GetOrAdd(grid.UnitOf(node), u => field.Simplify(grid.Box(u, 1))), out _);
-            positions[v] = CellVertex(near, grid, node, local[..n]);
+            for (var piece = 0; piece < PieceCount(pieces[v]); piece++)
+            {
+                var m = 0;
+                for (var k = 0; k < n; k++)
+                {
+                    var e = (int)(uint)pairs[cellStart[v] + k];
+                    if (pieces[v] is not { } t || t[LocalEdge(node, hits[e])] == piece) local[m++] = crossings[e];
+                }
+                // A vertex on one surface is projected onto that surface.
+                var near = !prune ? field : SingleOwner(local[..m]) ? node.Field! : Near(field, grid, node,
+                    regions.GetOrAdd(grid.UnitOf(node), u => field.Simplify(grid.Box(u, 1))), out _);
+                positions[firstVertex[v] + piece] = CellVertex(near, field, grid, node, local[..m], prune ? spots : null, out _);
+            }
         });
         Stage($"cell vertices ({cellCount:N0} cells)");
 
+        int Vertex(Node node, in Hit hit)
+        {
+            var v = cellOfLeaf[node.Id];
+            return firstVertex[v] + (pieces[v] is { } t ? t[LocalEdge(node, hit)] : 0);
+        }
         var quads = new List<Quad>(hits.Count);
         for (var e = 0; e < hits.Count; e++)
         {
             var hit = hits[e];
-            quads.Add(Polygon(vertexOfCell[hit.N0.Id], vertexOfCell[hit.N1.Id], vertexOfCell[hit.N2.Id], vertexOfCell[hit.N3.Id], hit.StartInside, crossings[e].Owner));
+            quads.Add(Polygon(Vertex(hit.N0, hit), Vertex(hit.N1, hit), Vertex(hit.N2, hit), Vertex(hit.N3, hit), hit.StartInside, crossings[e].Owner));
         }
         Stage($"polygons ({quads.Count:N0})");
 
-        var spots = new ConcurrentBag<ThinSpot>();
         if (prune) Parallel.ForEach(leaves.Where(l => l.Multi), node => FindThin(node, grid, spots));
         var thin = Sorted(spots);
         Stage($"thin spots ({thin.Count:N0})");
@@ -225,7 +250,8 @@ public static partial class DualContouring
     /// Where several surfaces meet the vertex may sit up to half a cell outside the node, so it gets a field exact one
     /// node size around it. That field is simplified from the field of the node's region grown by one cell (which
     /// region keys hash), so a region's vertices depend on nothing outside it. Only a coarse node at the side of its
-    /// region reaches further and takes the whole field; <paramref name="local"/> is then false.
+    /// region reaches further and takes the whole field; <paramref name="local"/> is then false. A vertex that strays
+    /// further (<see cref="Reach"/>) reads the whole field too.
     /// </summary>
     static Field Near(Field field, Grid grid, Node node, Field region, out bool local)
     {
@@ -235,6 +261,10 @@ public static partial class DualContouring
             && node.I + 2 * s <= u.I + u.Size + 1 && node.J + 2 * s <= u.J + u.Size + 1 && node.K + 2 * s <= u.K + u.Size + 1;
         return (local ? region : field).Simplify(grid.Box(node, s));
     }
+
+    // Cells a vertex may stray from its cell to sit on a real edge of the solid: the tip of a wedge too thin to hold
+    // grid points. Beyond that the wedge is reported (FindThin), so the two agree on four cells.
+    const int Reach = 4;
 
     static void Subdivide(Node node, Field field, Context ctx, int depth)
     {
@@ -449,6 +479,102 @@ public static partial class DualContouring
         return a + dir * ((t0 + t1) / 2);
     }
 
+    /// <summary>The edge of a hit in a finest leaf: axis·4, plus its offsets along the next two axes.</summary>
+    static int LocalEdge(Node leaf, in Hit hit)
+    {
+        Span<int> d = [hit.I - leaf.I, hit.J - leaf.J, hit.K - leaf.K];
+        return 4 * hit.Axis + d[(hit.Axis + 1) % 3] + 2 * d[(hit.Axis + 2) % 3];
+    }
+
+    static int PieceCount(sbyte[]? pieces)
+    {
+        if (pieces is null) return 1;
+        var max = 0;
+        foreach (var p in pieces) max = Math.Max(max, p);
+        return max + 1;
+    }
+
+    /// <summary>
+    /// The pieces of surface in a finest leaf, as marching cubes cuts it: its sign-changing edges joined across each
+    /// face, a face with four crossings split as the field in its middle says. Two sheets through one cell (a wedge
+    /// thinner than the cell) are then two pieces with a vertex each, so their polygons do not share edges (manifold
+    /// dual contouring, Schaefer et al. 2007). The piece of each local edge, -1 where it has no crossing; null for one
+    /// piece, which is always so below six crossings. Only the leaf's own field is read, so every job agrees.
+    /// </summary>
+    static sbyte[]? Pieces(Node leaf, Grid grid)
+    {
+        var f = leaf.Field!;
+        Point3D Corner(int c) => grid.Position(leaf.I + (c & 1), leaf.J + (c >> 1 & 1), leaf.K + (c >> 2));
+        var inside = 0; // bit c: corner c (x | y·2 | z·4) is inside
+        for (var c = 0; c < 8; c++)
+            if (f.Value(Corner(c)) < 0) inside |= 1 << c;
+        bool Changes(int axis, int u, int v)
+        {
+            var c = u << (axis + 1) % 3 | v << (axis + 2) % 3;
+            return (inside >> c & 1) != (inside >> (c | 1 << axis) & 1);
+        }
+
+        Span<int> parent = stackalloc int[12];
+        var changes = 0;
+        for (var e = 0; e < 12; e++)
+        {
+            parent[e] = e;
+            if (Changes(e / 4, e & 1, e >> 1 & 1)) changes++;
+        }
+        if (changes < 6) return null;
+        int Find(Span<int> parent, int e)
+        {
+            while (parent[e] != e) e = parent[e] = parent[parent[e]];
+            return e;
+        }
+        void Union(Span<int> parent, int x, int y) => parent[Find(parent, x)] = Find(parent, y);
+
+        Span<int> crossing = stackalloc int[4];
+        for (var a = 0; a < 3; a++)
+        for (var s = 0; s < 2; s++)
+        {
+            // Face across axis a at side s. Its edge along b at c-offset t is 4b + t + 2s, along c at b-offset t is
+            // 4c + s + 2t; round its corner (x, y) run the edges along b at y and along c at x.
+            int b = (a + 1) % 3, c = (a + 2) % 3;
+            var n = 0;
+            for (var t = 0; t < 2; t++)
+            {
+                if (Changes(b, t, s)) crossing[n++] = 4 * b + t + 2 * s;
+                if (Changes(c, s, t)) crossing[n++] = 4 * c + s + 2 * t;
+            }
+            if (n == 2) Union(parent, crossing[0], crossing[1]);
+            if (n != 4) continue;
+            // Corners (0, 0) and (1, 1) share a sign; if the middle of the face has it too they connect, and the curves
+            // run round the other two corners. The middle is the centroid of the four crossings (the roots every job
+            // finds on these edges): between two straight curves it always lies in the band between them. On a
+            // contact of two solids the field there is zero, and the solids are joined.
+            var middle = new Vector3D(0, 0, 0);
+            foreach (var e in crossing)
+            {
+                var (axis, u, v) = (e / 4, e & 1, e >> 1 & 1);
+                var start = u << (axis + 1) % 3 | v << (axis + 2) % 3;
+                middle += FindRoot(f, Corner(start), Corner(start | 1 << axis)).AsVector() / 4;
+            }
+            var joined = f.Value(new Point3D(middle.X, middle.Y, middle.Z)) <= 0 == ((inside >> (s << a) & 1) == 1);
+            foreach (var (x, y) in joined ? [(1, 0), (0, 1)] : new[] { (0, 0), (1, 1) })
+                Union(parent, 4 * b + y + 2 * s, 4 * c + s + 2 * x);
+        }
+
+        var pieces = new sbyte[12];
+        Span<int> label = stackalloc int[12];
+        label.Fill(-1);
+        var count = 0;
+        for (var e = 0; e < 12; e++)
+        {
+            pieces[e] = -1;
+            if (!Changes(e / 4, e & 1, e >> 1 & 1)) continue;
+            var root = Find(parent, e);
+            if (label[root] < 0) label[root] = count++;
+            pieces[e] = (sbyte)label[root];
+        }
+        return count == 1 ? null : pieces;
+    }
+
     static bool SingleOwner(ReadOnlySpan<Crossing> crossings)
     {
         foreach (var c in crossings)
@@ -456,15 +582,19 @@ public static partial class DualContouring
         return true;
     }
 
-    static Point3D CellVertex(Field field, Grid grid, Node node, ReadOnlySpan<Crossing> crossings)
+    /// <param name="field">Exact on the node grown by its size.</param>
+    /// <param name="whole">The whole field, for a vertex beyond that; <paramref name="wide"/> tells it was read.</param>
+    /// <param name="spots">Where a cell one vertex cannot hold is reported.</param>
+    static Point3D CellVertex(Field field, Field whole, Grid grid, Node node, ReadOnlySpan<Crossing> crossings, ConcurrentBag<ThinSpot>? spots, out bool wide)
     {
+        wide = false;
         var mass = new Vector3D(0, 0, 0);
         foreach (var c in crossings) mass += c.Point.AsVector();
         var m = mass / crossings.Length;
         var mp = new Point3D(m.X, m.Y, m.Z);
 
         // Distinct owners in order of first appearance.
-        Span<int> owners = stackalloc int[crossings.Length];
+        Span<int> owners = stackalloc int[crossings.Length + 1];
         var ownerCount = 0;
         foreach (var c in crossings)
             if (!owners[..ownerCount].Contains(c.Owner)) owners[ownerCount++] = c.Owner;
@@ -484,10 +614,45 @@ public static partial class DualContouring
             }
         }
         var x = SymmetricSolver.PseudoSolve(ata, atb, relativeCutoff: 0.05);
-        var v = Refine(field, new Point3D(mp.X + x[0], mp.Y + x[1], mp.Z + x[2]), owners[..ownerCount]);
+        var edge = Refine(field, new Point3D(mp.X + x[0], mp.Y + x[1], mp.Z + x[2]), owners[..ownerCount]);
         // Tangent (G1) junctions leave the along-face position undetermined; land on the solid itself.
-        v = Project(field, v);
-        return Inside(grid.Box(node), v, node.Size * grid.H / 2) ? v : mp;
+        var v = Project(field, edge);
+        var box = grid.Box(node);
+        if (Inside(box, v, node.Size * grid.H / 2)) return v;
+        // The tip of a wedge too thin to hold grid points lies beyond the cells it cuts; where the vertex is on every
+        // owner and on the solid it is that edge, and goes there. That far out only the whole field is exact.
+        wide = true;
+        var far = whole.Simplify(grid.Box(node, Math.Max(node.Size, Reach)));
+        v = Project(far, edge);
+        if (Inside(box, v, Reach * grid.H) && OnEvery(far, v, owners[..ownerCount])) return v;
+        // Or the edge ends nearby on a surface no crossing saw, as where a wedge's tip runs into a side face: the corner.
+        var cut = far.Sample(edge).Owner;
+        if (!owners[..ownerCount].Contains(cut))
+        {
+            owners[ownerCount++] = cut;
+            v = Project(far, Refine(far, edge, owners[..ownerCount]));
+            if (Inside(box, v, Reach * grid.H) && OnEvery(far, v, owners[..ownerCount])) return v;
+        }
+        // One vertex cannot hold this cell's surfaces. Where two of them face each other, the material or gap between
+        // them is thinner than the cell (a wedge cut short by a side face), and is reported.
+        if (spots is not null)
+            foreach (var a in crossings)
+            foreach (var b in crossings)
+                if (a.Owner < b.Owner && a.Normal.Dot(b.Normal) < -0.5)
+                {
+                    var thickness = Math.Abs(field.SampleSurface(a.Owner, mp)!.Value.Value) + Math.Abs(field.SampleSurface(b.Owner, mp)!.Value.Value);
+                    spots.Add(new ThinSpot(a.Owner, b.Owner, mp, thickness));
+                    return mp;
+                }
+        return mp;
+    }
+
+    static bool OnEvery(Field field, Point3D p, ReadOnlySpan<int> owners)
+    {
+        if (Math.Abs(field.Value(p)) > 1e-9) return false;
+        foreach (var owner in owners)
+            if (Math.Abs(field.SampleSurface(owner, p)!.Value.Value) > 1e-9) return false;
+        return true;
     }
 
     // The QEF uses tangent planes; Gauss-Newton on the owner surfaces themselves moves the vertex onto the
@@ -556,7 +721,7 @@ public static partial class DualContouring
             if (!(va < 0 && vb < 0 && vf < 0) && !(va > 0 && vb > 0 && vf > 0)) continue;
             var q = Refine(field, c, [a, b]);
             var meet = Math.Abs(field.SampleSurface(a, q)!.Value.Value) + Math.Abs(field.SampleSurface(b, q)!.Value.Value) < 1e-6;
-            if (meet && Inside(box, q, 4 * grid.H)) continue;
+            if (meet && Inside(box, q, Reach * grid.H)) continue;
             spots.Add(new ThinSpot(Math.Min(a, b), Math.Max(a, b), mid, (pa - pb).Length));
         }
     }

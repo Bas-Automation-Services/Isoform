@@ -45,18 +45,18 @@ public sealed class MeshRegion
 /// </summary>
 public sealed class RegionMesh
 {
-    internal const int PolygonInts = 19; // edge start (3), axis, length, four leaf corners (12), owner, inside
+    internal const int PolygonInts = 23; // edge start (3), axis, length, four leaf corners and pieces (16), owner, inside
 
-    internal int[] Cells = [];        // per vertex: its leaf's corner
+    internal int[] Cells = [];        // per vertex: its leaf's corner and its piece of the leaf
     internal double[] Positions = []; // per vertex: x, y, z
     internal int[] Polygons = [];
     internal int[] ThinOwners = [];   // per thin spot: two owners
     internal double[] Thin = [];      // per thin spot: x, y, z, thickness
 
-    /// <summary>False when a vertex needed the whole field (a coarse node at the region's side): not reusable.</summary>
+    /// <summary>False when a vertex needed the whole field (a coarse node at the region's side, an acute edge): not reusable.</summary>
     public bool Cacheable { get; internal set; } = true;
 
-    public int VertexCount => Cells.Length / 3;
+    public int VertexCount => Cells.Length / 4;
 
     public void Write(BinaryWriter w)
     {
