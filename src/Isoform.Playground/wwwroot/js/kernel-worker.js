@@ -5,10 +5,12 @@
 import { dotnet } from '../_framework/dotnet.js';
 
 // Listening starts before the runtime has loaded, so no request is lost; each one waits for the load.
+let heap = () => null; // bytes of wasm memory this worker's kernel holds (the memory op)
 const loading = (async () => {
-  const { getAssemblyExports, getConfig, runMain } = await dotnet.create();
+  const { getAssemblyExports, getConfig, runMain, Module } = await dotnet.create();
   const kernel = (await getAssemblyExports(getConfig().mainAssemblyName)).Isoform.Playground.Playground;
   await runMain();
+  heap = () => Module?.HEAPU8?.buffer.byteLength ?? null;
   return kernel;
 })();
 let kernel = null;
@@ -38,9 +40,10 @@ function gathered() {
   done();
 }
 
-// Result v2 (src/Isoform.Interactive/README.md) and the mesh buffers; edits is an edit, an array of them, or [].
-function regenerate({ document, edits = [], cell, chord, slot = 'main' }) {
-  const info = JSON.parse(kernel.Regenerate(document, JSON.stringify(edits), cell, chord, slot));
+// Result v2 (src/Isoform.Interactive/README.md) and the mesh buffers; edits is an edit, an array of them, or []. snap
+// puts the lattice on the world grid (ModelingSettings.SnapGrid): a drag's previews keep one lattice.
+function regenerate({ document, edits = [], cell, chord, slot = 'main', snap = false }) {
+  const info = JSON.parse(kernel.Regenerate(document, JSON.stringify(edits), cell, chord, slot, snap));
   info.cell = cell; // the cell size it was made at: what the diagnostics' resolve and "back to" compare with
   if (info.error) return { info };
   return {
@@ -55,7 +58,7 @@ function regenerate({ document, edits = [], cell, chord, slot = 'main' }) {
   };
 }
 
-const share = ({ document, edits = [], cell, chord }) => kernel.Share(document, JSON.stringify(edits), cell, chord, index, count);
+const share = ({ document, edits = [], cell, chord, snap = false }) => kernel.Share(document, JSON.stringify(edits), cell, chord, snap, index, count);
 
 const ops = {
   examples: () => JSON.parse(kernel.Examples()),
@@ -64,6 +67,7 @@ const ops = {
   handles: ({ slot = 'main' } = {}) => JSON.parse(kernel.Handles(slot)),
   // Pinned references against a slot's last good result (panels/references.js).
   resolve: ({ refs, slot = 'main' }) => JSON.parse(kernel.Resolve(JSON.stringify(refs), slot)),
+  memory: () => heap(),
 
   pool(args) {
     ({ index, count } = args);

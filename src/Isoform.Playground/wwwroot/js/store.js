@@ -14,9 +14,14 @@ import { recorded } from './lib/history.js';
 //   rejected   the last edit list that did not apply: {edits, label, origin, problem, failedEdit?}, or null
 //   feature    the key of the selected tree item (lib/features.js: "hole", "components.pin", "parameters"), or null
 //   repick     {path, count} while the inspector waits for the face(s) to put in a field, else null
+//   preview    while a handle drags (lib/preview.js): the preview regeneration on screen in place of result, with
+//              preview: true, the t it was made at and the handle's id; null otherwise
 
 /** The name a document refers to a face by: its first source. */
 export const faceName = face => face[0];
+
+/** The regeneration on screen: a drag's preview, else the committed result. Mesh indices are this one's. */
+export const shown = state => state.preview ?? state.result;
 
 /** The mesh indices of the faces with these names; a name split into several faces gives them all. */
 export function facesNamed(result, names) {
@@ -36,7 +41,7 @@ export function pick(selection, name, extend = false) {
 export const surviving = (selection, result) => selection.filter(name => result.faces.some(face => faceName(face) === name));
 
 export function createStore(initial = {}) {
-  let state = { text: '', result: null, hash: null, problem: null, regenerating: false, failure: null, selection: [], history: [], historyAt: -1, rejected: null, feature: null, repick: null, ...initial };
+  let state = { text: '', result: null, hash: null, problem: null, regenerating: false, failure: null, selection: [], history: [], historyAt: -1, rejected: null, feature: null, repick: null, preview: null, ...initial };
   const listeners = new Set();
 
   /** Replaces the given fields and tells every listener (state, previous state). */

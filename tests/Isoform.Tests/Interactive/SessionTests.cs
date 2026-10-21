@@ -153,6 +153,29 @@ public class SessionTests
     }
 
     [Fact]
+    public void A_snapped_preview_does_not_shimmer_when_the_part_corner_moves()
+    {
+        // Dragging plate/x- by 1 mm at a preview's coarse 2 mm cells: unsnapped, the lattice follows the part's corner
+        // by half a cell and the hole across the plate is meshed differently every step; snapped, it stays put.
+        var document = Text(Examples.All[0].Name);
+        HashSet<string> Wall(Session session, ModelingSettings settings, double x)
+        {
+            var r = session.Regenerate(document, $$"""[{"set": "plate.origin.0", "value": {{x}}}, {"set": "plate.size.0", "value": {{100 - x}}}]""", settings, Session.Preview);
+            var (faces, b) = (r.View!.Faces, r.Buffers);
+            return [.. Enumerable.Range(0, b.Faces.Length).Where(t => faces[b.Faces[t]][0] == "hole/wall")
+                .Select(t => string.Join(",", b.Positions.Skip(9 * t).Take(9).Select(c => Math.Round(c, 6))))];
+        }
+        bool Steady(bool snap)
+        {
+            var (session, settings) = (new Session(), Settings with { CellSize = 2, SnapGrid = snap });
+            return Wall(session, settings, -1).SetEquals(Wall(session, settings, -2));
+        }
+
+        Steady(snap: true).Should().BeTrue();
+        Steady(snap: false).Should().BeFalse();
+    }
+
+    [Fact]
     public void Thin_spots_name_the_two_faces()
     {
         // A hole 0.2 mm from the plate's edge: a wall below the resolved size of 1 mm.
