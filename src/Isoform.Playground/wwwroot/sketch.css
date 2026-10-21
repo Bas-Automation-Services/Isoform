@@ -1,0 +1,128 @@
+/* Sketch mode (js/sketch/): the Sketch button, the drawing layer over the view, its toolbar and value box, and the
+   sketch panel that takes the right-hand column's place while sketching. */
+
+.sketch-enter, .sketch-bar button, .sketch-panel button, .sketch-value select {
+  font: inherit;
+  color: var(--ink);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 2px 9px;
+  cursor: pointer;
+}
+.sketch-enter { position: absolute; right: 12px; top: 10px; z-index: 2; color: var(--accent); }
+.sketch-enter:disabled { color: var(--muted); cursor: default; }
+.sketch-enter[hidden] { display: none; }
+.sketch-bar button.on { border-color: var(--accent); color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, var(--panel)); }
+.sketch-bar button.primary, .sketch-panel button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.sketch-bar button:disabled { color: var(--muted); cursor: default; }
+.sketch-bar button.constrain { min-width: 30px; font-weight: 600; color: var(--accent); }
+
+.sketch-layer { position: absolute; inset: 0; z-index: 3; }
+.sketch-svg { display: block; width: 100%; height: 100%; cursor: crosshair; touch-action: none; user-select: none; }
+.sketch-bar {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  top: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  pointer-events: none;
+}
+.sketch-bar > * { pointer-events: auto; }
+
+/* The drawing: the part dimmed behind it, a grid, the face's outline, entities coloured by what the solve says. */
+.sketch-svg .dim { fill: var(--view); opacity: 0.62; }
+.sketch-svg .grid { stroke: var(--ink); stroke-opacity: 0.05; stroke-width: 1; fill: none; }
+.sketch-svg .grid.major { stroke-opacity: 0.11; }
+.sketch-svg .axes { stroke: var(--accent); stroke-opacity: 0.35; stroke-width: 1; fill: none; }
+.sketch-svg .outline { stroke: var(--muted); stroke-width: 1.5; fill: none; }
+.sketch-svg .region { fill: var(--accent); fill-opacity: 0.1; stroke: none; }
+.sketch-svg .region.picked { fill-opacity: 0.3; }
+.sketch-svg .entity { fill: none; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.sketch-svg .entity.free { stroke: var(--accent); }
+.sketch-svg .entity.fixed { stroke: var(--ink); }
+.sketch-svg .entity.conflict { stroke: var(--error); }
+.sketch-svg .entity.construction { stroke-dasharray: 7 5; stroke-width: 1.5; }
+.sketch-svg .entity.lit, .sketch-svg .entity.selected { stroke-width: 4; }
+.sketch-svg .entity.selected { stroke: #f59e0b; }
+.sketch-svg .point { fill: var(--panel); stroke-width: 1.5; }
+.sketch-svg .point.free { stroke: var(--accent); }
+.sketch-svg .point.fixed { stroke: var(--ink); fill: var(--ink); }
+.sketch-svg .point.conflict { stroke: var(--error); }
+.sketch-svg .point.lit, .sketch-svg .point.selected { r: 5; }
+.sketch-svg .point.selected { stroke: #f59e0b; }
+.sketch-svg .dimension path { stroke: var(--muted); stroke-width: 1; fill: none; }
+.sketch-svg .dimension text {
+  fill: var(--ink);
+  font: 12px ui-monospace, Consolas, monospace;
+  text-anchor: middle;
+  dominant-baseline: middle;
+  paint-order: stroke;
+  stroke: var(--view);
+  stroke-width: 4px;
+  cursor: text;
+}
+.sketch-svg .dimension.conflict text { fill: var(--error); }
+.sketch-svg .draft { stroke: var(--accent); stroke-width: 1.5; stroke-dasharray: 4 3; fill: none; }
+.sketch-svg .snap { stroke: var(--accent); stroke-width: 1.5; fill: none; }
+.sketch-svg .glyph { fill: var(--accent); font: bold 12px system-ui, sans-serif; }
+
+.sketch-value {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px;
+  background: var(--panel);
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  box-shadow: 0 4px 14px rgb(0 0 0 / 0.15);
+  font-size: 12px;
+}
+.sketch-value[hidden], .sketch-value select[hidden] { display: none; }
+.sketch-value input { width: 150px; font: 13px ui-monospace, Consolas, monospace; padding: 2px 5px; border: 1px solid var(--line); border-radius: 4px; background: var(--code); color: var(--ink); }
+.sketch-value input.bad { border-color: var(--error); }
+
+.sketch-status { font-size: 12px; padding: 1px 8px; border-radius: 9px; background: var(--code); border: 1px solid var(--line); }
+.sketch-status.free { color: var(--accent); }
+.sketch-status.ok { color: #2e9e5b; }
+.sketch-status.error { color: var(--error); border-color: var(--error); }
+
+/* The panel replaces the tree and inspector while sketching; the layer has a hint of its own. */
+body.sketching #model > :not(.sketch-panel) { display: none; }
+body.sketching #view > .hint, body.sketching #view > .verdict { display: none; }
+.sketch-layer .hint { right: 12px; }
+.sketch-panel { display: flex; flex-direction: column; gap: 8px; }
+.sketch-panel .sketch-status { align-self: flex-start; }
+.sketch-note:empty { display: none; }
+.sketch-note { color: var(--error); }
+.sketch-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; max-height: 26vh; overflow: auto; }
+.sketch-list li { display: flex; align-items: center; gap: 6px; padding: 1px 6px; border-radius: 5px; }
+.sketch-list li:hover { background: var(--code); }
+.sketch-list li.free .kind { color: var(--accent); }
+.sketch-list li.conflict, .sketch-list li.conflict .kind { color: var(--error); }
+.sketch-list li.construction input { font-style: italic; }
+.sketch-list .kind { width: 82px; flex: none; color: var(--muted); font-size: 12px; }
+.sketch-list .refs { flex: 1; font: 12px ui-monospace, Consolas, monospace; }
+.sketch-list input {
+  font: 12px ui-monospace, Consolas, monospace;
+  color: var(--ink);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  padding: 0 4px;
+  min-width: 0;
+}
+.sketch-list input:hover, .sketch-list input:focus { border-color: var(--line); background: var(--code); }
+.sketch-list .entities input, .sketch-list li > input:not(.value) { flex: 1; }
+.sketch-list input.value { width: 76px; text-align: right; }
+.sketch-list button.remove { border: none; background: none; color: var(--muted); padding: 0 4px; }
+.sketch-list button.remove:hover { color: var(--error); }
+.sketch-params { font-size: 12px; }
+.sketch-finish { display: flex; flex-direction: column; gap: 6px; border-top: 1px solid var(--line); padding-top: 8px; }
+.sketch-finish label { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.sketch-finish input, .sketch-finish select { width: 130px; font: inherit; color: var(--ink); background: var(--code); border: 1px solid var(--line); border-radius: 4px; padding: 1px 4px; }
+.sketch-finish .buttons { display: flex; gap: 6px; }

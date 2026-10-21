@@ -21,11 +21,13 @@ console.log(`Testing the playground in ${root}\n`);
 const server = await startServer(root);
 console.log(`The native kernel server at ${server.url}\n`);
 
-const units = run(process.execPath, ['--test', ...['kernel-client', 'store', 'diagnose', 'references', 'diff', 'history', 'dragmath', 'features', 'preview', 'share'].map(n => join(here, `${n}.test.mjs`))]);
+const units = run(process.execPath, ['--test', ...['kernel-client', 'store', 'diagnose', 'references', 'diff', 'history', 'dragmath', 'features', 'preview', 'share', 'sketch'].map(n => join(here, `${n}.test.mjs`))]);
 console.log();
 const kernel = run(process.execPath, ['--test', join(here, 'kernel.test.mjs'), join(here, 'server.test.mjs')], { ISOFORM_PLAYGROUND: root, ISOFORM_SERVER: server.url });
 console.log();
-const browser = run(process.execPath, [join(here, 'e2e.mjs'), root], args.includes('--server') ? { ISOFORM_SERVER: server.url } : {});
+// The page's run, then sketch mode's (sketch.e2e.mjs); both always run.
+const env = args.includes('--server') ? { ISOFORM_SERVER: server.url } : {};
+const browser = ['e2e.mjs', 'sketch.e2e.mjs'].map(file => run(process.execPath, [join(here, file), root], env)).every(Boolean);
 server.close();
 const verdict = ok => ok ? 'passed' : 'FAILED';
 console.log(`\nunit tests ${verdict(units)}, kernel tests ${verdict(kernel)}, browser run (${args.includes('--server') ? 'native' : 'wasm'}) ${verdict(browser)}`);

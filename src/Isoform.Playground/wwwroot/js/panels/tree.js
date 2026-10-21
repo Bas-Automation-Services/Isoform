@@ -6,10 +6,11 @@ import { shown } from '../store.js';
 
 const ICONS = {
   block: '▭', hole: '◯', 'plane-cut': '◪', fillet: '◜', chamfer: '◸', shell: '▢', extrude: '⇡', revolve: '↻',
-  offset: '⇲', pattern: '⁘', combine: '⊕', component: '◫', mate: '⋈', parameters: 'ƒ',
+  offset: '⇲', pattern: '⁘', combine: '⊕', component: '◫', mate: '⋈', parameters: 'ƒ', sketch: '✎',
 };
 
-export function createTree(store, viewer, list) {
+/** open(item): a double-click on an item (sketch mode edits a sketch). */
+export function createTree(store, viewer, list, { open } = {}) {
   let doc = null, items = [], hovered = null;
   const item = key => items.find(i => i.key === key) ?? null;
 
@@ -42,6 +43,7 @@ export function createTree(store, viewer, list) {
       li.append(badge);
     }
     li.onclick = () => store.set({ feature: store.state.feature === it.key ? null : it.key, selection: [] });
+    li.ondblclick = () => open?.(it);
     li.onmouseenter = () => { hovered = it.key; mark(); tint(); };
     li.onmouseleave = () => { hovered = null; mark(); tint(); };
     return li;

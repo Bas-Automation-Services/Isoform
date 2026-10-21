@@ -14,10 +14,11 @@ node tests/playground/run.mjs --server             # the browser run against the
 The parts on their own:
 
 ```sh
-node --test tests/playground/{kernel-client,store,diagnose,references,diff,history,dragmath,features,preview,share}.test.mjs   # front end only, no publish
+node --test tests/playground/{kernel-client,store,diagnose,references,diff,history,dragmath,features,preview,share,sketch}.test.mjs   # front end only, no publish
 node --test tests/playground/kernel.test.mjs       # kernel only; ISOFORM_PLAYGROUND=<wwwroot> to point elsewhere
 node --test tests/playground/server.test.mjs       # native kernel server; builds and starts one unless ISOFORM_SERVER=<its url>
 node tests/playground/e2e.mjs [wwwroot]            # browser only; ISOFORM_SERVER=<url>: the page from a running server
+node tests/playground/sketch.e2e.mjs [wwwroot]     # sketch mode in the browser, the same way
 node tests/playground/serve.mjs [wwwroot] [port]   # serve the page to look at it yourself (default port 8137)
 ```
 
@@ -82,6 +83,33 @@ base64url and `&hash=` its first 16 hex digits. Text packs and unpacks to itself
 URL-safe; a 400 kB document compresses to under a fifth and comes back exactly; a link drops the page's query and old
 fragment; a fragment without `doc` reads as nothing, and a broken pack is rejected.
 
+**`sketch.test.mjs`** (`wwwroot/js/sketch/`, sketch mode's pure parts): ids are the first free `p1`, `p2`, … and
+`e1`, `e2`, … over points and entities alike, and features get `extrude1`, `sketch1`, …; each tool's entities and
+constraints (a rectangle's four lines round shared corners with two horizontals and two verticals, a circle through a
+snapped point gets `on`, an arc is stored counter-clockwise with its end on the radius, a slot's lines are tangent to
+both arcs and the arcs equal); a pick on a point reuses it (the format's coincident); removing, renaming (every
+reference follows; the kernel's name rules) and construction; the constrain buttons per selection. Inference snaps to
+points, then the origin (a new point fixed there), midpoints, lines and arcs (only where the arc runs), then level and
+plumb with the segment's start; Shift turns it off; a line on from an arc's end along its tangent, and an arc from a
+line's end centred on its normal, get tangent. Dimensions: what fits one or two picks, what they measure, typed values
+(numbers above 0, `=expressions` kept, an angle keeps the sense it has), labels off the geometry away from the
+sketch's middle. Regions: a click inside the outer loop and outside its holes, loops chained whatever their order and
+direction, arcs sampled. Colours: free, fixed and conflicting entities and the summary line. The finish: a new sketch
+is inserted with its feature after it (extrude `0…depth`, cut `−depth…1`, revolve with its axis; `op: new` when the
+document has no body yet), an edited one is one `set`; the working document holds the sketch in its place or at the
+end; the view maps the plane with x right and y up and zooms about the pointer.
+
+**`sketch.e2e.mjs`** drives sketch mode in the browser, against the published folder or (`ISOFORM_SERVER`) the native
+server. On example 0 it selects `plate/z+`, presses the Sketch button, draws a rectangle with two clicks (four lines,
+two horizontal and two vertical, 4 free degrees), clicks its bottom line and a spot below it with the Dimension tool
+and types 20 in the value box (the line becomes 20 long, 3 free degrees, one region), picks the region in the Select
+tool, sets the depth to 5 and finishes: the document gains `sketch1` and `extrude1` as one history entry of origin
+`sketch` with two inserts, and the part has the faces `extrude1/e1`…`e4` and `extrude1/end` with no sketch diagnostic
+(`out/screenshots/sketch-draw.png`, `sketch-extrude.png`). Then it double-clicks `sketch1` in the tree, sets the
+dimension to 30 in the panel and saves: one history entry with one `set`, the stored points 30 apart. Last, S on a
+selected face starts a new sketch, a line is drawn, and Escape (pressed until the mode ends) leaves the document's
+hash as it was.
+
 **`kernel.test.mjs`** loads `_framework/dotnet.js` from the published folder in Node and calls the same exports the
 page's worker calls. For every example from `Examples()`, at the page's default settings (0.5 mm cells, 0.05 mm chord):
 
@@ -94,6 +122,8 @@ It prints the kernel time, triangles, faces and diagnostics per example. A broke
 `{error}`, not as an exception, and a bad edit as `{error, failedEdit}`. `Apply(old, Diff(old, new))` must give `new`.
 `Handles(slot)` gives the handles of that slot's last regeneration, with its hash.
 `Resolve` pins `plate/z+` by index, returns it by name, and reports it split after a cut across it.
+`FaceFrame` gives `plate/z+`'s plane (and an error for a face that is not flat), and `Sketch` solves a triangle on it
+with a point dragged: free degrees, solved points and its one region.
 
 **`server.test.mjs`** drives the native kernel server (`src/Isoform.Server`, started by `server.mjs` on a free port)
 through the page's own `connectKernel` and `createClient`: every example regenerates to result v2 whose mesh buffers
@@ -175,6 +205,10 @@ preview on screen: `{cell, ms, t, handle, hash, diagnostics}`, or null), `previe
 For the tour, `tour`: `start()`, `next()`, `back()` (each resolves to that step's log entry), `play()`, `pause()`,
 `exit()` and `state()` (`{active, index, count, playing, busy, original, log: [{index, title, hash, before, codes, ok,
 problems}]}`); for share links `shareLink()` (resolves to the link to the shown document) and `shareStatus()`.
+For sketch mode, `sketch`: `active()`, `enter()` (on the selected face), `edit(id)`, `tool(name)`, `toScreen([u, v])`
+(a sketch point in viewport pixels, to click at), `state()` (`{tool, sketch, editing, selection, picked, solved,
+freeDegrees, problems, regions, finish, current}`, `current` once the last change is solved), `finishChanged(patch)`,
+`finish()` and `cancel()`.
 Later tasks add to it. For example:
 
 ```js
