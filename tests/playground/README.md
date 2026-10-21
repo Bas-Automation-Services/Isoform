@@ -14,7 +14,7 @@ node tests/playground/run.mjs --server             # the browser run against the
 The parts on their own:
 
 ```sh
-node --test tests/playground/{kernel-client,store,diagnose,references,diff,history,dragmath,features,preview,share}.test.mjs   # front end only, no publish
+node --test tests/playground/{kernel-client,store,diagnose,references,diff,history,dragmath,features,preview,share,files}.test.mjs   # front end only, no publish
 node --test tests/playground/kernel.test.mjs       # kernel only; ISOFORM_PLAYGROUND=<wwwroot> to point elsewhere
 node --test tests/playground/server.test.mjs       # native kernel server; builds and starts one unless ISOFORM_SERVER=<its url>
 node tests/playground/e2e.mjs [wwwroot]            # browser only; ISOFORM_SERVER=<url>: the page from a running server
@@ -82,6 +82,11 @@ base64url and `&hash=` its first 16 hex digits. Text packs and unpacks to itself
 URL-safe; a 400 kB document compresses to under a fifth and comes back exactly; a link drops the page's query and old
 fragment; a fragment without `doc` reads as nothing, and a broken pack is rejected.
 
+**`files.test.mjs`** (`wwwroot/js/lib/files.js`, open, save and downloads): files are named after the file opened, else
+the example (`bracket.step`, `bracket-plate-z+.dxf`), else `part`; Save writes the file it has, else asks for one where
+the File System Access API exists, else downloads; a DXF is of the sketch selected in the tree, else of the one face
+selected; an export that failed says why, naming the faces STEP could not write exactly.
+
 **`kernel.test.mjs`** loads `_framework/dotnet.js` from the published folder in Node and calls the same exports the
 page's worker calls. For every example from `Examples()`, at the page's default settings (0.5 mm cells, 0.05 mm chord):
 
@@ -94,13 +99,15 @@ It prints the kernel time, triangles, faces and diagnostics per example. A broke
 `{error}`, not as an exception, and a bad edit as `{error, failedEdit}`. `Apply(old, Diff(old, new))` must give `new`.
 `Handles(slot)` gives the handles of that slot's last regeneration, with its hash.
 `Resolve` pins `plate/z+` by index, returns it by name, and reports it split after a cut across it.
+`Step(slot, name)` writes example 0 with all its faces and names the blend faces of the blends example it cannot write;
+`Dxf` writes the sketch of `sketched.fixture.json` (four lines and a circle) and its flat end face, and refuses its bore.
 
 **`server.test.mjs`** drives the native kernel server (`src/Isoform.Server`, started by `server.mjs` on a free port)
 through the page's own `connectKernel` and `createClient`: every example regenerates to result v2 whose mesh buffers
 agree with its counts (positions and lines as `Float32Array`, indices as `Int32Array`, as the worker gives them), with
 the same hash, faces and diagnostic codes as the wasm kernel; a broken document and a bad edit come back as `{info:
-{error}}` without a mesh, an unknown op as a failed reply; `apply`, `diff`, `handles` and `resolve` answer exactly as
-the wasm exports do; a second connection is a session of its own (the preview slot is not the main one's, and not
+{error}}` without a mesh, an unknown op as a failed reply; `apply`, `diff`, `handles`, `resolve`, `step` and `dxf`
+answer exactly as the wasm exports do; a second connection is a session of its own (the preview slot is not the main one's, and not
 refined). `kernel-client.test.mjs` checks `unpack`, the reading of the server's binary reply.
 
 **`e2e.mjs`** serves the folder with `serve.mjs` (with `ISOFORM_SERVER`, the native server serves it instead, and each
@@ -139,6 +146,9 @@ split at tangent, `fillet/face` gone at fillet-invalid); the edits are history e
 undo shows the hash the tour started from. Escape closes it. Screenshots `tour-2.png` (thin spot), `tour-5.png`
 (fillet-invalid) and `tour-9.png` (back at the original hash). Last, a share link: example 0 with an edit, its
 `#doc=` link (the Share button puts it in the address bar), opened in the page again, gives the same hash and says so.
+Then files: `sketched.fixture.json` opened as a file (`window.isoform.files.open(file)`, past the picker) replaces
+example 0 as one history entry of origin `file`, the picker names it, STEP of it has its 7 faces, and the sketch
+selected in the tree and then `plate/end` each download as DXF, the status line naming the files.
 
 ## Screenshots
 

@@ -18,6 +18,7 @@ import { createPreview } from './lib/preview.js';
 import { createGhosts } from './ghosts.js';
 import { createTour } from './panels/tour.js';
 import { createShare } from './panels/share.js';
+import { createFiles } from './panels/files.js';
 
 const $ = id => document.getElementById(id);
 const store = createStore();
@@ -207,6 +208,13 @@ $('tour').onclick = () => tour.start();
 const share = createShare(store, { button: $('share'), status: $('share-status'), examplesBox: $('examples'), regenerate });
 Object.assign(window.isoform, { tour, shareLink: () => share.link(), shareStatus: () => share.status() });
 // --- end tour and share -----------------------------------------------------------------------------------------
+
+// Open, save, STEP and DXF (C2-C4): window.isoform.files.open(file) opens a File without the picker, for the tests.
+const files = createFiles(store, {
+  buttons: { open: $('open'), save: $('save'), step: $('step'), dxf: $('dxf') }, status: $('file-status'),
+  examplesBox: $('examples'), regenerate, call: client.call,
+});
+window.isoform.files = files;
 
 await client.start();
 editor.load((await client.call('examples')).result);
