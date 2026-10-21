@@ -236,7 +236,7 @@ static class LostFaces
     }
 
     /// <summary>Halves the box along every side it has.</summary>
-    static IEnumerable<Box3D> Split(Box3D b)
+    internal static IEnumerable<Box3D> Split(Box3D b)
     {
         var c = b.Center;
         var (sx, sy, sz) = (b.Max.X > b.Min.X ? 2 : 1, b.Max.Y > b.Min.Y ? 2 : 1, b.Max.Z > b.Min.Z ? 2 : 1);
@@ -248,9 +248,9 @@ static class LostFaces
                 new Point3D(sx == 1 ? b.Max.X : i == 0 ? c.X : b.Max.X, sy == 1 ? b.Max.Y : j == 0 ? c.Y : b.Max.Y, sz == 1 ? b.Max.Z : k == 0 ? c.Z : b.Max.Z));
     }
 
-    static int? Axis(Vector3D a) => a.Y == 0 && a.Z == 0 ? 0 : a.X == 0 && a.Z == 0 ? 1 : a.X == 0 && a.Y == 0 ? 2 : null;
+    internal static int? Axis(Vector3D a) => a.Y == 0 && a.Z == 0 ? 0 : a.X == 0 && a.Z == 0 ? 1 : a.X == 0 && a.Y == 0 ? 2 : null;
 
-    static double At(Point3D p, int axis) => axis switch { 0 => p.X, 1 => p.Y, _ => p.Z };
+    internal static double At(Point3D p, int axis) => axis switch { 0 => p.X, 1 => p.Y, _ => p.Z };
 
-    static Point3D With(Point3D p, int axis, double v) => axis switch { 0 => new(v, p.Y, p.Z), 1 => new(p.X, v, p.Z), _ => new(p.X, p.Y, v) };
+    internal static Point3D With(Point3D p, int axis, double v) => axis switch { 0 => new(v, p.Y, p.Z), 1 => new(p.X, v, p.Z), _ => new(p.X, p.Y, v) };
 }

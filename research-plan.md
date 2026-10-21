@@ -303,6 +303,20 @@ the implicit approach.
 part), occurrence names, pinned hashes, sub-assemblies, bundles; mates (mate, flush, axis) solved by damped
 Gauss-Newton with the free degrees of freedom counted; clearance and interference between instances.
 
+**K7 — robustness against OCCT (2026-10-21).** Seeded random documents (`RobustnessTests`) built on both backends
+and judged against a certified volume and an F-rep run at a quarter of the cell size. The generator is adversarial:
+faces snap to existing ones plus a nudge of 0 to 1 mm, so coincident faces, slivers and near-tangent holes are common.
+On 150 seeds at 0.5 mm cells: F-rep 0 silent failures (OCCT 1: a volume outside the certified range), 0 crashes.
+In 46% of the documents F-rep refuses where OCCT builds; over 1000 seeds every refusal that names a size names one below the
+resolved size of 1 mm (82 under 1e-5 mm, 57 under 0.01, 129 under 0.25, 114 under 1), so none is a false refusal,
+but about half are features a finer local mesh would build.
+
+- *False edges:* where a piece of face is narrower than a cell (a step between parallel faces, a corner a cut just
+  clears), the mesh could join its neighbours with an edge they do not have. Every edge now needs a point near its
+  chain on both surfaces and the boundary (Newton from the chain's vertices), or branch-and-bound proves there is
+  none and the edge is reported (`FalseEdges`). This turned 16 silent results in 1000 seeds into reports and flagged
+  no part both backends agree on.
+
 **Review.** An independent read of the K4 code found 15 problems (wrong geometry without a diagnostic in several);
 all fixed, each with a regression test (`ReviewFindingTests`).
 

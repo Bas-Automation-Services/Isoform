@@ -340,4 +340,43 @@ public class RobustnessReproTests
 
         (Reported(r) || r.Mesh!.IsWatertight()).Should().BeTrue();
     }
+
+    /// <summary>
+    /// A step narrower than a cell between two parallel faces (1e-6, 0.01 and 1e-4 mm): the strip of face between them
+    /// was lost and the mesh joined the parallel faces with an edge, one edge, two vertices and one face short of
+    /// OCCT, with nothing reported. An edge whose faces provably do not meet near it is now reported.
+    /// </summary>
+    [Theory]
+    [InlineData("""{"id":"boss1","type":"block","op":"join","origin":[-1E-06,0,10],"size":[17,24,10]}""", """[0,0,0],"size":[20,20,12]""", 11, 27, 18)]
+    [InlineData("""{"id":"boss1","type":"block","op":"join","origin":[-0.5,10.551,0],"size":[10,1.6389999999999993,2]}""", """[0,0.2,0],"size":[10,12,10]""", 10, 24, 16)]
+    [InlineData("""{"id":"boss3","type":"block","op":"join","origin":[0.0001,0,-1],"size":[10,10,10]}""", """[0,0,0],"size":[20,10,10]""", 10, 24, 16)]
+    public void Step_narrower_than_a_cell_is_built_or_reported(string boss, string plate, int faces, int edges, int vertices)
+    {
+        var r = Regenerate($$"""
+            [
+              {"id":"plate","type":"block","op":"new","origin":{{plate}}},
+              {{boss}}
+            ]
+            """);
+
+        (Reported(r) || Counts(r) == (faces, edges, vertices, 1)).Should().BeTrue($"got {Counts(r)}");
+    }
+
+    /// <summary>
+    /// A hole wall that would meet the top face 0.07 mm beyond an oblique cut: the cells joined the wall to the top
+    /// face, two edges and two vertices more than OCCT and than finer cells, with nothing reported.
+    /// </summary>
+    [Fact]
+    public void Hole_just_clear_of_a_cut_corner_is_built_or_reported()
+    {
+        var r = Regenerate("""
+            [
+              {"id":"plate","type":"block","op":"new","origin":[0,0,-1],"size":[30,30,12]},
+              {"id":"slice2","type":"plane-cut","point":[4.2,13.8,4.3],"normal":[-0.088,-0.4,0.453]},
+              {"id":"hole3","type":"hole","center":[22.5,12.9],"diameter":8.5}
+            ]
+            """);
+
+        (Reported(r) || Counts(r) == (7, 14, 8, 1)).Should().BeTrue($"got {Counts(r)}");
+    }
 }

@@ -16,7 +16,10 @@ public static class TopologyBuilder
     /// Mesh edges that more than two quads share, as (midpoint, owners round it): one vertex there stands for surface
     /// pieces the cells could not tell apart, so the mesh is not a closed manifold there.
     /// </param>
-    public sealed record Result(Topology Topology, int[] FaceOfQuad, IReadOnlyList<(Point3D At, int[] Owners)> Pinches);
+    /// <param name="FaceOwners">Per face, the surfaces its polygons belong to.</param>
+    /// <param name="EdgePoints">Per edge, the mesh vertices of its chain.</param>
+    public sealed record Result(Topology Topology, int[] FaceOfQuad, IReadOnlyList<(Point3D At, int[] Owners)> Pinches,
+        IReadOnlyList<int[]> FaceOwners, IReadOnlyList<Point3D[]> EdgePoints);
 
     /// <param name="surfaces">Best <see cref="Oriented"/>, so a face of a cut matches the coincident face it touches.</param>
     /// <param name="field">The body's field: with it, an edge between two planes that meet the part in one point collapses.</param>
@@ -124,18 +127,24 @@ public static class TopologyBuilder
         // faces across a sliver of a third one there (a cut whose trace touches a face at a vertex). It collapses to
         // that vertex.
         var collapsed = new Dictionary<int, List<int>>(); // chain root → its mesh vertices
+        var chainVertices = Enumerable.Range(0, segments.Count).GroupBy(chains.Find)
+            .ToDictionary(g => g.Key, g => g.SelectMany(k => new[] { segments[k].V1, segments[k].V2 }).Distinct().ToList());
         Surface? Plane(HashSet<int> owners) => owners.All(o => surfaces[o].Kind == SurfaceKind.Plane) ? surfaces[owners.Min()] : null;
         if (field is not null)
-            foreach (var chain in Enumerable.Range(0, segments.Count).GroupBy(chains.Find))
+            foreach (var (root, near) in chainVertices)
             {
-                var (a, b) = (Plane(faceOwners[segments[chain.Key].A]), Plane(faceOwners[segments[chain.Key].B]));
-                var near = chain.SelectMany(k => new[] { segments[k].V1, segments[k].V2 }).Distinct().ToList();
-                if (a is not null && b is not null && PointContact(field, a, b, near.Select(v => vertices[v]).ToList(), tolerance)) collapsed[chain.Key] = near;
+                var (a, b) = (Plane(faceOwners[segments[root].A]), Plane(faceOwners[segments[root].B]));
+                if (a is not null && b is not null && PointContact(field, a, b, near.Select(v => vertices[v]).ToList(), tolerance)) collapsed[root] = near;
             }
         // A chain's root is its smallest segment: numbered in that order.
         var topoEdges = new List<TopoEdge>();
+        var edgePoints = new List<Point3D[]>();
         for (var i = 0; i < segments.Count; i++)
-            if (chainIndex[i] >= 0 && !collapsed.ContainsKey(i)) topoEdges.Add(new TopoEdge(topoEdges.Count, segments[i].A, segments[i].B));
+            if (chainIndex[i] >= 0 && !collapsed.ContainsKey(i))
+            {
+                topoEdges.Add(new TopoEdge(topoEdges.Count, segments[i].A, segments[i].B));
+                edgePoints.Add([.. chainVertices[i].Select(v => vertices[v])]);
+            }
 
         // Vertices: clusters of mesh vertices where three or more faces meet.
         var corners = new List<(int Vertex, List<int> Faces)>();
@@ -185,7 +194,8 @@ public static class TopologyBuilder
             .Select(g => new TopoVertex(g.Key, g.SelectMany(x => x.Faces).Distinct().Order().ToList()))
             .ToList();
 
-        return new Result(new Topology(topoFaces, topoEdges, topoVertices, bodyOfQuad.Count), faceOfQuad, pinches);
+        return new Result(new Topology(topoFaces, topoEdges, topoVertices, bodyOfQuad.Count), faceOfQuad, pinches,
+            [.. faceOwners.Select(o => o.Order().ToArray())], edgePoints);
     }
 
     /// <summary>
