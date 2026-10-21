@@ -8,6 +8,7 @@ Chrome.
 node tests/playground/run.mjs --publish            # publish to out/playground, then test it (publish takes ~2 min)
 node tests/playground/run.mjs                      # test what is already in out/playground/wwwroot
 node tests/playground/run.mjs path/to/wwwroot      # or any other published wwwroot (or the folder above it)
+node tests/playground/run.mjs --server             # the browser run against the native kernel server
 ```
 
 The parts on their own:
@@ -15,7 +16,8 @@ The parts on their own:
 ```sh
 node --test tests/playground/{kernel-client,store,diagnose,references,diff,history,dragmath,features,preview,share}.test.mjs   # front end only, no publish
 node --test tests/playground/kernel.test.mjs       # kernel only; ISOFORM_PLAYGROUND=<wwwroot> to point elsewhere
-node tests/playground/e2e.mjs [wwwroot]            # browser only
+node --test tests/playground/server.test.mjs       # native kernel server; builds and starts one unless ISOFORM_SERVER=<its url>
+node tests/playground/e2e.mjs [wwwroot]            # browser only; ISOFORM_SERVER=<url>: the page from a running server
 node tests/playground/serve.mjs [wwwroot] [port]   # serve the page to look at it yourself (default port 8137)
 ```
 
@@ -93,7 +95,16 @@ It prints the kernel time, triangles, faces and diagnostics per example. A broke
 `Handles(slot)` gives the handles of that slot's last regeneration, with its hash.
 `Resolve` pins `plate/z+` by index, returns it by name, and reports it split after a cut across it.
 
-**`e2e.mjs`** serves the folder with `serve.mjs`, opens `?example=N` for every example and waits (in real time) for the
+**`server.test.mjs`** drives the native kernel server (`src/Isoform.Server`, started by `server.mjs` on a free port)
+through the page's own `connectKernel` and `createClient`: every example regenerates to result v2 whose mesh buffers
+agree with its counts (positions and lines as `Float32Array`, indices as `Int32Array`, as the worker gives them), with
+the same hash, faces and diagnostic codes as the wasm kernel; a broken document and a bad edit come back as `{info:
+{error}}` without a mesh, an unknown op as a failed reply; `apply`, `diff`, `handles` and `resolve` answer exactly as
+the wasm exports do; a second connection is a session of its own (the preview slot is not the main one's, and not
+refined). `kernel-client.test.mjs` checks `unpack`, the reading of the server's binary reply.
+
+**`e2e.mjs`** serves the folder with `serve.mjs` (with `ISOFORM_SERVER`, the native server serves it instead, and each
+example checks that the page uses the native kernel, `window.isoform.kernel`), opens `?example=N` for every example and waits (in real time) for the
 stats line under the editor (`#stats`) to show a result. An example passes when that line names one or more faces,
 does not start with `Error:` or say the document does not parse, and the page logged no uncaught exception or console
 error. Per example it prints the kernel time from the stats line and the page time (navigation to result, including
@@ -150,7 +161,7 @@ verdict, the ghost in amber); `demo-*.png` the demo's steps in order.
   else, `center(selector)`;
 - `frames(n)` before a screenshot, `screenshot(file)`, and `errors` (exceptions and console errors since `open`).
 
-Coordinates are CSS pixels in the viewport. The page exposes `window.isoform`: `ready` (a result is shown),
+Coordinates are CSS pixels in the viewport. The page exposes `window.isoform`: `ready` (a result is shown), `kernel` (`'native'` or `'wasm'`),
 `document()`, `hash()`, `selection()` (face names), `faces()` (each face's names), `select(names)` and `edit(text)`
 (resolves once that text has regenerated); for diagnostics `diagnostics()` (as listed), `focusDiagnostic(index)`,
 `marked()` (the faces lit for the one in focus, with their colours), `cell()` (the cell the result was made at),

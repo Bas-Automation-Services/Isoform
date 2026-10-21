@@ -1,5 +1,5 @@
 // Wires the page: the kernel workers, the store, the viewer, picking and the panels.
-import { adaptResult, createClient } from './kernel-client.js';
+import { adaptResult, connectKernel, createClient } from './kernel-client.js';
 import { createStore, shown } from './store.js';
 import { createViewer } from './viewer.js';
 import { createPicking } from './picking.js';
@@ -27,13 +27,26 @@ const report = e => store.set({ failure: String(e?.message ?? e) });
 addEventListener('error', e => report(e.error ?? e.message));
 addEventListener('unhandledrejection', e => report(e.reason));
 
-// A pool of workers, each with its own kernel, meshes the regions of the part in parallel (up to 8; ?workers=N sets
-// the number). The first worker gathers the others' regions and regenerates; only it answers.
-const asked = +new URLSearchParams(location.search).get('workers');
-const workers = Array.from({ length: asked > 0 ? asked : Math.min(navigator.hardwareConcurrency || 1, 8) },
+// The native kernel (src/Isoform.Server) when there is one: the page came from it (it says so in the navigation's
+// Server-Timing), or ?kernel=ws://localhost:5250/kernel points at one. Two connections, each a session of its own,
+// like the workers below: one for what is committed, one for the drag previews. Without it, or with ?kernel=wasm, the
+// kernel runs in the page's workers, so a shared link works on any static host.
+const params = new URLSearchParams(location.search);
+const served = performance.getEntriesByType('navigation')[0]?.serverTiming?.some(t => t.name === 'isoform-kernel');
+const kernelUrl = params.get('kernel') ?? (served ? `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/kernel` : 'wasm');
+const sockets = kernelUrl === 'wasm' ? [] : await Promise.all([connectKernel(kernelUrl), connectKernel(kernelUrl)]);
+const native = sockets.length > 0 && sockets.every(Boolean);
+if (!native) sockets.forEach(s => s?.terminate());
+if (native) document.querySelector('#panel header .muted').textContent = 'kernel playground · runs natively on this machine';
+
+// Else a pool of workers, each with its own kernel, meshes the regions of the part in parallel (up to 8; ?workers=N
+// sets the number). The first worker gathers the others' regions and regenerates; only it answers.
+const asked = +params.get('workers');
+const workers = native ? [sockets[0]] : Array.from({ length: asked > 0 ? asked : Math.min(navigator.hardwareConcurrency || 1, 8) },
   () => new Worker(new URL('./kernel-worker.js', import.meta.url), { type: 'module' }));
 workers.forEach((worker, i) => { worker.onerror = e => report(e.message ?? `kernel worker ${i} failed to start`); });
 const client = createClient(workers);
+const kernel = native ? 'native' : `wasm, ${workers.length} worker${workers.length > 1 ? 's' : ''}`;
 
 const viewer = createViewer($('view'));
 let fit = true; // frame the camera on the next result shown: the first, and after picking an example
@@ -48,7 +61,7 @@ createSelection(store, $('selection'));
 // The cell size the page opens with; the diagnostics offer it as the way back after resolving at a finer one.
 const defaultCell = +[...$('cell').options].find(o => o.defaultSelected).value;
 const diagnostics = createDiagnostics(store, {
-  stats: $('stats'), list: $('diagnostics'), workers: workers.length, viewer, view: $('view'), badge: $('verdict'), defaultCell,
+  stats: $('stats'), list: $('diagnostics'), kernel, viewer, view: $('view'), badge: $('verdict'), defaultCell,
   resolve: cell => useCell(cell),
 });
 const references = createReferences(store, { box: $('references'), viewer, resolve: refs => client.call('resolve', { refs }).then(r => r.result) });
@@ -97,6 +110,7 @@ createInspector(store, $('inspector'), (edits, label) => commits.applyEdits(edit
 // For the browser tests and the console: plain data out, a promise per regeneration.
 window.isoform = {
   get ready() { return !!store.state.result; },
+  kernel: native ? 'native' : 'wasm',
   document: () => store.state.text,
   hash: () => store.state.hash,
   selection: () => store.state.selection,
@@ -144,8 +158,8 @@ Object.assign(window.isoform, {
 // pool worker: the region cache keeps only what the last regeneration used, so previews in the pool would throw away
 // the committed document's regions and the release would mesh everything again. One more kernel costs one more wasm
 // heap (window.isoform.memory(): 70-80 MB over the demo, as much as the pool's primary), against up to 8 in the pool.
-// It starts with the page, so it is loaded by the first drag.
-const previewWorker = new Worker(new URL('./kernel-worker.js', import.meta.url), { type: 'module' });
+// It starts with the page, so it is loaded by the first drag. With the native kernel it is the second connection.
+const previewWorker = native ? sockets[1] : new Worker(new URL('./kernel-worker.js', import.meta.url), { type: 'module' });
 previewWorker.onerror = e => report(e.message ?? 'the preview worker failed to start');
 const previewClient = createClient([previewWorker]);
 const previews = createPreview(store, {

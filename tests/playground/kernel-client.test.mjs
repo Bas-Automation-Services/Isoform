@@ -1,7 +1,7 @@
 // The worker protocol of the page (wwwroot/js/kernel-client.js) against fake workers: node --test
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { adaptResult, createClient } from '../../src/Isoform.Playground/wwwroot/js/kernel-client.js';
+import { adaptResult, createClient, unpack } from '../../src/Isoform.Playground/wwwroot/js/kernel-client.js';
 
 /** Records the requests it is sent and answers them when the test says so. */
 class FakeWorker {
@@ -122,4 +122,28 @@ test('adaptResult: result v2 as written, plus the mesh, the round trip and each 
   assert.equal(failed.error, 'no such path');
   assert.equal(failed.failedEdit, 0);
   assert.equal(failed.ms, 3);
+});
+
+test('unpack reads the native kernel\'s binary reply into the worker\'s: the header, then each mesh buffer', () => {
+  // As KernelSocket.Pack writes it: the header's length, the header padded with spaces to four bytes, the buffers.
+  const header = new TextEncoder().encode(JSON.stringify({ id: 4, ok: true, result: { info: { hash: 'ab' } }, ms: 5, lengths: [9, 1, 6, 0, 1, 0] }));
+  const length = Math.ceil(header.length / 4) * 4;
+  const buffer = new ArrayBuffer(4 + length + 4 * 17);
+  new DataView(buffer).setInt32(0, length, true);
+  new Uint8Array(buffer, 4, length).fill(32).set(header);
+  new Float32Array(buffer, 4 + length, 9).set([0, 1, 2, 3, 4, 5, 6, 7, 8.5]);
+  new Int32Array(buffer, 4 + length + 36, 1).set([3]);
+  new Float32Array(buffer, 4 + length + 40, 6).set([1, 1, 1, 2, 2, 2]);
+  new Int32Array(buffer, 4 + length + 64, 1).set([0]);
+
+  const { result, ...reply } = unpack(buffer);
+  assert.deepEqual(reply, { id: 4, ok: true, ms: 5 });
+  assert.deepEqual(result.info, { hash: 'ab' });
+  assert.ok(result.positions instanceof Float32Array && result.faces instanceof Int32Array && result.sharpEdges instanceof Int32Array);
+  assert.deepEqual([...result.positions], [0, 1, 2, 3, 4, 5, 6, 7, 8.5]);
+  assert.deepEqual([...result.faces], [3]);
+  assert.deepEqual([...result.sharp], [1, 1, 1, 2, 2, 2]);
+  assert.deepEqual([...result.smooth], []);
+  assert.deepEqual([...result.sharpEdges], [0]);
+  assert.deepEqual([...result.smoothEdges], []);
 });

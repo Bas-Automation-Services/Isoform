@@ -90,12 +90,13 @@ test('subscribers get the new and the previous state', () => {
 
 test('status line: the form the browser run reads', () => {
   const s = createStore();
-  assert.equal(statusLine(s.state, 1), 'Loading the kernel…');
+  assert.equal(statusLine(s.state, 'native'), 'Loading the kernel…');
   s.committed(result('v1', 'a', 'b'));
-  const line = statusLine(s.state, 4);
-  assert.match(line, /^812 ms · 4 workers, 3 of 8 regions meshed · 19.598 triangles · 2 faces, 12 edges, 8 vertices · 1 body$/);
+  const line = statusLine(s.state, 'wasm, 4 workers');
+  assert.match(line, /^812 ms · wasm, 4 workers, 3 of 8 regions meshed · 19.598 triangles · 2 faces, 12 edges, 8 vertices · 1 body$/);
   assert.match(line, /\b[1-9]\d* faces/);
-  assert.equal(statusLine({ ...s.state, regenerating: true }, 4), 'Regenerating…');
-  assert.equal(statusLine({ ...s.state, problem: 'x' }, 4), 'The document does not parse.');
-  assert.equal(statusLine({ ...s.state, failure: 'worker died' }, 4), 'Error: worker died');
+  assert.match(statusLine(s.state, 'native'), /^812 ms · native, 3 of 8 regions meshed · /);
+  assert.equal(statusLine({ ...s.state, regenerating: true }, 'native'), 'Regenerating…');
+  assert.equal(statusLine({ ...s.state, problem: 'x' }, 'native'), 'The document does not parse.');
+  assert.equal(statusLine({ ...s.state, failure: 'worker died' }, 'native'), 'Error: worker died');
 });

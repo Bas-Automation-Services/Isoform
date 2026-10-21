@@ -204,7 +204,7 @@ export function createDrags(page, { url, settled, timeout, shots }) {
     const memory = await evaluate('window.isoform.memory()');
     const mb = b => (b == null ? '?' : `${(b / 2 ** 20).toFixed(0)} MB`);
     console.log(`info  previews (this page): ${[...byCell].map(([cell, ms]) => `${cell} mm ×${ms.length} median ${median(ms).toFixed(0)} ms`).join(', ') || 'none'}; `
-      + `wasm memory: primary ${mb(memory.primary)}, preview ${mb(memory.preview)}`);
+      + `kernel memory: primary ${mb(memory.primary)}, preview ${mb(memory.preview)}`);
   }
 
   return { kinds, demo, costs };

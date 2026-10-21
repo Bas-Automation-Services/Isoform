@@ -5,14 +5,14 @@
 import { diagnose, featureFaces, groups, mm, refind, verdict } from '../lib/diagnose.js';
 import { shown } from '../store.js';
 
-/** The status line for a state; the browser tests read the "<ms> ms · … faces" form. */
-export function statusLine(s, workers) {
+/** The status line for a state, with the kernel in use ("native", "wasm, 8 workers"); the browser tests read the "<ms> ms · … faces" form. */
+export function statusLine(s, kernel) {
   if (s.failure) return `Error: ${s.failure}`;
   if (s.regenerating) return 'Regenerating…';
   if (s.problem) return 'The document does not parse.';
   if (!s.result) return 'Loading the kernel…';
   const { ms, meshed, reused, triangles, faces, edges, vertices, bodies } = s.result;
-  return `${ms.toFixed(0)} ms · ${workers} worker${workers > 1 ? 's' : ''}, `
+  return `${ms.toFixed(0)} ms · ${kernel}, `
     + `${meshed} of ${meshed + reused} regions meshed · ${triangles.toLocaleString()} triangles · `
     + `${faces.length} faces, ${edges} edges, ${vertices} vertices · `
     + (bodies.length === 1 ? '1 body' : `${bodies.length} bodies: ${bodies.map(b => b.name).join(', ')}`);
@@ -36,7 +36,7 @@ const facesWith = (result, name) => result.faces.flatMap((sources, i) => (source
  * view: the 3D view's element (labels and the verdict go on it); defaultCell: the page's cell size, offered as the way
  * back; resolve(cell): regenerates the document at that cell size, keeping the view.
  */
-export function createDiagnostics(store, { stats, list, workers, viewer, view, badge, defaultCell, resolve }) {
+export function createDiagnostics(store, { stats, list, kernel, viewer, view, badge, defaultCell, resolve }) {
   let items = [], focus = null, whole = false; // whole: the focused diagnostic's feature, not only its faces
   const labels = el('div', 'spot-labels');
   view.append(labels);
@@ -131,7 +131,7 @@ export function createDiagnostics(store, { stats, list, workers, viewer, view, b
   badge.onclick = () => focusOn(items.find(i => !i.stale) ?? null);
 
   store.subscribe((s, before) => {
-    stats.textContent = statusLine(s, workers);
+    stats.textContent = statusLine(s, kernel);
     if (shown(s) !== shown(before) || s.problem !== before.problem) renderBadge(s);
     if (shown(s) !== shown(before)) render(s);
     else if (s.selection !== before.selection && focus) focusOn(null);

@@ -16,6 +16,7 @@ vertices while producing exact output, and does it do better at this than a B-re
 | `Isoform.Modeling` | Regeneration, topology, references, diagnostics: the backend-neutral API |
 | `Isoform.Occt` | OCCT B-rep baseline behind the same API |
 | `Isoform.Playground` | The kernel in the browser (WebAssembly): document editor and 3D view |
+| `Isoform.Server` | The playground with the kernel running natively: a localhost server, the page's worker protocol over WebSocket |
 | `native/Isoform.Occt` | Small C ABI over OpenCASCADE used by `Isoform.Occt` |
 
 ## Features
@@ -62,6 +63,19 @@ python -m http.server 8137 -d out/playground/wwwroot   # or any static file serv
 
 The page needs no network: three.js r160 is vendored in `wwwroot/vendor/three`. In the browser the kernel runs on one thread, so it is several times slower
 than on the desktop.
+
+For the kernel at desktop speed, on all cores, run the page from the native server:
+
+```sh
+dotnet run -c Release --project src/Isoform.Server  # http://localhost:5250
+dotnet run -c Release --project src/Isoform.Server -- --port 5260 --root <published wwwroot>
+```
+
+It serves the published playground (`out/playground/wwwroot`, else the page's sources) on localhost only, and runs the
+kernel natively behind a WebSocket at `/kernel`, a session per connection, speaking the same protocol as the page's
+workers. The page uses it when the server served it, or when `?kernel=ws://localhost:5250/kernel` points at one; the
+status line says `native` or `wasm`. Without a server, or with `?kernel=wasm`, the page runs the kernel in WebAssembly
+as before, so a shared link works from any static host.
 
 ## About
 
