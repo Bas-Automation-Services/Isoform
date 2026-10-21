@@ -1,5 +1,6 @@
 // The page's side of the worker protocol: requests {id, op, args}, replies {id, ok, result|error, ms}. Pure: the
-// workers are anything with postMessage and onmessage, so the tests drive it with fakes.
+// workers are anything with postMessage and onmessage, so the tests drive it with fakes, and connectKernel makes one of
+// a connection to the native kernel server.
 
 /** Ops that go to every worker of the pool (each meshes its share); the others go to the primary only. */
 const fanOut = new Set(['regenerate']);
@@ -72,6 +73,49 @@ export function createClient(workers) {
       ]);
     },
   };
+}
+
+/**
+ * The native kernel (src/Isoform.Server) over a WebSocket, as a worker that createClient takes: postMessage sends a
+ * request, onmessage gets the replies, onerror hears that the connection closed. Each connection is a kernel session of
+ * its own. Resolves to null when nothing answers at url within timeout ms, for the page to use its workers instead.
+ */
+export function connectKernel(url, timeout = 2000) {
+  return new Promise(resolve => {
+    const socket = new WebSocket(url);
+    socket.binaryType = 'arraybuffer';
+    const worker = {
+      onmessage: null,
+      onerror: null,
+      postMessage: message => socket.send(JSON.stringify(message)),
+      terminate: () => socket.close(),
+    };
+    const give = value => { clearTimeout(timer); resolve(value); };
+    const timer = setTimeout(() => { socket.close(); give(null); }, timeout);
+    socket.onopen = () => give(worker);
+    socket.onerror = () => give(null);
+    socket.onclose = () => worker.onerror?.({ message: 'the native kernel closed the connection' });
+    socket.onmessage = ({ data }) => worker.onmessage?.({ data: typeof data === 'string' ? JSON.parse(data) : unpack(data) });
+  });
+}
+
+// A regeneration's mesh buffers in the server's binary reply, in its order, with the types the worker gives them.
+const meshBuffers = [['positions', Float32Array], ['faces', Int32Array], ['sharp', Float32Array], ['smooth', Float32Array],
+  ['sharpEdges', Int32Array], ['smoothEdges', Int32Array]];
+
+/**
+ * A binary reply of the server (KernelSocket.Pack) as the worker's reply: the header's length (int32), the header
+ * (JSON, padded to four bytes), then each buffer of the result as many elements as the header's lengths say.
+ */
+export function unpack(buffer) {
+  const length = new DataView(buffer).getInt32(0, true);
+  const { lengths, ...reply } = JSON.parse(new TextDecoder().decode(new Uint8Array(buffer, 4, length)));
+  let at = 4 + length;
+  meshBuffers.forEach(([name, Type], i) => {
+    reply.result[name] = new Type(buffer, at, lengths[i]);
+    at += 4 * lengths[i];
+  });
+  return reply;
 }
 
 /**

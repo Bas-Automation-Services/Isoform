@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <!-- The playground with the kernel running natively, on all cores: a localhost server that serves the page and runs
+       a session per WebSocket connection, speaking the page's worker protocol. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <!-- Optimised code from the first call: tiered, the meshing loops run unoptimised for the first several
+         regenerations (about 5x slower); this way only the first one pays, for compiling. -->
+    <TieredCompilation>false</TieredCompilation>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../Isoform.Interactive/Isoform.Interactive.csproj" />
+  </ItemGroup>
+
+</Project>

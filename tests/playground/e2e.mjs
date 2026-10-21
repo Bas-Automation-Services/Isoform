@@ -2,7 +2,7 @@
 // saves a screenshot to tests/playground/out/screenshots; then picks a face, resolves a thin spot from the
 // diagnostics, pins a face, commits, undoes and redoes an edit, and drags a handle; runs the guided tour and opens a
 // share link. Exits non-zero if anything fails.
-// node tests/playground/e2e.mjs [published wwwroot]      (env: ISOFORM_BROWSER, ISOFORM_TIMEOUT in ms)
+// node tests/playground/e2e.mjs [published wwwroot]      (env: ISOFORM_BROWSER, ISOFORM_TIMEOUT in ms, ISOFORM_SERVER)
 import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { launch } from './browser.mjs';
@@ -61,7 +61,11 @@ async function dragHandle(page) {
   return problems.length ? 'FAILED' : 'passed';
 }
 
-const site = await serve(root);
+// ISOFORM_SERVER: the native kernel server (src/Isoform.Server) at that URL serves the page and runs the kernel; else
+// the published folder is served as static files and the kernel runs in WebAssembly. Every example checks which.
+const site = process.env.ISOFORM_SERVER ? { url: process.env.ISOFORM_SERVER, close: async () => {} } : await serve(root);
+const kernelKind = process.env.ISOFORM_SERVER ? 'native' : 'wasm';
+console.log(`The page at ${site.url}, the kernel ${kernelKind}\n`);
 const browser = await launch();
 let failures = 0, picking = false, diagnosing = false, pinning = false, committing = false, handles = 'skipped', inspector = false;
 let dragging = false, demo = false; // J2
@@ -75,6 +79,8 @@ try {
     try {
       await page.open(`${site.url}?example=${i}`);
       stats = await page.waitFor(settled, { timeout });
+      const used = await page.evaluate('window.isoform.kernel');
+      if (used !== kernelKind) problems.push(`the kernel is ${used}, not ${kernelKind}`);
       await page.frames();
       await page.screenshot(join(shots, `example-${i}.png`));
     } catch (e) {
