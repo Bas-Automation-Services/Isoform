@@ -64,3 +64,30 @@ test('Apply(old, Diff(old, new)) gives new', () => {
   assert.deepEqual(JSON.parse(kernel.Diff(parts[0], JSON.parse(kernel.Apply(parts[0], '{"set": "plate.size.0", "value": 120}')).text)).edits,
     [{ set: 'plate.size.0', value: 120 }]);
 });
+
+test('Handles(slot) gives the handles of the slot\'s last regeneration', () => {
+  const [, document] = examples[0];
+  const r = JSON.parse(kernel.Regenerate(document, '[]', cell, chord, 'main'));
+  const { slot, hash, handles } = JSON.parse(kernel.Handles('main'));
+  assert.equal(slot, 'main');
+  assert.equal(hash, r.hash);
+  const x = handles.find(h => h.id === 'plate:x+');
+  assert.equal(x.kind, 'linear');
+  assert.deepEqual(x.axis, [1, 0, 0]);
+  assert.deepEqual(x.edits, [{ path: 'plate.size.0', base: 100, per: [1] }]);
+  assert.deepEqual(JSON.parse(kernel.Handles('nothing')).handles, []);
+});
+
+test('Resolve: a pin by index comes back by name, and a cut across plate/z+ splits it', () => {
+  const [, document] = examples[0];
+  const r = JSON.parse(kernel.Regenerate(document, '[]', cell, chord, 'main'));
+  const top = r.faces.findIndex(f => f[0] === 'plate/z+');
+  const [pin] = JSON.parse(kernel.Resolve(JSON.stringify([{ id: 'top', face: top }]), 'main')).pins;
+  assert.deepEqual(pin, { id: 'top', ref: { face: 'plate/z+' }, status: 'resolved', faces: [top] });
+  const slot = { insert: { id: 'slot', type: 'block', op: 'cut', origin: [60, -1, 5], size: [5, 52, 10] }, before: 'fillet' };
+  kernel.Regenerate(document, JSON.stringify([slot]), cell, chord, 'main');
+  const after = JSON.parse(kernel.Resolve(JSON.stringify([{ id: 'top', ...pin.ref }]), 'main'));
+  assert.equal(after.pins[0].status, 'split');
+  assert.equal(after.pins[0].faces.length, 2);
+  assert.match(JSON.parse(kernel.Resolve('[]', 'nothing')).error, /no result/);
+});

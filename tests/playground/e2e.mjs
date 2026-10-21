@@ -1,5 +1,6 @@
 // Opens every example in headless Edge or Chrome, waits for the part to regenerate, checks the stats line and
-// saves a screenshot to tests/playground/out/screenshots; then picks a face. Exits non-zero if anything fails.
+// saves a screenshot to tests/playground/out/screenshots; then picks a face, resolves a thin spot from the
+// diagnostics, pins a face, commits, undoes and redoes an edit, and drags a handle. Exits non-zero if anything fails.
 // node tests/playground/e2e.mjs [published wwwroot]      (env: ISOFORM_BROWSER, ISOFORM_TIMEOUT in ms)
 import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -12,14 +13,55 @@ const shots = join(dirname(fileURLToPath(import.meta.url)), 'out', 'screenshots'
 const timeout = +(process.env.ISOFORM_TIMEOUT ?? 120000);
 
 // The example list from the kernel itself, so it does not depend on how the page shows it.
-const names = Object.keys(JSON.parse((await loadKernel(root)).Examples()));
+const kernel = await loadKernel(root);
+const names = Object.keys(JSON.parse(kernel.Examples()));
 
 // The stats line once the page has a result: "812 ms · 19,598 triangles · 8 faces, ..." or an error.
 const settled = `(s => /\\d ms ·|Error:|does not parse/.test(s) && s)(document.getElementById('stats')?.textContent ?? '')`;
 
+/**
+ * Handles: on example 0, select plate/x+, drag its arrow 40 px outwards, and the plate gets wider and the hash
+ * changes. Skipped while the kernel has no Handles export. Returns 'passed', 'FAILED' or 'skipped'.
+ */
+async function dragHandle(page) {
+  if (typeof kernel.Handles !== 'function') {
+    console.log('skip  handles: the kernel has no Handles export yet');
+    return 'skipped';
+  }
+  const problems = [];
+  let width;
+  try {
+    await page.open(`${site.url}?example=0`);
+    await page.waitFor(settled, { timeout });
+    const before = await page.evaluate('window.isoform.hash()');
+    await page.evaluate(`window.isoform.select(['plate/x+'])`);
+    const h = await page.waitFor(`window.isoform.handles().find(h => h.kind === 'linear' && !h.readOnly && h.faces.includes('plate/x+'))`, { timeout: 10000 });
+    await page.frames();
+    const to = [h.screen[0] + 40 * h.direction[0], h.screen[1] + 40 * h.direction[1]];
+    // By hand rather than page.drag, for a screenshot with the label showing mid-drag.
+    await page.mouse('mouseMoved', h.screen);
+    await page.mouse('mousePressed', h.screen, { buttons: 1 });
+    for (let i = 1; i <= 12; i++)
+      await page.mouse('mouseMoved', [h.screen[0] + (to[0] - h.screen[0]) * i / 12, h.screen[1] + (to[1] - h.screen[1]) * i / 12], { buttons: 1 });
+    await page.frames();
+    await page.screenshot(join(shots, 'handle-drag.png'));
+    await page.mouse('mouseReleased', to);
+    await page.waitFor(`window.isoform.hash() !== ${JSON.stringify(before)}`, { timeout });
+    width = await page.evaluate(`JSON.parse(window.isoform.document()).features.find(f => f.id === 'plate').size[0]`);
+    if (!(width > 100)) problems.push(`plate.size.0 is ${width}, not more than 100`);
+    if (!(await page.evaluate('window.isoform.selection()')).includes('plate/x+')) problems.push('plate/x+ is no longer selected');
+  } catch (e) {
+    problems.push(e.message);
+  }
+  problems.push(...page.errors);
+  console.log(`${problems.length ? 'FAIL' : 'pass'}  handles: dragged plate/x+ to plate.size.0 = ${width}, the hash changed`);
+  for (const p of problems) console.log(`        ${p}`);
+  return problems.length ? 'FAILED' : 'passed';
+}
+
 const site = await serve(root);
 const browser = await launch();
-let failures = 0, picking = false;
+let failures = 0, picking = false, diagnosing = false, pinning = false, committing = false, handles = 'skipped', inspector = false;
 try {
   const page = await browser.newPage();
   for (const [i, name] of names.entries()) {
@@ -72,9 +114,189 @@ try {
   console.log(`${problems.length ? 'FAIL' : 'pass'}  picking: ${JSON.stringify(selected)} kept across a regeneration`);
   for (const p of problems) console.log(`        ${p}`);
   picking = !problems.length;
+
+  diagnosing = await diagnostics(page);
+  pinning = await pins(page);
+  committing = await commits(page);
+  handles = await dragHandle(page);
+  inspector = await inspecting(page);
 } finally {
   await browser.close();
   await site.close();
 }
-console.log(`\n${names.length - failures}/${names.length} examples passed, picking ${picking ? 'passed' : 'FAILED'}; screenshots in ${relative(repo, shots)}`);
-process.exitCode = failures || !picking ? 1 : 0;
+console.log(`\n${names.length - failures}/${names.length} examples passed, picking ${picking ? 'passed' : 'FAILED'}, `
+  + `diagnostics ${diagnosing ? 'passed' : 'FAILED'}, pins ${pinning ? 'passed' : 'FAILED'}, history ${committing ? 'passed' : 'FAILED'}, handles ${handles}, inspector ${inspector ? 'passed' : 'FAILED'}; screenshots in ${relative(repo, shots)}`);
+process.exitCode = failures || !picking || !diagnosing || !pinning || !committing || handles === 'FAILED' || !inspector ? 1 : 0;
+
+/**
+ * Diagnostics in place: example 0 with its hole moved to leave a 0.6 mm wall gives a below-resolution thin spot at
+ * 0.5 mm cells. Clicking it lights both faces in two colours and flies the camera there; Resolve regenerates at
+ * 0.25 mm cells, where the wall is resolved and the report is gone; "back to" returns to the default cell. Then a
+ * fillet too large to fit gives fillet-invalid, lights the edge it names, and leaves the rest of the part.
+ */
+async function diagnostics(page) {
+  const problems = [];
+  let found = null;
+  const clickOn = async selector => {
+    await page.evaluate(`document.querySelector(${JSON.stringify(selector)})?.scrollIntoView({ block: 'center' })`);
+    const at = await page.center(selector);
+    if (!at) throw new Error(`nothing matches ${selector}`);
+    await page.click(at);
+  };
+  const verdict = () => page.evaluate(`document.getElementById('verdict').textContent`);
+  try {
+    await page.open(`${site.url}?example=0`);
+    await page.waitFor(settled, { timeout });
+    await page.evaluate(`(d => { d.features.find(f => f.id === 'hole').center = [30, 44.4]; return window.isoform.edit(JSON.stringify(d, null, 2)); })(JSON.parse(window.isoform.document()))`);
+    const items = await page.evaluate('window.isoform.diagnostics()');
+    found = items.find(d => d.code === 'below-resolution' && d.thickness);
+    if (!found) throw new Error(`no below-resolution thin spot: ${JSON.stringify(items)}`);
+    if (found.faces.join() !== 'plate/y+,hole/wall') problems.push(`the thin spot names ${JSON.stringify(found.faces)}`);
+    if (found.resolve !== 0.25) problems.push(`resolve offers ${found.resolve} mm, not 0.25`);
+    if (!/1 problem/.test(await verdict())) problems.push(`the verdict says ${await verdict()}`);
+
+    const item = `#diagnostics li.item[data-index="${found.index}"]`;
+    await clickOn(item);
+    const marked = await page.evaluate('window.isoform.marked()');
+    const colours = Object.fromEntries(marked.map(m => [m.face, m.color]));
+    if (!colours['plate/y+'] || !colours['hole/wall'] || colours['plate/y+'] === colours['hole/wall'])
+      problems.push(`both faces should be lit in two colours: ${JSON.stringify(marked)}`);
+    // The thin spot is on the y+ face, near y = 49.7.
+    await page.waitFor(`(t => t[1] > 49 && t[1] < 50.5)(window.isoform.target())`, { timeout: 5000 })
+      .catch(e => problems.push(`the camera did not fly to the thin spot: ${e.message}`));
+    await page.frames();
+    await page.screenshot(join(shots, 'diagnostics.png'));
+
+    const hash = await page.evaluate('window.isoform.hash()');
+    await clickOn(`${item} button.resolve`);
+    await page.waitFor(`window.isoform.cell() === 0.25`, { timeout });
+    const after = await page.evaluate('window.isoform.diagnostics()');
+    if (after.some(d => d.code === 'below-resolution')) problems.push(`still reported at 0.25 mm: ${JSON.stringify(after)}`);
+    if (await page.evaluate('window.isoform.hash()') !== hash) problems.push('resolving changed the document');
+    if (await page.evaluate(`document.getElementById('cell').value`) !== '0.25') problems.push('the cell select does not show 0.25 mm');
+    if (!/^Valid/.test(await verdict())) problems.push(`after resolving the verdict says ${await verdict()}`);
+
+    await clickOn('#diagnostics li.cell button');
+    await page.waitFor(`window.isoform.cell() === 0.5`, { timeout });
+    if (!(await page.evaluate('window.isoform.diagnostics()')).some(d => d.code === 'below-resolution'))
+      problems.push('back at 0.5 mm the thin spot is not reported again');
+
+    // A fillet radius past what fits: a precise fillet-invalid naming the edge, and the rest of the part stays.
+    await page.evaluate(`(d => { d.features.find(f => f.id === 'fillet').radius = 12; return window.isoform.edit(JSON.stringify(d, null, 2)); })(JSON.parse(window.isoform.document()))`);
+    const fillet = (await page.evaluate('window.isoform.diagnostics()')).find(d => d.code === 'fillet-invalid');
+    if (!fillet) problems.push('no fillet-invalid for a radius of 12 mm');
+    else {
+      if (!/problem/.test(await verdict())) problems.push(`with fillet-invalid the verdict says ${await verdict()}`);
+      if (!(await page.evaluate('window.isoform.faces()')).some(f => f[0] === 'hole/wall')) problems.push('the rest of the part is gone');
+      await page.evaluate(`window.isoform.focusDiagnostic(${fillet.index})`);
+      const lit = (await page.evaluate('window.isoform.marked()')).map(m => m.face).sort().join();
+      if (lit !== 'plate/x+,plate/z+') problems.push(`fillet-invalid lights ${lit}, not the edge plate/z+ · plate/x+`);
+    }
+  } catch (e) {
+    problems.push(e.message);
+  }
+  problems.push(...page.errors);
+  const what = found ? `${found.thickness.toFixed(3)} mm between ${found.faces.join(' and ')}` : '-';
+  console.log(`${problems.length ? 'FAIL' : 'pass'}  diagnostics: thin spot ${what} lit, resolved at 0.25 mm and back; fillet-invalid lights its edge`);
+  for (const p of problems) console.log(`        ${p}`);
+  return !problems.length;
+}
+
+/** Reference pins: plate/z+ pinned on example 0, a slot cut across it, and the pin reports it split in two. */
+async function pins(page) {
+  const problems = [];
+  try {
+    await page.open(`${site.url}?example=0`);
+    await page.waitFor(settled, { timeout });
+    const pinned = await page.evaluate(`window.isoform.pin('plate/z+')`);
+    if (pinned?.status !== 'resolved') problems.push(`pinned as ${JSON.stringify(pinned)}`);
+    const slot = { insert: { id: 'slot', type: 'block', op: 'cut', origin: [60, -1, 5], size: [5, 52, 10] }, before: 'fillet' };
+    const { text } = JSON.parse(kernel.Apply(await page.evaluate('window.isoform.document()'), JSON.stringify(slot)));
+    await page.evaluate(`window.isoform.edit(${JSON.stringify(text)})`);
+    await page.waitFor(`(p => p?.status === 'split' && p.faces.length === 2)(window.isoform.pins()[0])`, { timeout });
+    await page.evaluate(`document.querySelector('#references li').click()`);
+    const shown = await page.evaluate(`(li => [li.querySelector('.chip').textContent, li.classList.contains('lit')])(document.querySelector('#references li'))`);
+    if (shown.join() !== 'split,true') problems.push(`the pin shows ${JSON.stringify(shown)}`);
+    await page.frames();
+    await page.screenshot(join(shots, 'pins.png'));
+  } catch (e) {
+    problems.push(e.message);
+  }
+  problems.push(...page.errors);
+  console.log(`${problems.length ? 'FAIL' : 'pass'}  pins: plate/z+ pinned, split by a slot across it`);
+  for (const p of problems) console.log(`        ${p}`);
+  return !problems.length;
+}
+
+/**
+ * Undo is document history: an edit list commits one entry (agent view and editor flash), one that does not apply
+ * commits nothing, undo gives back the identical hash and redo the edited one.
+ */
+async function commits(page) {
+  const steps = [];
+  try {
+    await page.open(`${site.url}?example=0`);
+    await page.waitFor(settled, { timeout });
+    const original = await page.evaluate('window.isoform.hash()');
+    const edited = await page.evaluate(`window.isoform.applyEdits([{ set: 'plate.size.0', value: 120 }], 'e2e', 'test')`);
+    if (!edited?.hash || edited.hash === original) throw new Error(`applyEdits gave ${JSON.stringify(edited)}`);
+    const shown = await page.evaluate(`[document.getElementById('agent').dataset.hash, document.getElementById('agent').textContent,
+      document.querySelectorAll('.editor-flash.on div').length]`);
+    if (shown[0] !== edited.hash || !shown[1].includes('plate.size.0') || !shown[1].includes('→')) steps.push(`agent view: ${shown[1].slice(0, 200)}`);
+    if (!shown[2]) steps.push('no lines flashed in the editor');
+    const rejected = await page.evaluate(`window.isoform.applyEdits([{ remove: 'slot' }], 'e2e', 'test')`);
+    if (!rejected?.error || await page.evaluate('window.isoform.hash()') !== edited.hash) steps.push(`a bad edit gave ${JSON.stringify(rejected)}`);
+    const undone = await page.evaluate('window.isoform.undo()');
+    if (undone?.hash !== original) steps.push(`undo gave ${undone?.hash}, not the original ${original}`);
+    const { at, entries } = await page.evaluate('window.isoform.history()');
+    if (at !== 0 || entries.length !== 2 || entries[1].label !== 'e2e') steps.push(`history ${JSON.stringify({ at, entries })}`);
+    const redone = await page.evaluate('window.isoform.redo()');
+    if (redone?.hash !== edited.hash) steps.push(`redo gave ${redone?.hash}, not ${edited.hash}`);
+    await page.screenshot(join(shots, 'history.png'));
+  } catch (e) {
+    steps.push(e.message);
+  }
+  steps.push(...page.errors);
+  console.log(`${steps.length ? 'FAIL' : 'pass'}  history: apply, reject, undo to the original hash, redo`);
+  for (const p of steps) console.log(`        ${p}`);
+  return !steps.length;
+}
+
+/**
+ * Tree and inspector: select a feature in the tree, type a number, scrub it (the document and its hash follow, the
+ * feature stays selected), re-pick a fillet's edge, and pick a face to select its feature.
+ */
+async function inspecting(page) {
+  const problems = [];
+  const diameter = `JSON.parse(window.isoform.document()).features.find(f => f.id === 'hole').diameter`;
+  const field = `document.querySelector('#inspector [data-path="hole.diameter"]')`;
+  const seen = [];
+  try {
+    await page.open(`${site.url}?example=0`);
+    await page.waitFor(settled, { timeout });
+    const hash = await page.evaluate('window.isoform.hash()');
+    await page.click(await page.center('#tree li[data-key="hole"]'));
+    await page.waitFor(`window.isoform.feature() === 'hole' && !!${field}`);
+    await page.evaluate(`(i => { i.value = '12'; i.dispatchEvent(new Event('change')); })(${field})`);
+    await page.waitFor(`${diameter} === 12 && window.isoform.hash() !== ${JSON.stringify(hash)} && !!${field}`, { timeout });
+    seen.push(12);
+    const label = await page.center('#inspector [data-scrub="hole.diameter"]');
+    await page.drag(label, [label[0] + 40, label[1]]);
+    seen.push(await page.waitFor(`(d => d > 12 && d)(${diameter})`, { timeout }));
+    if (await page.evaluate('window.isoform.feature()') !== 'hole') problems.push('the feature is no longer selected after the edit');
+    // Re-pick the fillet's edge: the next two faces picked (as a shift+click would) replace it.
+    await page.click(await page.center('#tree li[data-key="fillet"]'));
+    await page.waitFor(`!!document.querySelector('#inspector .repick')`);
+    await page.evaluate(`document.querySelector('#inspector .repick').click()`);
+    await page.evaluate(`window.isoform.select(['plate/z+', 'plate/y-'])`);
+    await page.waitFor(`JSON.parse(window.isoform.document()).features.find(f => f.id === 'fillet').edge.join() === 'plate/z+,plate/y-'`, { timeout });
+    await page.evaluate(`window.isoform.select(['plate/z+'])`);
+    await page.waitFor(`window.isoform.feature() === 'plate' && document.querySelector('#tree li.selected')?.dataset.key === 'plate'`);
+  } catch (e) {
+    problems.push(e.message);
+  }
+  problems.push(...page.errors);
+  console.log(`${problems.length ? 'FAIL' : 'pass'}  inspector: hole.diameter set to ${seen.join(', then scrubbed to ')}; fillet edge re-picked; a face selects its feature`);
+  for (const p of problems) console.log(`        ${p}`);
+  return !problems.length;
+}

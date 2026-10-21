@@ -13,7 +13,7 @@ node tests/playground/run.mjs path/to/wwwroot      # or any other published wwwr
 The parts on their own:
 
 ```sh
-node --test tests/playground/kernel-client.test.mjs tests/playground/store.test.mjs   # front end only, no publish
+node --test tests/playground/{kernel-client,store,diagnose,references,diff,history,dragmath,features}.test.mjs   # front end only, no publish
 node --test tests/playground/kernel.test.mjs       # kernel only; ISOFORM_PLAYGROUND=<wwwroot> to point elsewhere
 node tests/playground/e2e.mjs [wwwroot]            # browser only
 node tests/playground/serve.mjs [wwwroot] [port]   # serve the page to look at it yourself (default port 8137)
@@ -34,6 +34,36 @@ helpers to the primary; `adaptResult` keeps result v2 as written and adds the me
 a document that does not read keeps the last result; history gets one entry per changed document; the status line has
 the form `e2e.mjs` reads.
 
+**`dragmath.test.mjs`** drives `wwwroot/js/lib/dragmath.js` with the handles in `handles.fixture.json` (the C#
+contract of `docs/playground-plan.md`, one of each kind): the pointer ray gives `t` as the closest point to a linear
+handle's axis, the hit on a planar handle's plane, or the angle about an angle handle's axis; a drag counts from where
+it was grabbed and an angle keeps turning past half a turn; the value snaps to `step` and stays within `min`/`max`; the
+edits are `{set, value: base + per·t}`; a selected face shows its feature's handles and never an assembly frame.
+
+**`diagnose.test.mjs`** (`wwwroot/js/lib/diagnose.js`): diagnostics grouped by code with readable titles, errors
+first; the face names a message mentions (whole names only), else for a feature that left no faces the ones its
+definition names (a fillet's edge); a thin spot's thinnest point; the cell that resolves a below-resolution report
+(size / 2, at least half the current cell, on a round value: a 0.6 mm wall at 0.5 mm cells gives 0.25 mm); preview
+results grey out their below-resolution reports; the valid / N problems verdict.
+
+**`references.test.mjs`**: what a selection pins (an edge, a face by name, or by index when it is the face
+clicked), and the kernel's replies folded into the pins by id.
+
+**`diff.test.mjs`**: the line diff (`wwwroot/js/lib/diff.js`) accounts for both texts in order, is shortest (a moved
+line costs two), numbers lines in their own text; `hunks` keeps context around changes, `changedLines` gives the lines
+the editor flash lights.
+
+**`history.test.mjs`** drives `lib/history.js` and `lib/commit.js` over the real store and a fake kernel:
+`applyEdits` pushes one entry with its edits, label and origin and flashes the editor; edits that do not apply commit
+nothing and set `problem` and `rejected`; undo back to the start gives the identical hash, repeated undo keeps stepping,
+a commit after undo drops the redo entries; a typed entry gets its edits from the kernel diff.
+
+**`features.test.mjs`** (`wwwroot/js/lib/features.js`, the tree and inspector model): the tree lists a part's
+features in order, grouped by the body each works on when there are several, and a bundle's components and mates; a
+face belongs to the item its name starts with; the inspector's fields come from the feature JSON, each with the
+`DocumentEdits` path it sets (`rib.profile.edges.0.to.1`, `components.pin.placement.origin.2`, `parameters.width`);
+typed values and scrubbing give numbers or `=expressions`.
+
 **`kernel.test.mjs`** loads `_framework/dotnet.js` from the published folder in Node and calls the same exports the
 page's worker calls. For every example from `Examples()`, at the page's default settings (0.5 mm cells, 0.05 mm chord):
 
@@ -44,13 +74,28 @@ page's worker calls. For every example from `Examples()`, at the page's default 
 
 It prints the kernel time, triangles, faces and diagnostics per example. A broken document must come back as
 `{error}`, not as an exception, and a bad edit as `{error, failedEdit}`. `Apply(old, Diff(old, new))` must give `new`.
+`Handles(slot)` gives the handles of that slot's last regeneration, with its hash.
+`Resolve` pins `plate/z+` by index, returns it by name, and reports it split after a cut across it.
 
 **`e2e.mjs`** serves the folder with `serve.mjs`, opens `?example=N` for every example and waits (in real time) for the
 stats line under the editor (`#stats`) to show a result. An example passes when that line names one or more faces,
 does not start with `Error:` or say the document does not parse, and the page logged no uncaught exception or console
 error. Per example it prints the kernel time from the stats line and the page time (navigation to result, including
 loading the runtime). Then it clicks a face of example 0, regenerates at another cell size and checks that the same
-face names are still selected.
+face names are still selected. Last, diagnostics: example 0 with its hole moved to leave a 0.6 mm wall reports a
+below-resolution thin spot between `plate/y+` and `hole/wall`; clicking it in the list lights both faces in two colours
+and flies the camera there (`out/screenshots/diagnostics.png`); "Resolve at 0.25 mm" regenerates the same document at
+0.25 mm cells with the report gone and the verdict Valid; "back to 0.5 mm" brings it back; a fillet radius of 12 mm gives
+`fillet-invalid`, lights the edge it names and keeps the rest of the part. Then pins: `plate/z+` pinned on example 0
+(`window.isoform.pin`), a slot edited in across it, and the pin shows `split`, lit when clicked (`out/screenshots/pins.png`).
+Then the history on example 0: `applyEdits` commits one entry (agent view shows its hash and edit, the editor
+flashes), an edit that does not apply leaves the hash alone, undo returns the original hash and redo the edited one
+(`out/screenshots/history.png`).
+Last it selects `plate/x+` on example 0, drags its handle 40 px outwards with mouse events, and checks that
+`plate.size.0` grew and the hash changed (skipped while the kernel has no `Handles` export).
+Then the tree and inspector: it selects `hole` in the tree, types a diameter and scrubs it (each must change
+the document and its hash, and keep `hole` selected), re-picks the fillet's edge, and checks that selecting a face
+selects its feature in the tree.
 
 ## Screenshots
 
@@ -58,7 +103,8 @@ face names are still selected.
 taken two frames after the result arrived. Each shows the editor on the left with the stats line at the bottom, and
 the part on the right, framed to fit, one colour per face, sharp edges dark and tangent edges faint. Things to look
 for: a part missing or cut off (framing), faces that share a colour where they should not (face naming), holes in the
-mesh, stray triangles, and red diagnostics under the stats line.
+mesh, stray triangles, and red diagnostics under the stats line. `handle-drag.png` is example 0 in the handle drag, just
+before the release: the plate tinted, its handles drawn over it, and the dragged arrow's label with the live width.
 
 ## Writing browser tests
 
@@ -72,13 +118,21 @@ mesh, stray triangles, and red diagnostics under the stats line.
 
 Coordinates are CSS pixels in the viewport. The page exposes `window.isoform`: `ready` (a result is shown),
 `document()`, `hash()`, `selection()` (face names), `faces()` (each face's names), `select(names)` and `edit(text)`
-(resolves once that text has regenerated). Later tasks add to it, for example handles:
+(resolves once that text has regenerated); for diagnostics `diagnostics()` (as listed), `focusDiagnostic(index)`,
+`marked()` (the faces lit for the one in focus, with their colours), `cell()` (the cell the result was made at),
+`target()` (where the camera looks) and `resolve(cell)`; for reference pins `pins()` and `pin(name | [a, b])` (resolves to the pin); for commits `applyEdits(edits, label, origin)`, `undo()`, `redo()` (each
+resolves to `{hash}`, `{error, failedEdit?}` or null) and `history()` (`{at, entries: [{hash, edits, label, origin}]}`); for the tree, `feature()` (the selected item's key);
+for handles `handles()`: the shown handles (those of the
+selected face's feature), each `{id, feature, kind, label, value, faces, readOnly, screen, direction}` with `screen`
+the point to grab it by and `direction` the unit screen direction of its axis (where `t` grows). Later tasks add to
+it. For example:
 
 ```js
 const page = await browser.newPage();
 await page.open(`${site.url}?example=0`);
 await page.waitFor('window.isoform?.ready');
-const [h] = await page.evaluate('window.isoform.handles()');   // assumed to include screen positions
-await page.drag(h.screen, [h.screen[0] + 40, h.screen[1]]);
-await page.waitFor(`window.isoform.document().includes('"end": 10')`);
+await page.evaluate(`window.isoform.select(['plate/x+'])`);
+const h = await page.waitFor(`window.isoform.handles().find(h => h.id === 'plate:x+')`);
+await page.drag(h.screen, [h.screen[0] + 40 * h.direction[0], h.screen[1] + 40 * h.direction[1]]);
+await page.waitFor(`!window.isoform.document().includes('"size": [100, 50, 10]')`);
 ```

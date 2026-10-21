@@ -1,4 +1,6 @@
+using System.Globalization;
 using Isoform.Document;
+using static System.FormattableString;
 
 namespace Isoform.Modeling;
 
@@ -31,20 +33,20 @@ public static class DocumentRules
                 CombineBodies c when !bodies.Contains(c.Tool) => $"there is no body named '{c.Tool}'",
                 CombineBodies c when c.Op == BooleanOp.New => "combine joins or cuts a body, it does not start one",
                 CombineBodies c when bodies.Count < 2 => "combine needs a second body to use as the tool",
-                Block b when b.Size.Any(s => s <= tolerance) => $"block size must be positive, got [{string.Join(", ", b.Size)}]",
-                Hole h when h.Diameter <= tolerance => $"hole diameter must be positive, got {h.Diameter}",
+                Block b when b.Size.Any(s => s <= tolerance) => $"block size must be positive, got [{string.Join(", ", b.Size.Select(s => s.ToString(CultureInfo.InvariantCulture)))}]",
+                Hole h when h.Diameter <= tolerance => Invariant($"hole diameter must be positive, got {h.Diameter}"),
                 PlaneCut c when Math.Sqrt(c.Normal.Sum(x => x * x)) <= tolerance => "plane-cut normal must not be zero",
-                Shell sh when sh.Thickness <= tolerance => $"shell thickness must be positive, got {sh.Thickness}",
-                Fillet f when f.Radius <= tolerance => $"fillet radius must be positive, got {f.Radius}",
+                Shell sh when sh.Thickness <= tolerance => Invariant($"shell thickness must be positive, got {sh.Thickness}"),
+                Fillet f when f.Radius <= tolerance => Invariant($"fillet radius must be positive, got {f.Radius}"),
                 Fillet f when (f.Loop is null ? f.Edge.Length != 2 : f.Edge.Length != 0) => "a fillet names either an edge of two source faces or one loop face",
-                Chamfer c when c.Distance <= tolerance => $"chamfer distance must be positive, got {c.Distance}",
+                Chamfer c when c.Distance <= tolerance => Invariant($"chamfer distance must be positive, got {c.Distance}"),
                 Offset o when Math.Abs(o.Distance) <= tolerance => "an offset distance must not be zero",
                 _ when BlendOf(feature) is var (op, blend) && (blend < 0 || blend > 0 && op == BooleanOp.New) =>
-                    blend < 0 ? $"blend must not be negative, got {blend}" : "only a join or a cut can blend",
+                    blend < 0 ? Invariant($"blend must not be negative, got {blend}") : "only a join or a cut can blend",
                 Chamfer c when (c.Loop is null ? c.Edge.Length != 2 : c.Edge.Length != 0) => "a chamfer names either an edge of two source faces or one loop face",
-                Extrude e when e.End - e.Start <= tolerance => $"extrude end must be beyond its start, got {e.Start} to {e.End}",
+                Extrude e when e.End - e.Start <= tolerance => Invariant($"extrude end must be beyond its start, got {e.Start} to {e.End}"),
                 Extrude e => Profiles.Problem(e.Plane, e.Profile, tolerance, revolve: false),
-                Revolve r when !(r.Angle > tolerance && r.Angle <= 360) => $"revolve angle must be in (0, 360], got {r.Angle}",
+                Revolve r when !(r.Angle > tolerance && r.Angle <= 360) => Invariant($"revolve angle must be in (0, 360], got {r.Angle}"),
                 Revolve r => Profiles.Problem(r.Plane, r.Profile, tolerance, revolve: true),
                 Pattern p => PatternProblem(p, doc.Features.Take(i).ToList(), tolerance),
                 _ when i == 0 && !StartsBody(feature) => "the first feature must start a new body",
@@ -71,11 +73,11 @@ public static class DocumentRules
         }
         return p.Motion switch
         {
-            LinearMotion l when l.Count is < 2 or > 1000 => $"a pattern count must be 2 to 1000, got {l.Count}",
+            LinearMotion l when l.Count is < 2 or > 1000 => Invariant($"a pattern count must be 2 to 1000, got {l.Count}"),
             LinearMotion l when Length(l.Direction) <= tolerance || Math.Abs(l.Spacing) <= tolerance => "a linear pattern needs a direction and a non-zero spacing",
-            CircularMotion c when c.Count is < 2 or > 1000 => $"a pattern count must be 2 to 1000, got {c.Count}",
+            CircularMotion c when c.Count is < 2 or > 1000 => Invariant($"a pattern count must be 2 to 1000, got {c.Count}"),
             CircularMotion c when Length(c.Axis) <= tolerance => "a circular pattern needs an axis",
-            CircularMotion c when !(c.Angle > tolerance && c.Angle <= 360) => $"a circular pattern angle must be in (0, 360], got {c.Angle}",
+            CircularMotion c when !(c.Angle > tolerance && c.Angle <= 360) => Invariant($"a circular pattern angle must be in (0, 360], got {c.Angle}"),
             MirrorMotion m when Length(m.Normal) <= tolerance => "a mirror needs a plane normal",
             _ => null,
         };

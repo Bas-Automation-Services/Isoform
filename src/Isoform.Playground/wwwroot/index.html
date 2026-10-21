@@ -5,6 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Isoform Playground</title>
   <link rel="stylesheet" href="playground.css">
+  <link rel="stylesheet" href="model.css">
+  <link rel="stylesheet" href="agent.css">
   <!-- three r0.160.0, vendored (MIT, vendor/three/LICENSE): pinned, and the page works offline. -->
   <script type="importmap">
     {
@@ -54,13 +56,26 @@
 
     <div id="stats" class="stats muted">Loading the kernel…</div>
     <div id="selection" class="selection" hidden></div>
+    <div id="references" class="references"></div>
     <ul id="diagnostics" class="diagnostics"></ul>
+
+    <!-- Agent view and document history (js/panels/agent.js, history.js; agent.css) -->
+    <section id="agent"></section>
+    <section id="history"></section>
   </aside>
 
   <main id="view">
     <div id="tooltip" hidden></div>
+    <button id="verdict" class="verdict" hidden></button>
     <div class="hint">Drag to orbit · right-drag to pan · scroll to zoom · click a face for its name · shift+click a second face for an edge</div>
   </main>
+
+  <!-- Feature tree and inspector (J4) -->
+  <aside id="model">
+    <div class="model-head">Features</div>
+    <ul id="tree" class="tree"></ul>
+    <div id="inspector" class="inspector"></div>
+  </aside>
 
   <script type="module" src="js/main.js"></script>
 </body>

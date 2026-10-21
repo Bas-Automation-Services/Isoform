@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Reflection;
 using System.Text;
 using System.Text.Json.Nodes;
@@ -138,9 +139,9 @@ public static class FormatGuide
         foreach (var e in Examples)
         {
             var json = FormatGuide.Feature(e.Feature);
-            s.AppendLine($"- {json["type"]}: {e.Summary}");
-            s.AppendLine($"  {json.ToJsonString(IsoformTools.Compact)}");
-            s.AppendLine($"  faces: {string.Join(", ", e.Faces)}");
+            s.AppendLine(CultureInfo.InvariantCulture, $"- {json["type"]}: {e.Summary}");
+            s.AppendLine(CultureInfo.InvariantCulture, $"  {json.ToJsonString(IsoformTools.Compact)}");
+            s.AppendLine(CultureInfo.InvariantCulture, $"  faces: {string.Join(", ", e.Faces)}");
         }
         s.AppendLine();
         s.AppendLine("Sketch plane: origin, x (in-plane x direction), normal; its y is normal × x. Profile: start [u,v] and edges");

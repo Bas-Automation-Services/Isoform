@@ -56,7 +56,7 @@ h1 { font-size: 17px; margin: 0; letter-spacing: 0.02em; }
 
 .row { display: flex; align-items: center; gap: 10px; }
 .row span { width: 70px; color: var(--muted); }
-.row select { flex: 1; }
+.row select { flex: 1; min-width: 0; }
 
 select, textarea {
   font: inherit;
@@ -104,10 +104,95 @@ select, textarea {
   cursor: pointer;
 }
 
-.diagnostics { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
-.diagnostics li { border-left: 3px solid var(--warn); padding: 2px 0 2px 8px; }
-.diagnostics li.error { border-left-color: var(--error); }
-.diagnostics b { font-weight: 600; }
+/* Diagnostics (J5): grouped by code in the panel; the verdict badge and thin-spot labels on the view. */
+.diagnostics, .diagnostics ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.diagnostics .group { border-left: 3px solid var(--warn); padding: 2px 0 2px 8px; }
+.diagnostics .group.error { border-left-color: var(--error); }
+.diagnostics .group-head b { font-weight: 600; }
+.diagnostics .item { cursor: pointer; border-radius: 5px; padding: 3px 6px; margin-left: -6px; }
+.diagnostics .item:hover { background: var(--code); }
+.diagnostics .item.focused { background: var(--code); outline: 1px solid var(--accent); }
+.diagnostics .item.stale { opacity: 0.5; }
+.diagnostics .faces { display: flex; flex-wrap: wrap; gap: 4px 10px; margin-top: 3px; font: 12px ui-monospace, Consolas, monospace; }
+.diagnostics .faces i { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 4px; }
+.diagnostics .cell { color: var(--muted); }
+.diagnostics button {
+  font: inherit;
+  color: var(--accent);
+  background: none;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 0 6px;
+  cursor: pointer;
+}
+.diagnostics button.feature { font: 12px ui-monospace, Consolas, monospace; color: var(--ink); }
+.diagnostics button.resolve { border-color: var(--accent); }
+
+.verdict {
+  position: absolute;
+  left: 12px;
+  top: 10px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font: inherit;
+  color: var(--ink);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 3px 10px;
+  cursor: pointer;
+}
+.verdict[hidden] { display: none; }
+.verdict i { width: 9px; height: 9px; border-radius: 50%; margin-right: 3px; background: var(--muted); }
+.verdict.valid i { background: #2e9e5b; }
+.verdict.warn i { background: var(--warn); }
+.verdict.error i, .verdict.broken i { background: var(--error); }
+.verdict.error, .verdict.broken { border-color: var(--error); }
+.verdict .preview { margin-left: 6px; padding: 0 6px; border-radius: 8px; background: var(--code); color: var(--muted); font-size: 11px; }
+
+.spot-labels { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
+.spot-label {
+  position: absolute;
+  left: 0;
+  top: 0;
+  margin: -24px 0 0 6px; /* up and right of the point */
+  pointer-events: auto;
+  font: 11px ui-monospace, Consolas, monospace;
+  color: #fff;
+  background: #c0262d;
+  border: none;
+  border-radius: 4px;
+  padding: 1px 5px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.spot-label::before { content: ""; position: absolute; left: -6px; bottom: -4px; width: 6px; height: 6px; border: 2px solid #c0262d; border-radius: 50%; }
+.spot-label.focused { outline: 2px solid #fff; box-shadow: 0 0 0 3px #c0262d; }
+
+/* Pinned references (panels/references.js): one row per pin, its status as a chip. */
+.references-head { display: flex; justify-content: space-between; align-items: center; color: var(--muted); }
+.references button {
+  font: inherit;
+  color: var(--accent);
+  background: none;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 1px 7px;
+  cursor: pointer;
+}
+.references button:disabled { color: var(--muted); cursor: default; }
+.references ul { list-style: none; margin: 6px 0 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.references li { display: flex; align-items: center; gap: 8px; padding: 3px 6px; border-radius: 5px; cursor: pointer; }
+.references li:hover, .references li.lit { background: var(--code); }
+.references li code { flex: 1; font: 12px ui-monospace, Consolas, monospace; }
+.references li button { border: none; color: var(--muted); padding: 0 4px; }
+.chip { font-size: 11px; padding: 0 7px; border-radius: 9px; color: #fff; background: var(--muted); }
+.chip.resolved { background: #2e8b57; }
+.chip.split { background: var(--accent); }
+.chip.merged { background: #7c4dcc; }
+.chip.ambiguous { background: var(--warn); }
+.chip.gone { background: var(--error); }
 
 #view { position: relative; flex: 1; background: var(--view); }
 #view canvas { display: block; }
@@ -132,6 +217,21 @@ select, textarea {
   white-space: nowrap;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
 }
+
+/* A handle's label and value while it is hovered or dragged. */
+.handle-label {
+  position: absolute;
+  pointer-events: none;
+  background: var(--panel);
+  border: 1px solid var(--accent);
+  border-radius: 5px;
+  padding: 3px 7px;
+  font: 12px ui-monospace, Consolas, monospace;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+}
+.handle-label[hidden] { display: none; }
 
 @media (max-width: 800px) {
   body { flex-direction: column; }

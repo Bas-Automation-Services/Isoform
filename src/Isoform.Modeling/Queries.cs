@@ -41,7 +41,7 @@ public static partial class Queries
         var (last, jump) = (double.PositiveInfinity, 0.0);
         for (var it = 0; t <= maxDistance; it++)
         {
-            if (it == 1_000_000) throw new InvalidOperationException($"the ray march from {origin} did not settle");
+            if (it == 1_000_000) throw new InvalidOperationException(FormattableString.Invariant($"the ray march from ({origin.X}, {origin.Y}, {origin.Z}) did not settle"));
             var p = origin + d * t;
             var v = field.Value(p);
             if (v == 0) return Hit(field, t, p);

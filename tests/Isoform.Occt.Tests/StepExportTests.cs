@@ -217,7 +217,7 @@ public class StepExportTests(ITestOutputHelper output)
     public void Assembly_reads_back_with_its_product_structure()
     {
         var settings = new ModelingSettings { CellSize = 0.5 };
-        var (_, bundle) = Playground.Examples.Bundles.Single();
+        var (_, bundle) = Isoform.Interactive.Examples.Bundles.Single();
         var assembly = new AssemblyModeler(settings).Regenerate(bundle.Assembly, p => bundle.Documents.GetValueOrDefault(p));
         assembly.Diagnostics.Should().BeEmpty();
         var path = Path.Combine(Path.GetTempPath(), $"isoform-{Guid.NewGuid():N}.step");
@@ -259,7 +259,7 @@ public class StepExportTests(ITestOutputHelper output)
     public void Report_export_coverage()
     {
         var settings = new ModelingSettings { CellSize = 0.5 };
-        var parts = Playground.Examples.All.ToList();
+        var parts = Isoform.Interactive.Examples.All.ToList();
         foreach (var id in EditSuite.CaseIds.Select(c => (string)c[0]))
         {
             var c = EditSuite.Case(id);

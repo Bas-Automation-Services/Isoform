@@ -42,7 +42,7 @@ public static class Parametric
             catch (FormatException e) { throw new ParameterException(Id(path), $"{path}: {e.Message}"); }
             // A count stays a whole number; round() makes one of any expression.
             if (path.EndsWith(".count") && (value != Math.Floor(value) || Math.Abs(value) > int.MaxValue))
-                throw new ParameterException(Id(path), $"{path} must be a whole number, got {value} from '{text}'");
+                throw new ParameterException(Id(path), FormattableString.Invariant($"{path} must be a whole number, got {value} from '{text}'"));
             DocumentEdits.Set(features, path, JsonNode.Parse(value.ToString("R", CultureInfo.InvariantCulture)));
         }
         return CanonicalFormat.FromNode(root);

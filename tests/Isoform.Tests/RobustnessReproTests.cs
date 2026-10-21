@@ -74,7 +74,7 @@ public class RobustnessReproTests
     /// A hole that clips the plate's corner by 1e-6 mm (ten times the tolerance) is called no-effect: the face and the
     /// sliver of material it removes are neither built nor reported. OCCT builds the 7-face part.
     /// </summary>
-    [Fact(Skip = Open)]
+    [Fact]
     public void Hole_clipping_a_corner_is_built_or_reported()
     {
         var r = Regenerate("""
@@ -111,7 +111,7 @@ public class RobustnessReproTests
     /// A plane cut leaves plate/x+ as a 0.1 mm² triangle; at 0.5 mm cells it disappears (5 faces), at 0.125 mm it is there
     /// (6 faces, as in OCCT). A face smaller than the cells is neither kept nor reported.
     /// </summary>
-    [Fact(Skip = Open)]
+    [Fact]
     public void Small_corner_face_is_kept_or_reported()
     {
         var r = Regenerate("""
@@ -125,7 +125,7 @@ public class RobustnessReproTests
     }
 
     /// <summary>A block 1e-6 mm off the plate's side is fused into it: one body instead of two, nothing reported.</summary>
-    [Fact(Skip = Open)]
+    [Fact]
     public void Gap_of_a_micron_keeps_two_bodies_or_is_reported()
     {
         var r = Regenerate("""
@@ -142,7 +142,7 @@ public class RobustnessReproTests
     /// A block on the plate shifted 1e-6 mm along x: the two 1e-6 mm steps are neither built (OCCT: 10 faces) nor reported,
     /// and the side faces are not merged either (8 faces).
     /// </summary>
-    [Fact(Skip = Open)]
+    [Fact]
     public void Step_of_a_micron_is_built_or_reported()
     {
         var r = Regenerate("""
@@ -159,7 +159,7 @@ public class RobustnessReproTests
     /// A cut reaching 1e-9 mm into the side face (below the 1e-7 tolerance) splits plate/y- in two and adds a cut1/y+
     /// face: 8 faces where the part is the plain 6-face block with a coincident face, as OCCT builds it.
     /// </summary>
-    [Fact(Skip = Open)]
+    [Fact]
     public void Cut_within_tolerance_of_a_face_adds_no_faces()
     {
         var r = Regenerate("""
@@ -206,7 +206,7 @@ public class RobustnessReproTests
     /// A plane cut whose trace on the top face misses it except at the corner (0, 0, 11): top and cut face share only that
     /// vertex, but the topology gets an edge between them (15 edges, 10 vertices; OCCT 14 and 9).
     /// </summary>
-    [Fact(Skip = Open)]
+    [Fact]
     public void Cut_touching_a_face_at_a_vertex_adds_no_edge()
     {
         var r = Regenerate("""
@@ -220,7 +220,7 @@ public class RobustnessReproTests
     }
 
     /// <summary>A loose 1e-6 × 1e-4 mm block beside the plate is dropped and called no-effect instead of reported.</summary>
-    [Fact(Skip = Open)]
+    [Fact]
     public void Loose_sliver_body_is_reported_not_called_no_effect()
     {
         var r = Regenerate("""
@@ -238,7 +238,7 @@ public class RobustnessReproTests
     /// A boss overhanging the plate's side by 0.03 mm: the 0.03 mm strip of its bottom face is missing (10 faces, OCCT 11)
     /// and nothing is reported, at 0.5 and at 0.125 mm cells alike.
     /// </summary>
-    [Fact(Skip = Open)]
+    [Fact]
     public void Overhang_below_the_cells_is_built_or_reported()
     {
         var r = Regenerate("""
@@ -252,7 +252,7 @@ public class RobustnessReproTests
     }
 
     /// <summary>A cut whose top is flush with the plate bottom splits that face in two (cut2/z+ beside plate/z-): 7 faces for a plain block.</summary>
-    [Fact(Skip = Open)]
+    [Fact]
     public void Flush_cut_leaves_one_bottom_face()
     {
         var r = Regenerate("""

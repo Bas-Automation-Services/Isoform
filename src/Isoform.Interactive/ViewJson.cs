@@ -173,7 +173,7 @@ public static class ViewJson
     // Relaxed escaping: face names are full of + signs, which the default encoder writes as +.
     static readonly JsonWriterOptions Options = new() { Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
 
-    static string Json(Action<Utf8JsonWriter> body)
+    internal static string Json(Action<Utf8JsonWriter> body)
     {
         using var stream = new MemoryStream();
         using (var w = new Utf8JsonWriter(stream, Options))
