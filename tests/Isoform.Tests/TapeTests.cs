@@ -17,7 +17,7 @@ public class TapeTests
     static readonly Block Plate = new("plate", BooleanOp.New, [0, 0, 0], [100, 50, 10]);
 
     // The bench's 20-operation part.
-    static readonly PartDocument Twenty = new(
+    internal static readonly PartDocument Twenty = new(
     [
         Plate,
         new Hole("h1", [10, 10], 6), new Hole("h2", [10, 40], 6), new Hole("h3", [30, 25], 10),

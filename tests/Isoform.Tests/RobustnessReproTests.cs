@@ -379,4 +379,37 @@ public class RobustnessReproTests
 
         (Reported(r) || Counts(r) == (7, 14, 8, 1)).Should().BeTrue($"got {Counts(r)}");
     }
+
+    /// <summary>
+    /// A plane cut that touches the plate only along its corner edge, or only at its corner, removes nothing. The search
+    /// for a lost face ran out of budget along the contact (the margin is zero all along it) and reported
+    /// below-resolution: the plate's two faces there are nested one level down in its intersection, so the cap for two
+    /// planes whose gaps add up to a constant never applied.
+    /// </summary>
+    [Theory]
+    [InlineData(0.7071067811865476, -0.7071067811865476, 0)]
+    [InlineData(0.6, -0.8, 0)]
+    [InlineData(0.6, -0.7, 0.2)]
+    public void Plane_cut_touching_an_edge_has_no_effect(double nx, double ny, double nz)
+    {
+        // The tab's corner edge (115, 15) lies on the 45° plane too: there the plate's faces are a union away.
+        var r = new FrepModeler(Settings).Regenerate(new PartDocument(
+        [
+            new Block("plate", BooleanOp.New, [0, 0, 0], [100, 50, 10]),
+            new Hole("hole", [30, 25], 10),
+            new Block("tab", BooleanOp.Join, [95, 15, 0], [20, 20, 6]),
+            new PlaneCut("chamfer", [100, 0, 10], [nx, ny, nz]),
+        ]));
+
+        r.Diagnostics.Should().ContainSingle().Which.Code.Should().Be(Diagnostic.NoEffect, string.Join("; ", r.Diagnostics.Select(d => d.Message)));
+    }
+
+    /// <summary>The bench's 20-operation part has the same chamfer: it touches the plate and tab2 along their corner edges.</summary>
+    [Fact]
+    public void Bench_chamfer_has_no_effect()
+    {
+        var r = new FrepModeler(Settings).Regenerate(TapeTests.Twenty);
+
+        r.Diagnostics.Where(d => d.FeatureId == "chamfer").Should().ContainSingle().Which.Code.Should().Be(Diagnostic.NoEffect);
+    }
 }

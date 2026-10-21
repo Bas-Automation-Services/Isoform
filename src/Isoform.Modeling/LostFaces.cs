@@ -109,7 +109,9 @@ static class LostFaces
         }
 
         // Siblings that are planes in the box (simplified there): one parallel to the surface is a constant gap on it,
-        // and two whose gaps add up to a constant (a face flush with another) cap the margin at half of it.
+        // and two whose gaps slope in opposite directions along it (a face flush with another, or a plane through
+        // their common edge) have a weighted sum that is constant there, which caps the margin at its average.
+        // A sibling ∩ in an intersection, or ∪ in a union, is a gap per child: so planes nested below count too.
         var n = s.Kind == SurfaceKind.Plane ? s.Axis : (Vector3D?)null;
         var linear = new List<(Vector3D Along, double Gap)>();
         double Upper(Box3D b)
@@ -117,19 +119,53 @@ static class LostFaces
             if (!Contains(surface.Bounds(b), 0) || !Contains(end.Bounds(b), path.Level)) return double.NegativeInfinity;
             var u = double.PositiveInfinity;
             linear.Clear();
-            foreach (var g in path.Siblings)
+            bool Add(Field f, double sign, double shift)
             {
-                var f = g.Field.Simplify(b);
-                if ((u = Math.Min(u, new Gap(f, g.Sign, g.Shift).Upper(b))) <= tolerance) return u;
-                if (f is not LeafField { Surface.Kind: SurfaceKind.Plane } l) continue;
-                var a = l.Surface.Axis * (g.Sign * (l.Complement ? -1 : 1));
+                switch (f)
+                {
+                    case MaxField x when sign < 0:
+                        foreach (var c in x.Children) if (Add(c, sign, shift)) return true;
+                        return false;
+                    case MinField x when sign > 0:
+                        foreach (var c in x.Children) if (Add(c, sign, shift)) return true;
+                        return false;
+                    case NegateField x:
+                        return Add(x.Child, -sign, shift);
+                    // A rounded edge only removes material: in an intersection its gap is at most either plane's, so
+                    // the planes are upper bounds too, and can meet another plane in the caps below.
+                    case RoundedEdgeField x when sign < 0:
+                        if ((u = Math.Min(u, new Gap(f, sign, shift).Upper(b))) <= tolerance) return true;
+                        return Add(x.A, sign, shift) || Add(x.B, sign, shift);
+                }
+                if ((u = Math.Min(u, new Gap(f, sign, shift).Upper(b))) <= tolerance) return true;
+                if (f is not LeafField { Surface.Kind: SurfaceKind.Plane } l) return false;
+                var a = l.Surface.Axis * (sign * (l.Complement ? -1 : 1));
                 var along = n is { } m ? a - m * a.Dot(m) : a;
-                var gap = g.Sign * l.Value(s.Origin) + g.Shift; // on the surface: its origin when it is a plane
+                var gap = sign * l.Value(s.Origin) + shift; // on the surface: its origin when it is a plane
                 if (n is not null && along.Length < 1e-12) u = Math.Min(u, gap);
-                foreach (var (other, at) in linear)
-                    if ((along + other).Length < 1e-12) u = Math.Min(u, (gap + at) / 2);
+                for (var i = 0; i < linear.Count; i++)
+                {
+                    var (other, at) = linear[i];
+                    var (wa, wb) = (other.Length, along.Length);
+                    // wa·along + wb·other = 0: wa·gap + wb·at is constant on the plane.
+                    if (along.Dot(other) < 0 && (along * wa + other * wb).Length <= 1e-9 * wa * wb) u = Math.Min(u, (wa * gap + wb * at) / (wa + wb));
+                    // Three planes round a point of the surface plane (a cut through a vertex): with w the in-plane
+                    // cross products of the other two, Σ w·along = 0 for any three vectors in a plane, and when the
+                    // weights share a sign their weighted average gap is constant on it.
+                    if (n is not { } m3) continue;
+                    for (var j = i + 1; j < linear.Count; j++)
+                    {
+                        var (third, at3) = linear[j];
+                        var (w1, w2, w3) = (other.Cross(third).Dot(m3), third.Cross(along).Dot(m3), along.Cross(other).Dot(m3));
+                        if (w1 < 0) (w1, w2, w3) = (-w1, -w2, -w3);
+                        if (w1 > 1e-12 && w2 > 1e-12 && w3 > 1e-12) u = Math.Min(u, (w1 * gap + w2 * at + w3 * at3) / (w1 + w2 + w3));
+                    }
+                }
                 linear.Add((along, gap));
+                return u <= tolerance;
             }
+            foreach (var g in path.Siblings)
+                if (Add(g.Field.Simplify(b), g.Sign, g.Shift)) return u;
             return u;
         }
 

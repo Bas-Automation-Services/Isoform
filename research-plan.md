@@ -316,6 +316,10 @@ but about half are features a finer local mesh would build.
   chain on both surfaces and the boundary (Newton from the chain's vertices), or branch-and-bound proves there is
   none and the edge is reported (`FalseEdges`). This turned 16 silent results in 1000 seeds into reports and flagged
   no part both backends agree on.
+- *Contacts along an edge or at a vertex:* a plane cut through the part's corner edge has a margin of zero all along
+  it, which plain branch-and-bound cannot clear. Planes nested in the siblings (and the two planes of a rounded
+  edge, which only removes material) now count, and two or three planes whose gaps slope against each other on the
+  surface cap the margin by their weighted average, so such a cut is proven `no-effect` (the bench's chamfer).
 
 **Review.** An independent read of the K4 code found 15 problems (wrong geometry without a diagnostic in several);
 all fixed, each with a regression test (`ReviewFindingTests`).
