@@ -63,6 +63,10 @@ python -m http.server 8137 -d out/playground/wwwroot   # or any static file serv
 The page needs no network: three.js r160 is vendored in `wwwroot/vendor/three`. In the browser the kernel runs on one thread, so it is several times slower
 than on the desktop.
 
+## About
+
+Made by [Bas Automation Services](https://basautomationservices.com): Autodesk Inventor add-ins and CAD automation from Rotterdam.
+
 ## Licence
 
 [MPL-2.0](LICENSE). OpenCASCADE is LGPL-2.1 with an exception and is linked dynamically. The vendored three.js is
