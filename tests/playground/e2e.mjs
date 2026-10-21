@@ -3,6 +3,7 @@
 // diagnostics, pins a face, commits, undoes and redoes an edit, and drags a handle; runs the guided tour and opens a
 // share link. Exits non-zero if anything fails.
 // node tests/playground/e2e.mjs [published wwwroot]      (env: ISOFORM_BROWSER, ISOFORM_TIMEOUT in ms, ISOFORM_SERVER)
+import { readFileSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { launch } from './browser.mjs';
@@ -70,6 +71,7 @@ const browser = await launch();
 let failures = 0, picking = false, diagnosing = false, pinning = false, committing = false, handles = 'skipped', inspector = false;
 let dragging = false, demo = false; // J2
 let touring = false, sharing = false; // T1
+let filing = false; // C2-C4
 try {
   const page = await browser.newPage();
   for (const [i, name] of names.entries()) {
@@ -138,6 +140,7 @@ try {
   await drags.costs();
 
   [touring, sharing] = [await tour(page), await share(page)]; // T1
+  filing = await files(page); // C2-C4
 } finally {
   await browser.close();
   await site.close();
@@ -145,9 +148,9 @@ try {
 console.log(`\n${names.length - failures}/${names.length} examples passed, picking ${picking ? 'passed' : 'FAILED'}, `
   + `diagnostics ${diagnosing ? 'passed' : 'FAILED'}, pins ${pinning ? 'passed' : 'FAILED'}, history ${committing ? 'passed' : 'FAILED'}, handles ${handles}, inspector ${inspector ? 'passed' : 'FAILED'}, `
   + `drags ${dragging ? 'passed' : 'FAILED'}, demo ${demo ? 'passed' : 'FAILED'}, `
-  + `tour ${touring ? 'passed' : 'FAILED'}, share ${sharing ? 'passed' : 'FAILED'}; screenshots in ${relative(repo, shots)}`);
+  + `tour ${touring ? 'passed' : 'FAILED'}, share ${sharing ? 'passed' : 'FAILED'}, files ${filing ? 'passed' : 'FAILED'}; screenshots in ${relative(repo, shots)}`);
 process.exitCode = failures || !picking || !diagnosing || !pinning || !committing || handles === 'FAILED' || !inspector || !dragging || !demo
-  || !touring || !sharing ? 1 : 0;
+  || !touring || !sharing || !filing ? 1 : 0;
 
 /**
  * Diagnostics in place: example 0 with its hole moved to leave a 0.08 mm wall gives a below-resolution thin spot at
@@ -410,6 +413,48 @@ async function share(page) {
   }
   problems.push(...page.errors);
   console.log(`${problems.length ? 'FAIL' : 'pass'}  share: a ${link.length}-character #doc= link opens the same document, same hash`);
+  for (const p of problems) console.log(`        ${p}`);
+  return !problems.length;
+}
+
+/**
+ * Files (C2-C4): a sketched plate opened as a file replaces example 0 in one history entry of origin file; STEP of it
+ * downloads with all its faces; the sketch selected in the tree, and then a flat face, each download as DXF.
+ */
+async function files(page) {
+  const problems = [];
+  const said = [];
+  try {
+    await page.open(`${site.url}?example=0`);
+    await page.waitFor(settled, { timeout });
+    const entries = (await page.evaluate('window.isoform.history()')).entries.length;
+    const fixture = readFileSync(new URL('./sketched.fixture.json', import.meta.url), 'utf8');
+    const canonical = JSON.parse(kernel.Apply(fixture, '[]'));
+    const opened = await page.evaluate(`window.isoform.files.open(new File([${JSON.stringify(fixture)}], 'sketched.isoform.json')).then(r => r && { hash: r.hash, error: r.error })`);
+    if (opened?.hash !== canonical.hash) problems.push(`opened ${JSON.stringify(opened)}, not hash ${canonical.hash}`);
+    const { entries: after } = await page.evaluate('window.isoform.history()');
+    if (after.length !== entries + 1 || after.at(-1).origin !== 'file') problems.push(`history: ${JSON.stringify(after.map(e => e.origin))}`);
+    if (await page.evaluate(`document.getElementById('examples').selectedOptions[0].textContent`) !== '(sketched.isoform.json)') problems.push('the example picker does not name the file');
+
+    const step = await page.evaluate('window.isoform.files.step().then(r => ({ faces: r.faces, error: r.error }))');
+    said.push(await page.evaluate('window.isoform.files.status()'));
+    if (step.faces !== 7) problems.push(`STEP: ${JSON.stringify(step)}`);
+    await page.click(await page.center('#tree li[data-key="base"]'));
+    await page.waitFor(`window.isoform.feature() === 'base' && !document.getElementById('dxf').disabled`);
+    const sketch = await page.evaluate('window.isoform.files.dxf().then(r => ({ entities: r.entities, error: r.error }))');
+    said.push(await page.evaluate('window.isoform.files.status()'));
+    if (sketch.entities !== 5) problems.push(`sketch DXF: ${JSON.stringify(sketch)}`);
+    await page.evaluate(`window.isoform.select(['plate/end'])`);
+    await page.waitFor(`window.isoform.feature() === 'plate'`);
+    const face = await page.evaluate('window.isoform.files.dxf().then(r => ({ entities: r.entities, error: r.error }))');
+    said.push(await page.evaluate('window.isoform.files.status()'));
+    if (face.entities !== 5) problems.push(`face DXF: ${JSON.stringify(face)}`);
+    if (said.join() !== 'Downloaded sketched.step,Downloaded sketched-base.dxf,Downloaded sketched-plate-end.dxf') problems.push(`status: ${said.join(' / ')}`);
+  } catch (e) {
+    problems.push(e.message);
+  }
+  problems.push(...page.errors);
+  console.log(`${problems.length ? 'FAIL' : 'pass'}  files: opened a sketched plate as one history entry; ${said.join('; ')}`);
   for (const p of problems) console.log(`        ${p}`);
   return !problems.length;
 }

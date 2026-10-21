@@ -97,6 +97,8 @@ public sealed class KernelSocket
         "resolve" => ReferencePins.Json(Arg(args, "refs")!.Value.GetRawText(), _session[Slot(args)]),
         "sketch" => SketchJson.Write(Arg(args, "document")!.Value.GetString()!, Arg(args, "id")!.Value.GetString()!, Arg(args, "drag") is { ValueKind: JsonValueKind.Object } d ? d.GetRawText() : ""),
         "faceFrame" => SketchJson.FaceFrame(_session[Slot(args)], Arg(args, "face")!.Value.GetString()!),
+        "step" => ExportJson.Step(_session[Slot(args)], Arg(args, "name")?.GetString() ?? "part"),
+        "dxf" => ExportJson.Dxf(_session[Slot(args)], Arg(args, "document")?.GetString() ?? "", Arg(args, "sketch")?.GetString() ?? "", Arg(args, "face")?.GetString() ?? ""),
         // The worker gives its wasm heap; here it is the process's managed heap, which both connections share.
         "memory" => GC.GetTotalMemory(false).ToString(CultureInfo.InvariantCulture),
         "pool" => "null",

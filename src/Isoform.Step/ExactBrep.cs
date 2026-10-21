@@ -16,7 +16,8 @@ public static class ExactBrep
 {
     /// <summary>
     /// Builds the B-rep of every body: one solid per body, a shell's cavity as a void. Throws
-    /// <see cref="NotSupportedException"/> naming the faces or edges without a closed form.
+    /// <see cref="NotSupportedException"/> naming the faces or edges without a closed form (<see cref="UnsupportedFacesException"/>
+    /// for faces).
     /// </summary>
     public static Brep Build(FrepResult result, ModelingSettings settings) => new Builder(result, settings).Run();
 
@@ -73,12 +74,14 @@ public static class ExactBrep
                 }
             _interior = _meshVertices.Select(all => all.Where(v => faceSets[v].Count == 1).ToHashSet()).ToArray();
             _surface = _owner.Select((o, f) => Exact(o, f)).ToArray();
-            var unsupported = Enumerable.Range(0, faceCount).Where(f => !_surface[f].Analytic)
-                .Select(f => $"{Name(f)} ({_surface[f].Kind})").ToList();
-            if (unsupported.Count > 0) throw new NotSupportedException($"faces without a closed-form surface: {string.Join(", ", unsupported)}");
+            var unsupported = Enumerable.Range(0, faceCount).Where(f => !_surface[f].Analytic).ToList();
+            if (unsupported.Count > 0)
+                throw new UnsupportedFacesException($"faces without a closed-form surface: {string.Join(", ", unsupported.Select(f => $"{Name(f)} ({_surface[f].Kind})"))}",
+                    [.. unsupported.Select(f => result.Topology!.Faces[f].Sources[0])]);
             var stray = Enumerable.Range(0, faceCount).Select(f => (f, Deviation(_surface[f], f))).Where(x => x.Item2 > Fit).ToList();
             if (stray.Count > 0)
-                throw new NotSupportedException($"faces that are not one analytic surface: {string.Join(", ", stray.Select(x => FormattableString.Invariant($"{Name(x.f)} (off its {_surface[x.f].Kind.ToString().ToLowerInvariant()} by {x.Item2:G2} mm)")))}");
+                throw new UnsupportedFacesException($"faces that are not one analytic surface: {string.Join(", ", stray.Select(x => FormattableString.Invariant($"{Name(x.f)} (off its {_surface[x.f].Kind.ToString().ToLowerInvariant()} by {x.Item2:G2} mm)")))}",
+                    [.. stray.Select(x => result.Topology!.Faces[x.f].Sources[0])]);
 
             // Whether each face's gradient points out of the solid (the quads wind outward).
             _inside = new Point3D[faceCount];

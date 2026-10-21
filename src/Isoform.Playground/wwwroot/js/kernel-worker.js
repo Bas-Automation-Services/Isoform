@@ -70,6 +70,10 @@ const ops = {
   // A sketch solved, optionally with a point dragged to [u, v]: {point, to}.
   sketch: ({ document, id, drag }) => JSON.parse(kernel.Sketch(document, id, drag ? JSON.stringify(drag) : '')),
   faceFrame: ({ face, slot = 'main' }) => JSON.parse(kernel.FaceFrame(slot, face)),
+  // Files out (src/Isoform.Interactive/ExportJson.cs): STEP of a slot's result; DXF of a sketch of the document, or
+  // of a flat face of a slot's result.
+  step: ({ name = 'part', slot = 'main' } = {}) => JSON.parse(kernel.Step(slot, name)),
+  dxf: ({ document = '', sketch = '', face = '', slot = 'main' }) => JSON.parse(kernel.Dxf(slot, document, sketch, face)),
   memory: () => heap(),
 
   pool(args) {

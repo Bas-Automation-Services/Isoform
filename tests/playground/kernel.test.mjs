@@ -118,3 +118,30 @@ test('Resolve: a pin by index comes back by name, and a cut across plate/z+ spli
   assert.equal(after.pins[0].faces.length, 2);
   assert.match(JSON.parse(kernel.Resolve('[]', 'nothing')).error, /no result/);
 });
+
+test('Step writes the slot\'s part, or names the faces it cannot write exactly', () => {
+  const [, document] = examples[0];
+  const r = JSON.parse(kernel.Regenerate(document, '[]', cell, chord, 'main', false));
+  const step = JSON.parse(kernel.Step('main', 'plate'));
+  assert.match(step.text, /^ISO-10303-21;/);
+  assert.equal(step.faces, r.faces.length);
+  const [, blended] = examples.find(([, d]) => d.includes('"blend"'));
+  kernel.Regenerate(blended, '[]', cell, chord, 'main', false);
+  const failed = JSON.parse(kernel.Step('main', 'part'));
+  assert.equal(failed.text, undefined);
+  assert.ok(failed.unsupported.some(f => f.endsWith('/blend')), failed.error);
+  assert.match(JSON.parse(kernel.Step('nothing', 'part')).error, /nothing has regenerated/);
+});
+
+test('Dxf writes a sketch of the document, or a flat face of the slot\'s part', () => {
+  // A 60 × 40 rectangle round an R4 bore, extruded 5: faces plate/start, plate/end, plate/bore, ...
+  const sketched = readFileSync(new URL('./sketched.fixture.json', import.meta.url), 'utf8');
+  kernel.Regenerate(sketched, '[]', cell, chord, 'main', false);
+  const sketch = JSON.parse(kernel.Dxf('main', sketched, 'base', ''));
+  assert.equal(sketch.entities, 5);
+  assert.match(sketch.text, /\r\nCIRCLE\r\n/);
+  assert.match(sketch.text, /EOF\r\n$/);
+  const face = JSON.parse(kernel.Dxf('main', '', '', 'plate/end'));
+  assert.deepEqual([face.entities, face.approximated], [5, 0]);
+  assert.match(JSON.parse(kernel.Dxf('main', '', '', 'plate/bore')).error, /not a flat face/);
+});
