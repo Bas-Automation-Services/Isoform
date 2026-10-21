@@ -60,7 +60,8 @@ static class FalseEdges
             var points = built.VertexPoints[v];
             var extent = Region(points, 0);
             var r = Residual(body, owners, extent.Center, out var at);
-            if (r > 10 * tolerance || Math.Abs(body.Value(at)) > 10 * tolerance) found.Add(new(owners, at, extent));
+            // Faces a step of 2·tolerance apart leave a residual of a tolerance: anything above is a vertex the part lacks.
+            if (r > tolerance || Math.Abs(body.Value(at)) > tolerance) found.Add(new(owners, at, extent));
         }
         return found;
     }

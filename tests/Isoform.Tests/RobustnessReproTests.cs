@@ -428,4 +428,48 @@ public class RobustnessReproTests
 
         (Reported(r) || Counts(r) == (faces, edges, vertices, 1)).Should().BeTrue($"got {Counts(r)}");
     }
+
+    /// <summary>
+    /// K7, 1000 seeds: the silent results left after local refinement, minimized; OCCT's counts. Two blocks overlapping
+    /// by 1e-6 mm leave an edge as long, which the cells collapse into a vertex (654, 1037, 1116, 1133); a hole whose
+    /// wall falls apart into two pieces loses one (1081); a face a cut leaves as a small triangle is lost (235); two
+    /// blocks 1e-9 mm apart, within the tolerance, touch (390); the tip of a face two cuts run out in a sharp corner
+    /// came out as a face of its own (1130). And one the fix for that made: a boss flush with the plate's side, standing
+    /// out above and below it, has two faces there that the plate's face between them keeps apart (963).
+    /// </summary>
+    [Theory]
+    [InlineData(654, """[{"id":"plate","type":"block","op":"new","origin":[0,0.78,0],"size":[30,37,10]},{"id":"boss1","type":"block","op":"join","origin":[20,37.779999000000004,-2],"size":[10,0.5,10]}]""", 11, 27, 18, 1)]
+    [InlineData(1037, """[{"id":"plate","type":"block","op":"new","origin":[0,-0.46,0],"size":[30,30,10]},{"id":"boss1","type":"block","op":"join","origin":[19,5.5,0],"size":[20,10,2]},{"id":"boss2","type":"block","op":"join","origin":[36,3.000001,0],"size":[10,2.5,2.5]}]""", 15, 39, 26, 1)]
+    [InlineData(1116, """[{"id":"plate","type":"block","op":"new","origin":[0,-0.91,0],"size":[50,35.159,3]},{"id":"boss2","type":"block","op":"join","origin":[40,34.248999000000005,0],"size":[3,20,10]}]""", 12, 30, 20, 1)]
+    [InlineData(1133, """[{"id":"plate","type":"block","op":"new","origin":[1,-0.7000000000000001,0],"size":[42,31.5,10]},{"id":"boss1","type":"block","op":"join","origin":[40,30.799999,0],"size":[4,10,4]}]""", 11, 27, 18, 1)]
+    [InlineData(1081, """[{"id":"plate","type":"block","op":"new","origin":[0,0,0],"size":[30,20,5.5]},{"id":"slice1","type":"plane-cut","point":[23.400000000000002,8.8,4.2],"normal":[0.30000000000000004,-0.725,-0.459]},{"id":"boss3","type":"block","op":"join","origin":[20,0,0],"size":[10,2,4]},{"id":"hole5","type":"hole","center":[20.8,1.859001],"diameter":9.5}]""", 14, 30, 20, 2)]
+    [InlineData(235, """[{"id":"plate","type":"block","op":"new","origin":[0,0,0],"size":[35,10,10]},{"id":"slice2","type":"plane-cut","point":[24,10,5.5],"normal":[0.175,-0.2,0.827]},{"id":"boss3","type":"block","op":"join","origin":[34.5,6,0],"size":[10,10,2.5]}]""", 14, 36, 24, 1)]
+    [InlineData(390, """[{"id":"plate","type":"block","op":"new","origin":[-0.8,-0.55,-0.8],"size":[30,21.200000000000003,5.5]},{"id":"boss3","type":"block","op":"join","origin":[0,20.650000001,4.669999999],"size":[30,4,1]}]""", 12, 28, 18, 1)]
+    [InlineData(1130, """[{"id":"plate","type":"block","op":"new","origin":[0,0,0],"size":[10,30,7]},{"id":"slice1","type":"plane-cut","point":[10.764938591637154,19.400000000000002,3.1664890382282853],"normal":[0.9,0.478,1]},{"id":"slice2","type":"plane-cut","point":[-0.25,0,0.1],"normal":[-0.716,-0.1,0.997]}]""", 8, 18, 12, 1)]
+    [InlineData(963, """[{"id":"plate","type":"block","op":"new","origin":[0,0,0],"size":[51,40,15]},{"id":"boss1","type":"block","op":"join","origin":[51,10,-0.2],"size":[2,1,16]}]""", 14, 32, 20, 1)]
+    public void Refined_silent_result_is_built_or_reported(int seed, string features, int faces, int edges, int vertices, int bodies)
+    {
+        var r = Regenerate(features);
+
+        var reported = r.Diagnostics.Any(d => d.Code is Diagnostic.BelowResolution or Diagnostic.TangentContact);
+        (reported || Counts(r) == (faces, edges, vertices, bodies)).Should().BeTrue($"seed {seed}: got {Counts(r)}; {string.Join(" | ", r.Diagnostics.Select(d => d.Message))}");
+    }
+
+    /// <summary>
+    /// K7, seeds 1150–2149: a hole clipping the plate's corner leaves a separate body 0.007 mm thick there. The cells
+    /// lose it whole: its faces are all pieces of faces the mesh carries elsewhere, and the corner is far from every
+    /// edge the mesh made, so the search for lost pieces never looks there. OCCT builds the second body.
+    /// </summary>
+    [Fact(Skip = Open)]
+    public void Sliver_body_at_a_clipped_corner_is_built_or_reported()
+    {
+        var r = Regenerate("""
+            [
+              {"id":"plate","type":"block","op":"new","origin":[0,0,0],"size":[55.900000000000006,10,10]},
+              {"id":"hole3","type":"hole","center":[53,3.834],"diameter":9.600000000000001}
+            ]
+            """);
+
+        (r.Diagnostics.Any(d => d.Code is Diagnostic.BelowResolution or Diagnostic.TangentContact) || Counts(r) == (12, 24, 16, 2)).Should().BeTrue($"got {Counts(r)}");
+    }
 }

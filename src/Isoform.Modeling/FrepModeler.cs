@@ -130,14 +130,14 @@ public sealed class FrepModeler(ModelingSettings settings, RegionCache? cache = 
         var pinched = new List<(Point3D At, int[] Owners)>();
         var falseEdges = new List<FalseEdges.Found>();
         var falseCorners = new List<FalseEdges.Corner>();
-        var carried = new List<(HashSet<int> Owners, IReadOnlyList<Surface> Oriented)>();
+        var carried = new List<Carried>();
         var pieces = 0;
         foreach (var (body, plan) in part.Bodies.Zip(plans))
         {
             var bodyMesh = plan.Build(Cache);
             var oriented = TopologyBuilder.Oriented(part.Surfaces, body.Field);
-            carried.Add((bodyMesh.Quads.Select(q => q.Owner).ToHashSet(), oriented));
             var built = TopologyBuilder.Build(bodyMesh, oriented, Settings.Tolerance, body.Field);
+            carried.Add(new Carried(bodyMesh.Quads.Select(q => q.Owner).ToHashSet(), oriented, bodyMesh, [.. built.EdgePoints, .. built.VertexPoints]));
             pinched.AddRange(built.Pinches);
             falseEdges.AddRange(FalseEdges.Find(body.Field, oriented, built, Settings.Tolerance, Settings.CellSize));
             falseCorners.AddRange(FalseEdges.Corners(body.Field, built, Settings.Tolerance));
@@ -145,6 +145,15 @@ public sealed class FrepModeler(ModelingSettings settings, RegionCache? cache = 
             if (t.BodyCount > 1)
                 diagnostics.Add(new Diagnostic(Diagnostic.MultipleBodies, part.Bodies.Count == 1 ? null : body.Name,
                     part.Bodies.Count == 1 ? $"the part falls apart into {t.BodyCount} bodies" : $"body {body.Name} falls apart into {t.BodyCount} pieces"));
+            // Pieces that touch within the tolerance: one solid at the modeling tolerance, kept apart by the cells.
+            if (PieceContacts.Find(bodyMesh, built.FaceOfQuad, t, Settings.Tolerance) is { } contact)
+            {
+                var (a, b) = (string.Join("+", t.Faces[contact.FaceA].Sources), string.Join("+", t.Faces[contact.FaceB].Sources));
+                var later = part.Surfaces[Math.Max(built.FaceOwners[contact.FaceA].Max(), built.FaceOwners[contact.FaceB].Max())].Source.Split('/')[0];
+                var at = contact.At;
+                diagnostics.Add(new Diagnostic(Diagnostic.TangentContact, later,
+                    Invariant($"{a} and {b} touch within the tolerance near ({at.X:F2}, {at.Y:F2}, {at.Z:F2}), but the pieces they bound are kept apart: a contact of zero thickness")));
+            }
             var (v0, f0, e0, c0) = (vertices.Count, faces.Count, edges.Count, corners.Count);
             vertices.AddRange(bodyMesh.Vertices);
             quads.AddRange(bodyMesh.Quads.Select(q => new Quad(q.A + v0, q.B + v0, q.C + v0, q.D + v0, q.Owner)));
@@ -219,15 +228,27 @@ public sealed class FrepModeler(ModelingSettings settings, RegionCache? cache = 
         return new FrepResult(diagnostics, topology, part, mesh, faceOfQuad, bodies) { Refined = [.. zones.Select(z => (z.Box, z.Cell))] };
     }
 
+    /// <summary>What a body's mesh carries: the owners of its polygons, its surfaces as it sees them, the mesh, and the points of its edges and vertices.</summary>
+    sealed record Carried(HashSet<int> Owners, IReadOnlyList<Surface> Oriented, Mesh Mesh, IReadOnlyList<Point3D[]> Edges);
+
+    // How far a carried face's polygons may end from the face, in cells: a vertex may stray four cells to reach a
+    // wedge's tip (DualContouring.Reach), and a cell more. Lost pieces are looked for in blocks of PieceSearch cells
+    // along every edge and round every vertex, grown by PieceGrow: a piece the cells lost lies at an edge or vertex
+    // they made instead.
+    const double PieceReach = 5, PieceSearch = 8, PieceGrow = 2;
+    const int PieceBudget = 32;
+
     /// <summary>
     /// The search of <see cref="LostFaces"/> for every surface of a body that no polygon carries, nor any coincident
-    /// surface, by surface id; features that already have a diagnostic are left out.
+    /// surface, by surface id; features that already have a diagnostic are left out. A surface the mesh does carry can
+    /// still have lost a piece smaller than a cell where other faces meet: it is searched round every vertex, away from
+    /// its polygons, and a piece found is a face like any other.
     /// </summary>
-    Dictionary<int, LostFaces.Result> Lost(CompiledPart part, List<(HashSet<int> Owners, IReadOnlyList<Surface> Oriented)> carried, HashSet<string?> settled)
+    Dictionary<int, LostFaces.Result> Lost(CompiledPart part, List<Carried> carried, HashSet<string?> settled)
     {
         var result = new Dictionary<int, LostFaces.Result>();
         var pad = new Vector3D(1, 1, 1) * (10 * Settings.Tolerance);
-        foreach (var (body, (owners, oriented)) in part.Bodies.Zip(carried))
+        foreach (var (body, (owners, oriented, mesh, edges)) in part.Bodies.Zip(carried))
         {
             var box = new Box3D(body.Min - pad, body.Max + pad);
             foreach (var s in part.Surfaces)
@@ -237,6 +258,46 @@ public sealed class FrepModeler(ModelingSettings settings, RegionCache? cache = 
                 var r = LostFaces.Search(path, s, box, Settings.Tolerance);
                 // In several bodies: a face anywhere is a face, a doubt anywhere a doubt.
                 if (!result.TryGetValue(s.Id, out var known) || r.Verdict == LostFaces.Verdict.Face || known.Verdict == LostFaces.Verdict.None) result[s.Id] = r;
+            }
+
+            var reach = PieceReach * Settings.CellSize;
+            var (block, grow) = (PieceSearch * Settings.CellSize, new Vector3D(1, 1, 1) * (PieceGrow * Settings.CellSize));
+            // The blocks of the grid holding a point of an edge or a vertex.
+            var blocks = edges.SelectMany(e => e).Select(p => ((long)Math.Floor(p.X / block), (long)Math.Floor(p.Y / block), (long)Math.Floor(p.Z / block)))
+                .Distinct().Order().Select(k => new Box3D(new Point3D(k.Item1 * block, k.Item2 * block, k.Item3 * block) - grow,
+                    new Point3D((k.Item1 + 1) * block, (k.Item2 + 1) * block, (k.Item3 + 1) * block) + grow));
+            var bvhs = new Dictionary<int, TriangleBvh>();
+            ILookup<int, Triangle>? byOwner = null;
+            TriangleBvh Polygons(int id)
+            {
+                if (bvhs.TryGetValue(id, out var bvh)) return bvh;
+                byOwner ??= mesh.Triangles().ToLookup(t => t.Owner);
+                var same = owners.Where(o => oriented[o].SameGeometry(oriented[id], Settings.Tolerance)).Append(id).Distinct();
+                return bvhs[id] = new TriangleBvh(mesh.Vertices, same.SelectMany(o => byOwner[o]).ToList());
+            }
+            foreach (var near in blocks)
+            {
+                // The body as the block sees it: a surface simplified away cannot bound the part there.
+                var local = body.Field.Simplify(near);
+                var candidates = new List<(int Id, LostFaces.Path Path)>();
+                foreach (var id in owners)
+                {
+                    var s = part.Surfaces[id];
+                    if (!s.Analytic || settled.Contains(s.Source.Split('/')[0])) continue;
+                    if (new LeafField(s).Bounds(near) is var b && (b.Lo > 0 || b.Hi < 0)) continue;
+                    if (LostFaces.Find(local, id) is { } p) candidates.Add((id, p));
+                }
+                // A lost piece lies between at least two other faces, which the cells joined instead.
+                if (candidates.Count < 3) continue;
+                foreach (var (id, p) in candidates)
+                {
+                    if (result.GetValueOrDefault(id).Verdict == LostFaces.Verdict.Face) continue;
+                    // Built only once a search needs it: most end on the margin alone.
+                    TriangleBvh? polygons = null;
+                    double Distance(Point3D q) => (polygons ??= Polygons(id)).Distance(q);
+                    var r = LostFaces.Search(p, part.Surfaces[id], near, Settings.Tolerance, budget: PieceBudget, carried: (Distance, reach));
+                    if (r.Verdict == LostFaces.Verdict.Face) result[id] = r;
+                }
             }
         }
         return result;

@@ -41,6 +41,7 @@ public class RobustnessTests(ITestOutputHelper output)
         ("silent:sub-resolution", "silent: geometry below the cells neither built nor reported"),
         ("silent:spurious-faces", "silent: faces from a contact within tolerance"),
         ("topology-differs", "unjudged: topology differs, F-rep stable at finer cells"),
+        ("lost-names", "faces whose names the operation history lost"),
         ("invalid-shape", "result reported invalid"),
         ("refused:", "diagnosed where the other backend built it"),
     ];

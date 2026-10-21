@@ -59,6 +59,8 @@ public static class TopologyBuilder
                 }
             }
 
+        // The mesh vertices of tips joined to their face: only their edges and corners can be split as well.
+        var tipped = field is null ? [] : JoinTips(quads, vertices, surfaces, surfaceClass, faces, bodies, field, tolerance);
         var (faceIndex, faceCount) = Number(quadCount, faces);
         var faceOfQuad = new int[quadCount];
         for (var q = 0; q < quadCount; q++) faceOfQuad[q] = faceIndex[faces.Find(q)];
@@ -123,6 +125,22 @@ public static class TopologyBuilder
             var (s, t) = (segments[ends[k - 1] / 2], segments[ends[k] / 2]);
             if (s.A == t.A && s.B == t.B && End(ends[k - 1]) == End(ends[k])) chains.Union(ends[k - 1] / 2, ends[k] / 2);
         }
+        // A joined tip's chains along the faces round it were left apart from the face's own: one edge with the chain
+        // between the same two faces when the straight way between them lies on both surfaces and on the part.
+        if (tipped.Count > 0)
+            foreach (var pair in Enumerable.Range(0, segments.Count).GroupBy(chains.Find).GroupBy(g => (segments[g.Key].A, segments[g.Key].B)).Where(p => p.Count() > 1))
+            {
+                var on = new[] { faceOwners[pair.Key.A], faceOwners[pair.Key.B] };
+                var list = pair.Select(g => (Root: g.Key, Vertices: g.SelectMany(k => new[] { segments[k].V1, segments[k].V2 }).Distinct().ToList())).ToList();
+                for (var i = 0; i < list.Count; i++)
+                for (var j = i + 1; j < list.Count; j++)
+                {
+                    if (chains.Find(list[i].Root) == chains.Find(list[j].Root)) continue;
+                    if (!list[i].Vertices.Any(tipped.Contains) && !list[j].Vertices.Any(tipped.Contains)) continue;
+                    var (p, q) = Closest([.. list[i].Vertices.Select(v => vertices[v])], [.. list[j].Vertices.Select(v => vertices[v])]);
+                    if (Along(field!, on, surfaces, p, q, tolerance)) chains.Union(list[i].Root, list[j].Root);
+                }
+            }
         var (chainIndex, _) = Number(segments.Count, chains);
         // A chain between two planes whose common line meets the part in one point is no edge: the cells joined the
         // faces across a sliver of a third one there (a cut whose trace touches a face at a vertex). It collapses to
@@ -184,6 +202,21 @@ public static class TopologyBuilder
             foreach (var slot in slots.Skip(1)) clusters.Union(slots[0], slot);
         }
 
+        // A joined tip's corner and the face's own corner of the same faces are one vertex when the straight way
+        // between them lies on all their surfaces and on the part.
+        if (tipped.Count > 0)
+            foreach (var same in Enumerable.Range(0, corners.Count).GroupBy(i => string.Join(",", corners[i].Faces)).Where(g => g.Count() > 1))
+            {
+                var on = corners[same.First()].Faces.Select(f => faceOwners[f]).ToArray();
+                var members = same.ToList();
+                for (var i = 0; i < members.Count; i++)
+                for (var j = i + 1; j < members.Count; j++)
+                    if (clusters.Find(members[i]) != clusters.Find(members[j])
+                        && (tipped.Contains(corners[members[i]].Vertex) || tipped.Contains(corners[members[j]].Vertex))
+                        && Along(field, on, surfaces, vertices[corners[members[i]].Vertex], vertices[corners[members[j]].Vertex], tolerance))
+                        clusters.Union(members[i], members[j]);
+            }
+
         bool SameCorner((int Vertex, List<int> Faces) x, (int Vertex, List<int> Faces) y) =>
             x.Faces.All(y.Faces.Contains) || y.Faces.All(x.Faces.Contains)
             || (vertices[x.Vertex] - vertices[y.Vertex]).Length <= 10 * tolerance;
@@ -197,6 +230,131 @@ public static class TopologyBuilder
 
         return new Result(new Topology(topoFaces, topoEdges, topoVertices, bodyOfQuad.Count), faceOfQuad, pinches,
             [.. faceOwners.Select(o => o.Order().ToArray())], edgePoints, [.. clustered.Select(g => g.Select(x => x.At).ToArray())]);
+    }
+
+    // A face of at most this many polygons is a candidate tip.
+    const int TipQuads = 4;
+
+    /// <summary>
+    /// A face cut off at a narrow tip: where a face runs out into a corner sharper than the cells (two cuts crossing
+    /// on it), the polygons at the tip can share no edge with the rest of the face, and the face comes out as two. A
+    /// small face joins the nearest polygon of the same surface in its body when the straight way between them, on the
+    /// surface, stays on the part's boundary: then it is one face. A face cut in two by something between them leaves
+    /// the boundary on the way.
+    /// </summary>
+    /// <returns>The mesh vertices of the tips joined.</returns>
+    static HashSet<int> JoinTips(Quad[] quads, Point3D[] vertices, IReadOnlyList<Surface> surfaces, int[] surfaceClass, UnionFind faces, UnionFind bodies, Field field, double tolerance)
+    {
+        var joined = new HashSet<int>();
+        var groups = new Dictionary<int, List<int>>();
+        for (var q = 0; q < quads.Length; q++)
+        {
+            var root = faces.Find(q);
+            if (!groups.TryGetValue(root, out var list)) groups[root] = list = [];
+            if (list.Count <= TipQuads) list.Add(q);
+        }
+        var tips = groups.Where(g => g.Value.Count <= TipQuads).OrderBy(g => g.Key).ToList();
+        if (tips.Count == 0) return joined;
+        Point3D Centre(int q)
+        {
+            var x = quads[q];
+            var c = (vertices[x.A].AsVector() + vertices[x.B].AsVector() + vertices[x.C].AsVector() + vertices[x.D].AsVector()) / 4;
+            return new Point3D(c.X, c.Y, c.Z);
+        }
+        // The polygons of each surface class with their centres: a tip looks only at its own surface's.
+        var wanted = tips.Select(t => surfaceClass[quads[t.Value[0]].Owner]).ToHashSet();
+        var ofClass = new Dictionary<int, List<(int Quad, Point3D Centre)>>();
+        for (var q = 0; q < quads.Length; q++)
+            if (surfaceClass[quads[q].Owner] is var c && wanted.Contains(c))
+            {
+                if (!ofClass.TryGetValue(c, out var list)) ofClass[c] = list = [];
+                list.Add((q, Centre(q)));
+            }
+        foreach (var (root, tip) in tips)
+        {
+            var first = tip[0];
+            var s = surfaces[quads[first].Owner];
+            if (!s.Analytic) continue;
+            var (from, body, face) = (Centre(first), bodies.Find(first), faces.Find(first));
+            var (best, distance) = (-1, double.MaxValue);
+            foreach (var (q, centre) in ofClass[surfaceClass[quads[first].Owner]])
+                if ((centre - from).LengthSquared is var d && d < distance && faces.Find(q) != face && bodies.Find(q) == body)
+                    (best, distance) = (q, d);
+            if (best < 0 || !OnBoundary(field, s, from, Centre(best), tolerance)) continue;
+            faces.Union(first, best);
+            foreach (var q in tip)
+                foreach (var v in (int[])[quads[q].A, quads[q].B, quads[q].C, quads[q].D]) joined.Add(v);
+        }
+        return joined;
+    }
+
+    /// <summary>
+    /// The straight way from a to b lies on every face's surface (analytic ones only), on the part's boundary, and where
+    /// every face bounds the part: round each point the field is decided by a surface of each face. Two faces' surfaces
+    /// can meet on the boundary inside one of them (a plane running into a boss through it), and that is no edge.
+    /// </summary>
+    static bool Along(Field field, HashSet<int>[] faces, IReadOnlyList<Surface> surfaces, Point3D a, Point3D b, double tolerance)
+    {
+        var on = faces.Select(f => surfaces[f.Min()]).ToArray();
+        if (on.Any(s => !s.Analytic)) return false;
+        const int Steps = 32;
+        var step = 100 * tolerance;
+        for (var i = 0; i <= Steps; i++)
+        {
+            var p = a + (b - a) * ((double)i / Steps);
+            if (!Boundary(field, p, tolerance) || on.Any(s => Math.Abs(s.Distance(p)) > 10 * tolerance)) return false;
+            // Outside the part the field's owner is the surface that bounds it nearest; inside it is only the surface
+            // that decides a min or max, which can lie deep in the material.
+            var owners = Around.Select(d => field.Sample(p + d * step)).Where(x => x.Value > 0).Select(x => x.Owner).ToHashSet();
+            if (!faces.All(f => f.Overlaps(owners))) return false;
+        }
+        return true;
+    }
+
+    // Unit steps round a point: the six axes and the eight diagonals.
+    static readonly Vector3D[] Around =
+    [
+        new(1, 0, 0), new(-1, 0, 0), new(0, 1, 0), new(0, -1, 0), new(0, 0, 1), new(0, 0, -1),
+        .. from x in new[] { -1, 1 } from y in new[] { -1, 1 } from z in new[] { -1, 1 } select new Vector3D(x, y, z) / Math.Sqrt(3),
+    ];
+
+    /// <summary>
+    /// The point is on the part's boundary: the field is zero there and a small step finds material on one side only.
+    /// The field is zero on a contact inside the part too (two solids joined face to face), but has material all round.
+    /// </summary>
+    static bool Boundary(Field field, Point3D p, double tolerance)
+    {
+        if (Math.Abs(field.Value(p)) > 10 * tolerance) return false;
+        var step = 100 * tolerance;
+        var (inside, outside) = (false, false);
+        foreach (var d in (Vector3D[])[new(step, 0, 0), new(-step, 0, 0), new(0, step, 0), new(0, -step, 0), new(0, 0, step), new(0, 0, -step)])
+        {
+            var v = field.Value(p + d);
+            (inside, outside) = (inside || v < 0, outside || v > 0);
+        }
+        return inside && outside;
+    }
+
+    static (Point3D, Point3D) Closest(List<Point3D> a, List<Point3D> b)
+    {
+        var (best, pa, pb) = (double.MaxValue, a[0], b[0]);
+        foreach (var p in a)
+            foreach (var q in b)
+                if ((p - q).LengthSquared is var d && d < best) (best, pa, pb) = (d, p, q);
+        return (pa, pb);
+    }
+
+    /// <summary>The segment, put onto the surface point by point, lies on the part's boundary all the way.</summary>
+    static bool OnBoundary(Field field, Surface s, Point3D a, Point3D b, double tolerance)
+    {
+        const int Steps = 64;
+        for (var i = 0; i <= Steps; i++)
+        {
+            var p = a + (b - a) * ((double)i / Steps);
+            for (var it = 0; it < (s.Kind == SurfaceKind.Plane ? 1 : 6); it++) p -= s.Gradient(p) * s.Distance(p);
+            if (!Boundary(field, p, tolerance)) return false;
+        }
+        return true;
     }
 
     /// <summary>

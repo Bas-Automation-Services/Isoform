@@ -8,6 +8,7 @@ public sealed class TriangleBvh
     readonly Point3D[] _a, _b, _c;
     readonly List<Node> _nodes = [];
     readonly int[] _order;
+    readonly double[] _keys;
 
     record struct Node(Point3D Min, Point3D Max, int Left, int Right, int Start, int Count);
 
@@ -17,6 +18,7 @@ public sealed class TriangleBvh
         _b = triangles.Select(t => vertices[t.B]).ToArray();
         _c = triangles.Select(t => vertices[t.C]).ToArray();
         _order = Enumerable.Range(0, triangles.Count).ToArray();
+        _keys = new double[triangles.Count];
         if (triangles.Count > 0) Build(0, triangles.Count);
     }
 
@@ -38,11 +40,29 @@ public sealed class TriangleBvh
             return index;
         }
 
-        // Median split on the longest axis of the centroids.
-        var extent = max - min;
+        // Split at the middle of the centroids' extent on its longest axis, partitioned in place: linear per level. If
+        // every centroid falls on one side, split the count in half instead.
+        var keys = _keys.AsSpan(start, count);
+        var order = _order.AsSpan(start, count);
+        var (lo, hi) = (new Vector3D(double.MaxValue, double.MaxValue, double.MaxValue), new Vector3D(double.MinValue, double.MinValue, double.MinValue));
+        for (var k = 0; k < count; k++)
+        {
+            var c = (_a[order[k]].AsVector() + _b[order[k]].AsVector() + _c[order[k]].AsVector()) / 3;
+            (lo, hi) = (new(Math.Min(lo.X, c.X), Math.Min(lo.Y, c.Y), Math.Min(lo.Z, c.Z)), new(Math.Max(hi.X, c.X), Math.Max(hi.Y, c.Y), Math.Max(hi.Z, c.Z)));
+        }
+        var extent = hi - lo;
         var axis = extent.X >= extent.Y && extent.X >= extent.Z ? 0 : extent.Y >= extent.Z ? 1 : 2;
-        Array.Sort(_order, start, count, Comparer<int>.Create((i, j) => Centroid(i, axis).CompareTo(Centroid(j, axis))));
-        var half = count / 2;
+        for (var k = 0; k < count; k++) keys[k] = Centroid(order[k], axis);
+        var middle = 3 * (axis == 0 ? (lo.X + hi.X) / 2 : axis == 1 ? (lo.Y + hi.Y) / 2 : (lo.Z + hi.Z) / 2); // Centroid sums three corners
+        var half = 0;
+        for (var k = 0; k < count; k++)
+            if (keys[k] < middle)
+            {
+                (keys[k], keys[half]) = (keys[half], keys[k]);
+                (order[k], order[half]) = (order[half], order[k]);
+                half++;
+            }
+        if (half == 0 || half == count) half = count / 2;
         var left = Build(start, half);
         var right = Build(start + half, count - half);
         _nodes[index] = new Node(min, max, left, right, start, count);
@@ -72,14 +92,17 @@ public sealed class TriangleBvh
     {
         double x0 = double.MaxValue, y0 = double.MaxValue, z0 = double.MaxValue;
         double x1 = double.MinValue, y1 = double.MinValue, z1 = double.MinValue;
+        void Add(Point3D v)
+        {
+            x0 = Math.Min(x0, v.X); y0 = Math.Min(y0, v.Y); z0 = Math.Min(z0, v.Z);
+            x1 = Math.Max(x1, v.X); y1 = Math.Max(y1, v.Y); z1 = Math.Max(z1, v.Z);
+        }
         for (var k = start; k < start + count; k++)
         {
             var t = _order[k];
-            foreach (var v in new[] { _a[t], _b[t], _c[t] })
-            {
-                x0 = Math.Min(x0, v.X); y0 = Math.Min(y0, v.Y); z0 = Math.Min(z0, v.Z);
-                x1 = Math.Max(x1, v.X); y1 = Math.Max(y1, v.Y); z1 = Math.Max(z1, v.Z);
-            }
+            Add(_a[t]);
+            Add(_b[t]);
+            Add(_c[t]);
         }
         return (new Point3D(x0, y0, z0), new Point3D(x1, y1, z1));
     }

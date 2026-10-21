@@ -101,6 +101,13 @@ public static class Robustness
         }
         if (labels.Any(l => l.EndsWith(":missed-feature") || l.EndsWith(":spurious-faces"))) return;
 
+        // A face OCCT's history lost track of ("?", OcctModeler) has no name to compare: OCCT's failure, not a judgement.
+        if (occt.Faces.Any(f => f.Sources.Contains("?")))
+        {
+            Settle("occt:lost-names");
+            return;
+        }
+
         var faceless = doc.Features.Select(f => f.Id).Where(id => !Owns(frep, id) && !Owns(occt, id)).Select(id => id + "/").ToList();
         Topology Strip(Topology t) => new(t.Faces.Select(f => f with { Sources = f.Sources.Where(s => !faceless.Any(s.StartsWith)).DefaultIfEmpty("?").ToList() }).ToList(),
             t.Edges, t.Vertices, t.BodyCount);

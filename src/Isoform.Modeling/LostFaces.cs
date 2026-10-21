@@ -85,8 +85,14 @@ static class LostFaces
         }
     }
 
-    public static Result Search(Path path, Surface s, Box3D box, double tolerance, int budget = 200)
+    /// <param name="carried">
+    /// For a surface the mesh carries: the distance from a point to its polygons and how far they may lie from a face
+    /// they carry. Boxes and witnesses that close to them are left out, so only a piece of the face the mesh lost counts.
+    /// </param>
+    public static Result Search(Path path, Surface s, Box3D box, double tolerance, int budget = 200, (Func<Point3D, double> Distance, double Reach)? carried = null)
     {
+        bool Covered(Box3D b) => carried is { } c && c.Distance(b.Center) + (b.Max - b.Min).Length / 2 <= c.Reach;
+        bool Near(Point3D p) => carried is { } c && c.Distance(p) <= c.Reach;
         if (path.End is not { } end) return new(Verdict.Unknown);
         var witness = end is LeafField;
         var surface = new LeafField(s);
@@ -166,7 +172,8 @@ static class LostFaces
             }
             foreach (var g in path.Siblings)
                 if (Add(g.Field.Simplify(b), g.Sign, g.Shift)) return u;
-            return u;
+            // Last, as it may need the polygons: a box near a carried face's polygons holds no lost piece of it.
+            return Covered(b) ? double.NegativeInfinity : u;
         }
 
         var queue = new PriorityQueue<Box3D, double>();
@@ -175,7 +182,9 @@ static class LostFaces
         {
             if (-negative <= tolerance) break;
             if (budget-- <= 0) return new(Verdict.Unknown);
-            if (witness && Ascend(path, s, b) is var w && w.Margin > tolerance) return w;
+            // Near the polygons of a carried face a witness would be that face: no climb.
+            // The path may be simplified for the search box: a witness counts only inside it.
+            if (witness && !Near(b.Center) && Ascend(path, s, b) is var w && w.Margin > tolerance && Within(box, w.At) && !Near(w.At)) return w;
             foreach (var child in Split(b))
             {
                 var u = Upper(child);
@@ -186,6 +195,9 @@ static class LostFaces
     }
 
     static bool Contains(Interval v, double x) => v.Lo <= x && v.Hi >= x;
+
+    static bool Within(Box3D b, Point3D p) =>
+        p.X >= b.Min.X && p.X <= b.Max.X && p.Y >= b.Min.Y && p.Y <= b.Max.Y && p.Z >= b.Min.Z && p.Z <= b.Max.Z;
 
     /// <summary>The margin at a point of the surface and the sibling closest to deciding there.</summary>
     static (double Margin, int By) Margin(Path path, Point3D p)

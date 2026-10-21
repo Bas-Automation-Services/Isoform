@@ -335,6 +335,17 @@ but about half are features a finer local mesh would build.
   Silent: 0.9% refined against 0.4% unrefined. The difference is not new error: in each case the unrefined run
   reported something else nearby, which hid a feature smaller than the finest cell that even uniform 1/8 cells mesh
   wrong without a report. Those gaps (sub-cell steps of 1e-6 to 0.1 mm against another face) are next.
+- *Closing them (2026-10-21):* a false vertex now needs a residual of one tolerance, not ten (blocks overlapping by
+  1e-6 mm); a face the mesh carries is searched for lost pieces too, in blocks of 8 cells along every edge and round
+  every vertex where three surfaces meet, away from its own polygons (a hole wall's sliver where it clips a corner);
+  pieces of a body that touch within the tolerance are reported (`PieceContacts`); a face cut off at a sharp tip is
+  joined back to its face, with its edges and corners, where the way between them is on the part's boundary and,
+  for edges, both faces decide the field round it. The K7 judge no longer blames F-rep for faces OCCT's history
+  lost the names of. Result on seeds 150–1149: silent 0 (was 9), both build and agree 30.3%; on 1000 fresh seeds
+  (1150–2149) silent 0.1%, against OCCT's 1.8% failures there (a crash, two invalid shapes). The one left: a body
+  0.007 mm thick at a clipped corner, far from every edge the mesh made (`RobustnessReproTests`, skipped). Cost:
+  about 5–9 ms on a 30 ms random part (Release), more on large meshes, mostly the polygon index the piece search
+  queries.
 
 **Review.** An independent read of the K4 code found 15 problems (wrong geometry without a diagnostic in several);
 all fixed, each with a regression test (`ReviewFindingTests`).
