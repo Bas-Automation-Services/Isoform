@@ -5,10 +5,13 @@ namespace Isoform.Playground;
 
 public static partial class Playground
 {
-    /// <summary>A part document, or a bundle of an assembly and its documents, with edits applied: result v2.</summary>
+    /// <summary>
+    /// A part document, or a bundle of an assembly and its documents, with edits applied: result v2. <paramref name="snapGrid"/>
+    /// snaps the cell lattice to the world (<see cref="ModelingSettings.SnapGrid"/>), for a drag's previews.
+    /// </summary>
     [JSExport]
-    public static string Regenerate(string document, string edits, double cellSize, double chordTolerance, string slot) =>
-        ViewJson.Write(Session.Regenerate(document, edits, Settings(cellSize, chordTolerance), slot));
+    public static string Regenerate(string document, string edits, double cellSize, double chordTolerance, string slot, bool snapGrid) =>
+        ViewJson.Write(Session.Regenerate(document, edits, Settings(cellSize, chordTolerance, snapGrid), slot));
 
     // The last regeneration's mesh (see MeshBuffers), read by the page straight into WebGL buffers.
 

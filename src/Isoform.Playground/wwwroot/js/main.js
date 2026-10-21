@@ -1,6 +1,6 @@
 // Wires the page: the kernel workers, the store, the viewer, picking and the panels.
 import { adaptResult, createClient } from './kernel-client.js';
-import { createStore } from './store.js';
+import { createStore, shown } from './store.js';
 import { createViewer } from './viewer.js';
 import { createPicking } from './picking.js';
 import { createHandles } from './handles.js';
@@ -14,6 +14,8 @@ import { createHistory } from './panels/history.js';
 import { createFlash } from './panels/flash.js';
 import { createTree } from './panels/tree.js';
 import { createInspector } from './panels/inspector.js';
+import { createPreview } from './lib/preview.js';
+import { createGhosts } from './ghosts.js';
 import { createTour } from './panels/tour.js';
 import { createShare } from './panels/share.js';
 
@@ -35,9 +37,10 @@ const client = createClient(workers);
 
 const viewer = createViewer($('view'));
 let fit = true; // frame the camera on the next result shown: the first, and after picking an example
+// What is on screen: a drag's preview while there is one, else the committed result (store.shown).
 store.subscribe((s, before) => {
-  if (s.result === before.result) return;
-  viewer.show(s.result, fit);
+  if (shown(s) === shown(before) || !shown(s)) return;
+  viewer.show(shown(s), fit);
   fit = false;
 });
 createPicking(viewer, store, $('tooltip'));
@@ -133,16 +136,53 @@ Object.assign(window.isoform, {
   pin: target => references.pin(typeof target === 'string' ? { face: target } : Array.isArray(target) ? { edge: target } : undefined),
 });
 
-// Handles (J1): the selected feature's handles. A released drag commits its edits as one history entry (J3's
-// applyEdits); J2 adds the preview pipeline.
+// --- Drag preview (J2) ----------------------------------------------------------------------------------------
+// While a handle drags, a ghost of its faces moves at once (ghosts.js) and a preview worker regenerates the edited
+// document in its "preview" slot, latest wins (lib/preview.js). The preview has a worker of its own rather than a
+// pool worker: the region cache keeps only what the last regeneration used, so previews in the pool would throw away
+// the committed document's regions and the release would mesh everything again. One more kernel costs one more wasm
+// heap (window.isoform.memory(): 70-80 MB over the demo, as much as the pool's primary), against up to 8 in the pool.
+// It starts with the page, so it is loaded by the first drag.
+const previewWorker = new Worker(new URL('./kernel-worker.js', import.meta.url), { type: 'module' });
+previewWorker.onerror = e => report(e.message ?? 'the preview worker failed to start');
+const previewClient = createClient([previewWorker]);
+const previews = createPreview(store, {
+  call: args => previewClient.call('regenerate', args),
+  settings: () => ({ cell: store.state.result?.cell ?? +$('cell').value, chord: +$('chord').value }),
+});
+const ghosts = createGhosts(viewer, store);
+// The release commits through applyEdits: one history entry per drag. The preview and ghost stay on screen until the
+// commit's result is in, so the part does not jump back meanwhile.
+const drags = {
+  start: handle => { $('tooltip').hidden = true; ghosts.begin(handle); previews.begin(handle); },
+  preview: (edits, handle, { t }) => { ghosts.move(t); previews.move(edits, t); },
+  end: (handle, moved) => {
+    previews.end();
+    if (!moved) { previews.drop(); ghosts.clear(); }
+  },
+  commit: (edits, handle) => commits.applyEdits(edits, undefined, 'handle').finally(() => { previews.drop(); ghosts.clear(); }),
+};
+Object.assign(window.isoform, {
+  /** The preview on screen: {cell, ms, t, handle, hash, diagnostics}, or null. */
+  preview: () => (p => p && { cell: p.cell, ms: p.ms, t: p.t, handle: p.handle, hash: p.hash, diagnostics: p.diagnostics.map(d => d.code) })(store.state.preview),
+  previewTimings: () => previews.timings,
+  ghost: () => ghosts.state(),
+  /** Bytes of wasm memory (its high-water mark) of the pool's primary kernel and of the preview's. */
+  memory: async () => ({ primary: (await client.call('memory')).result, preview: (await previewClient.call('memory')).result }),
+});
+// --- end drag preview -------------------------------------------------------------------------------------------
+
+// Handles (J1): the selected feature's handles; a drag previews (J2, above) and its release commits its edits as one
+// history entry (J3's applyEdits).
 const handles = createHandles(viewer, store, {
   fetch: () => client.call('handles', { slot: 'main' }).then(r => r.result.handles),
-  commit: edits => commits.applyEdits(edits, undefined, 'handle'),
+  ...drags,
 });
 window.isoform.handles = handles.list;
+window.isoform.dragging = handles.dragging;
 
-// Guided tour and share links (T1): the tour commits its edits like an agent (origin 'tour'); a #doc= link opens
-// its document instead of an example.
+// --- Guided tour and share links (T1) ---------------------------------------------------------------------------
+// The tour commits its edits like an agent (origin 'tour'); a #doc= link opens its document instead of an example.
 const tour = createTour(store, {
   box: $('view'), agentBox: $('agent'), examplesBox: $('examples'), viewer, commits, diagnostics, references,
   call: client.call, regenerate, pickCell, defaultCell,
@@ -150,6 +190,7 @@ const tour = createTour(store, {
 $('tour').onclick = () => tour.start();
 const share = createShare(store, { button: $('share'), status: $('share-status'), examplesBox: $('examples'), regenerate });
 Object.assign(window.isoform, { tour, shareLink: () => share.link(), shareStatus: () => share.status() });
+// --- end tour and share -----------------------------------------------------------------------------------------
 
 await client.start();
 editor.load((await client.call('examples')).result);

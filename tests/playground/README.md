@@ -13,7 +13,7 @@ node tests/playground/run.mjs path/to/wwwroot      # or any other published wwwr
 The parts on their own:
 
 ```sh
-node --test tests/playground/{kernel-client,store,diagnose,references,diff,history,dragmath,features,share}.test.mjs   # front end only, no publish
+node --test tests/playground/{kernel-client,store,diagnose,references,diff,history,dragmath,features,preview,share}.test.mjs   # front end only, no publish
 node --test tests/playground/kernel.test.mjs       # kernel only; ISOFORM_PLAYGROUND=<wwwroot> to point elsewhere
 node tests/playground/e2e.mjs [wwwroot]            # browser only
 node tests/playground/serve.mjs [wwwroot] [port]   # serve the page to look at it yourself (default port 8137)
@@ -34,11 +34,22 @@ helpers to the primary; `adaptResult` keeps result v2 as written and adds the me
 a document that does not read keeps the last result; history gets one entry per changed document; the status line has
 the form `e2e.mjs` reads.
 
-**`dragmath.test.mjs`** drives `wwwroot/js/lib/dragmath.js` with the handles in `handles.fixture.json` (the C#
-contract of `docs/playground-plan.md`, one of each kind): the pointer ray gives `t` as the closest point to a linear
-handle's axis, the hit on a planar handle's plane, or the angle about an angle handle's axis; a drag counts from where
-it was grabbed and an angle keeps turning past half a turn; the value snaps to `step` and stays within `min`/`max`; the
-edits are `{set, value: base + per·t}`; a selected face shows its feature's handles and never an assembly frame.
+**`dragmath.test.mjs`** drives `wwwroot/js/lib/dragmath.js` with the handles in `handles.fixture.json` (the kernel's
+handle JSON, `src/Isoform.Interactive/README.md`; `kernel.test.mjs` checks it against the kernel): the pointer ray gives
+`t` as the closest point to a linear handle's axis, the hit on a planar handle's plane along the kernel's `u` and `v`
+(as given, whatever their handedness), or the angle about an angle handle's axis through its `center`; a drag counts
+from where it was grabbed and an angle keeps turning past half a turn; the value snaps to `step` (a plane snaps both
+its values, shift a tenth of the step) and `edits[0]` stays within `min`/`max`; the edits are `{set, value:
+base + per·t}`; a pattern's −/+ step its `count`; a face's feature is its name up to the first `/` (a pattern copy's
+`row/2:bore/wall` is `row`'s); a selected face shows its feature's handles and never an assembly frame.
+
+**`preview.test.mjs`** drives `wwwroot/js/lib/preview.js` (the drag preview) with a fake preview worker: a drag first
+regenerates the committed document unchanged (not shown, it warms the region cache), then each move regenerates the
+edits in the `preview` slot with the lattice snapped; one request in flight, the newest waiting one wins, and every
+reply that comes back shows (`store.preview`, `preview: true`) until the drag ends; after the release the last
+preview stays until it is dropped. The cell is the committed one while a warm preview keeps within 120 ms, else twice
+(then four times) as coarse, never finer during a drag; the next drag of a handle starts a step finer when its
+previews ran in a fifth of the budget.
 
 **`diagnose.test.mjs`** (`wwwroot/js/lib/diagnose.js`): diagnostics grouped by code with readable titles, errors
 first; the face names a message mentions (whole names only), else for a feature that left no faces the ones its
@@ -101,6 +112,14 @@ Last it selects `plate/x+` on example 0, drags its handle 40 px outwards with mo
 Then the tree and inspector: it selects `hole` in the tree, types a diameter and scrubs it (each must change
 the document and its hash, and keep `hole` selected), re-picks the fillet's edge, and checks that selecting a face
 selects its feature in the tree.
+Then drags (`drags.mjs`), one per handle kind in the examples: the hole centre (planar) along its `u`, the fillet
+radius outwards, the turned shaft's revolve angle back from 360°, and `+` on the bolt row's count; each must change its
+field the right way, and while it drags a preview must be on screen, badged, with the ghost moved from where the
+preview was made to the pointer (and shown before any preview is back). Last the phase-1 demo of
+`docs/playground-plan.md` as one scenario on example 0: drag `plate/x+` (one `set` in the agent view), drag the hole
+towards the y+ edge with shift until a below-resolution thin spot names `plate/y+` and `hole/wall`, resolve it, carry
+on to y = 45 (`tangent-contact`), drag the fillet radius past 11 mm (`fillet-invalid`), undo four times to the original
+hash. It prints what the previews took per cell and the wasm memory of the primary and preview kernels.
 
 Then the guided tour (`wwwroot/js/panels/tour.js`) on example 0: starting it pins its four faces; it steps to the end
 with `tour.next()` (once Back and Next again, which must return to the step before's hash), and every step in its
@@ -118,6 +137,8 @@ the part on the right, framed to fit, one colour per face, sharp edges dark and 
 for: a part missing or cut off (framing), faces that share a colour where they should not (face naming), holes in the
 mesh, stray triangles, and red diagnostics under the stats line. `handle-drag.png` is example 0 in the handle drag, just
 before the release: the plate tinted, its handles drawn over it, and the dragged arrow's label with the live width.
+`drag-planar.png`, `drag-angle.png` and `drag-count.png` are the handle kinds mid-drag (the preview badge in the
+verdict, the ghost in amber); `demo-*.png` the demo's steps in order.
 
 ## Writing browser tests
 
@@ -136,12 +157,14 @@ Coordinates are CSS pixels in the viewport. The page exposes `window.isoform`: `
 `target()` (where the camera looks) and `resolve(cell)`; for reference pins `pins()` and `pin(name | [a, b])` (resolves to the pin); for commits `applyEdits(edits, label, origin)`, `undo()`, `redo()` (each
 resolves to `{hash}`, `{error, failedEdit?}` or null) and `history()` (`{at, entries: [{hash, edits, label, origin}]}`); for the tree, `feature()` (the selected item's key);
 for handles `handles()`: the shown handles (those of the
-selected face's feature), each `{id, feature, kind, label, value, faces, readOnly, screen, direction}` with `screen`
-the point to grab it by and `direction` the unit screen direction of its axis (where `t` grows). For the tour, `tour`:
-`start()`, `next()`, `back()` (each resolves to that step's log entry), `play()`, `pause()`, `exit()` and `state()`
-(`{active, index, count, playing, busy, original, log: [{index, title, hash, before, codes, ok, problems}]}`); for
-share links `shareLink()` (resolves to the link to the shown document) and `shareStatus()`. Later tasks add to it.
-For example:
+selected face's feature), each `{id, feature, kind, label, value, faces, readOnly, count, screen, direction}` with `screen`
+the point to grab it by and `direction` the unit screen direction of its axis (where `t` grows; a planar handle also
+has `directionV`, its `v`'s), `dragging()` (the drag under way: `{id, t, value, edits}`, or null), `preview()` (the
+preview on screen: `{cell, ms, t, handle, hash, diagnostics}`, or null), `previewTimings()`, `ghost()` and `memory()`.
+For the tour, `tour`: `start()`, `next()`, `back()` (each resolves to that step's log entry), `play()`, `pause()`,
+`exit()` and `state()` (`{active, index, count, playing, busy, original, log: [{index, title, hash, before, codes, ok,
+problems}]}`); for share links `shareLink()` (resolves to the link to the shown document) and `shareStatus()`.
+Later tasks add to it. For example:
 
 ```js
 const page = await browser.newPage();

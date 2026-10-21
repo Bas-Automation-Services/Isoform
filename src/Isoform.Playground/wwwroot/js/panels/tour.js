@@ -25,14 +25,14 @@ export const script = [
       + 'and the new hash. The pins still resolve, because they go by name.',
   },
   {
-    title: 'Hole towards the edge', edits: [{ set: 'hole.center.1', value: 44.4 }], label: 'move the hole towards plate/y+',
+    title: 'Hole towards the edge', edits: [{ set: 'hole.center.1', value: 44.6 }], label: 'move the hole towards plate/y+',
     expect: 'below-resolution',
-    caption: 'Move the hole until 0.6 mm of wall is left to plate/y+. At 0.5 mm cells that is below what the kernel '
+    caption: 'Move the hole until 0.4 mm of wall is left to plate/y+. At 0.5 mm cells that is below what the kernel '
       + 'resolves, and it says so: both faces lit, the thickness at the spot.',
   },
   {
-    title: 'Resolve it', cell: 0.25, gone: 'below-resolution',
-    caption: 'Regenerate the same document at 0.25 mm cells: the wall is resolved and the report is gone. The hash does '
+    title: 'Resolve it', cell: 0.2, gone: 'below-resolution',
+    caption: 'Regenerate the same document at 0.2 mm cells: the wall is resolved and the report is gone. The hash does '
       + 'not change, because it belongs to the document, not to the mesh.',
   },
   {
@@ -42,9 +42,9 @@ export const script = [
       + 'meshed quietly. The pinned plate/y+ is now split in two.',
   },
   {
-    title: 'Fillet past what fits', edits: [{ set: 'fillet.radius', value: 12 }], label: 'fillet radius 12',
+    title: 'Fillet past what fits', edits: [{ set: 'fillet.radius', value: 11 }], label: 'fillet radius 11',
     expect: 'fillet-invalid', pins: { 'fillet/face': 'gone' },
-    caption: 'Raise the fillet radius to 12 mm on a 10 mm plate: a precise fillet-invalid that names its edge. The rest '
+    caption: 'Raise the fillet radius to 11 mm on a 10 mm plate: a precise fillet-invalid that names its edge. The rest '
       + 'of the part stays valid. The pinned fillet/face is gone.',
   },
   {
@@ -136,9 +136,8 @@ export function createTour(store, { box, agentBox, examplesBox, viewer, commits,
       const result = await perform(step);
       if (result?.error) throw new Error(result.error);
       await references.refresh();
-      const { hash, historyAt: at, result: shown } = store.state;
+      const { hash } = store.state;
       if (step.open) original = hash;
-      ended = [...ended.slice(0, i), { at, cell: shown?.cell ?? defaultCell }];
       const { codes, problems } = check(step, hash);
       log = [...log.slice(0, i), { index: i, title: step.title, hash, before, codes, ok: !problems.length, problems }];
       if (!step.open) look(step);
@@ -147,6 +146,7 @@ export function createTour(store, { box, agentBox, examplesBox, viewer, commits,
       const error = String(e?.message ?? e);
       log = [...log.slice(0, i), { index: i, title: step.title, hash: store.state.hash, before, codes: [], ok: false, problems: [error], error }];
     } finally {
+      ended = [...ended.slice(0, i), { at: store.state.historyAt, cell: store.state.result?.cell ?? defaultCell }];
       busy = false;
       render();
     }

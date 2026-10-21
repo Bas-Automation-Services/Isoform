@@ -1,13 +1,14 @@
 // Pointer to faces: hover lights a face and names it in the tooltip, a click selects it by name, shift+click a
 // second face for an edge. The selection lives in the store; the hovered face is only this view's.
-import { faceName, facesNamed, pick } from './store.js';
+import { faceName, facesNamed, pick, shown as onScreen } from './store.js';
 
 export function createPicking(viewer, store, tooltip) {
   const canvas = viewer.canvas;
   let hovered = -1, shown = null;
 
   function relight() {
-    const { result, selection } = store.state;
+    // The mesh on screen: a drag's preview (store.preview) has indices of its own.
+    const result = onScreen(store.state), { selection } = store.state;
     if (result !== shown) { hovered = -1; shown = result; } // a new mesh: its indices mean other faces
     const faces = facesNamed(result, selection);
     if (hovered >= 0) faces.push(hovered);
@@ -16,7 +17,7 @@ export function createPicking(viewer, store, tooltip) {
     viewer.light(faces);
   }
   // Subscribed after the viewer shows a new result, so this lights faces of the mesh on screen.
-  store.subscribe((s, before) => { if (s.result !== before.result || s.selection !== before.selection || s.highlight !== before.highlight) relight(); });
+  store.subscribe((s, before) => { if (onScreen(s) !== onScreen(before) || s.selection !== before.selection || s.highlight !== before.highlight) relight(); });
 
   canvas.addEventListener('pointermove', event => {
     const face = viewer.faceAt(event.clientX, event.clientY);
@@ -25,7 +26,7 @@ export function createPicking(viewer, store, tooltip) {
       relight();
     }
     if (face < 0) { tooltip.hidden = true; return; }
-    const { faces, bodies, bodyOfFace } = store.state.result;
+    const { faces, bodies, bodyOfFace } = onScreen(store.state);
     const r = tooltip.parentElement.getBoundingClientRect();
     tooltip.textContent = (bodies.length > 1 ? `${bodyOfFace[face]}: ` : '') + faces[face].join(' · ');
     tooltip.style.left = `${event.clientX - r.left + 14}px`;
@@ -40,7 +41,7 @@ export function createPicking(viewer, store, tooltip) {
     // A click, not the end of an orbit drag.
     if (!down || Math.hypot(event.clientX - down[0], event.clientY - down[1]) > 4) return;
     const face = viewer.faceAt(event.clientX, event.clientY);
-    const name = face < 0 ? null : faceName(store.state.result.faces[face]);
+    const name = face < 0 ? null : faceName(onScreen(store.state).faces[face]);
     store.set({ selection: pick(store.state.selection, name, event.shiftKey) });
   });
 }
