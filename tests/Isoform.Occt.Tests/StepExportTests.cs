@@ -128,6 +128,25 @@ public class StepExportTests(ITestOutputHelper output)
 
         // Bodies stay solids of their own.
         yield return new("two overlapping bodies", new([Plate, new Block("post", BooleanOp.New, [40, 15, 5], [20, 20, 30])]), 50000 + 12000, Solids: 2);
+
+        // Sketches and holes on faces: a constrained sketch's region (a 60 × 40 rectangle round an R4 bore) swept, and
+        // holes along a face's normal, through, blind, or at a sketch's points.
+        yield return new("sketched plate with a bore", new(
+            [
+                new Sketch("base", new SketchPlacement(Xy), new Dictionary<string, double[]> { ["a"] = [0, 0], ["b"] = [58, 1], ["c"] = [61, 39], ["d"] = [1, 41], ["h"] = [20, 20] },
+                    [new SketchLine("bottom", "a", "b"), new SketchLine("right", "b", "c"), new SketchLine("top", "c", "d"), new SketchLine("left", "d", "a"), new SketchCircle("bore", "h", 3)],
+                    [new("horizontal", ["bottom"]), new("vertical", ["right"]), new("horizontal", ["top"]), new("vertical", ["left"]), new("fix", ["a"]), new("fix", ["h"]),
+                     new("length", ["bottom"], 60), new("length", ["left"], 40), new("radius", ["bore"], 4)]),
+                new Extrude("plate", BooleanOp.New, null, null, 0, 5) { Sketch = "base" },
+            ]), 60 * 40 * 5 - Math.PI * 16 * 5);
+        yield return new("hole through a side face", new([Plate, new Hole("side", [25, 5], 4) { On = "plate/x+" }]), 50000 - Math.PI * 4 * 100);
+        yield return new("blind hole in the top face", new([Plate, new Hole("pocket", [20, 20], 6) { On = "plate/z+", Depth = 4 }]), 50000 - Math.PI * 9 * 4);
+        yield return new("blind holes at sketch points", new(
+            [
+                Plate,
+                new Sketch("spots", new SketchPlacement(Face: "plate/z+"), new Dictionary<string, double[]> { ["near"] = [20, 25], ["far"] = [80, 25] }, [], []),
+                new Hole("holes", [], 5) { Sketch = "spots", Points = ["near", "far"], Depth = 3 },
+            ]), 50000 - 2 * Math.PI * 6.25 * 3);
     }
 
     /// <summary>The plate below z = 10 − (x − 20)·slope, clipped at z = 0.</summary>
@@ -165,8 +184,8 @@ public class StepExportTests(ITestOutputHelper output)
         counts.Faces.Should().Be(t.Faces.Count);
         counts.Edges.Should().BeInRange(t.Edges.Count - 2, t.Edges.Count);
 
-        // The OCCT baseline models blocks, holes, plane cuts and fillets.
-        if (part.Solids == 1 && part.Doc.Features.All(f => f is Block or Hole or PlaneCut or Fillet { Loop: null }))
+        // The OCCT baseline models blocks, holes along Z, plane cuts and fillets.
+        if (part.Solids == 1 && part.Doc.Features.All(f => f is Block or Hole { On: null, Sketch: null } or PlaneCut or Fillet { Loop: null }))
         {
             var occt = new OcctModeler(settings).Regenerate(part.Doc).Shape!;
             var (vertexGap, edgeGap) = Gaps(shape, occt);
