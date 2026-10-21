@@ -70,11 +70,11 @@ public sealed class Session
         if (view is null)
         {
             Buffers = MeshBuffers.Empty;
-            return new Regeneration(slot, null, null, null, error, edited.FailedEdit, null, MeshBuffers.Empty, new Timing(editMs, regenerateMs, 0), 0, 0);
+            return new Regeneration(slot, null, null, null, error, edited.FailedEdit, null, MeshBuffers.Empty, new Timing(editMs, regenerateMs, 0), 0, 0, settings.Refinement);
         }
         Buffers = MeshBuffers.Of(view.Mesh, view.FaceOfQuad);
         var timing = new Timing(editMs, regenerateMs, clock.Elapsed.TotalMilliseconds - editMs - regenerateMs);
-        return _slots[slot] = new Regeneration(slot, format, edited.Text, edited.Hash, null, null, view, Buffers, timing, reused, meshed);
+        return _slots[slot] = new Regeneration(slot, format, edited.Text, edited.Hash, null, null, view, Buffers, timing, reused, meshed, settings.Refinement);
     }
 
     /// <summary>
@@ -120,8 +120,9 @@ public sealed class Session
 /// <param name="FailedEdit">When an edit could not be applied, its index in the list.</param>
 /// <param name="Reused">Regions taken from the cache.</param>
 /// <param name="Meshed">Regions meshed for it, here or (in a pool) elsewhere.</param>
+/// <param name="Refinement">The settings' <see cref="ModelingSettings.Refinement"/>: how many times the cells may be halved locally.</param>
 public sealed record Regeneration(string Slot, string? Format, string? Text, string? Hash, string? Error, int? FailedEdit, View? View,
-    MeshBuffers Buffers, Timing Timing, int Reused, int Meshed);
+    MeshBuffers Buffers, Timing Timing, int Reused, int Meshed, int Refinement = 0);
 
 /// <param name="Edits">Applying the edits and making the text canonical.</param>
 /// <param name="Buffers">Flattening the mesh into <see cref="MeshBuffers"/>.</param>

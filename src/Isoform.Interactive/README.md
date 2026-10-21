@@ -43,6 +43,8 @@ used, so a preview belongs in a worker of its own.
   "lineFaces": [[0, 3], [0, 5], …],                  // face pairs (lower first) the lines separate: the edges
   "thinSpots": [{"at": [x, y, z], "faces": ["plate/x-", "hole/wall"], "thickness": 0.2}],
   "instances": [{"id": "upper", "part": "bracket.json", "hash": "…", "matrix": [16 numbers]}],  // bundle only, else []
+  "refinement": 3,                                     // ModelingSettings.Refinement: cells may be halved locally this often (0 for a preview)
+  "refined": [{"min": [x, y, z], "max": [x, y, z], "cell": 0.125}],   // boxes meshed with a finer cell; parts only
   "reused": 120, "meshed": 8,                          // regions from the cache / meshed for this run
   "timing": {"edits": 1.2, "regenerate": 310.5, "buffers": 12.0}   // ms
 }

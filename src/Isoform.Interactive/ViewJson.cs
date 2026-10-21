@@ -102,6 +102,21 @@ public static class ViewJson
         }
         w.WriteEndArray();
 
+        // Local refinement: how many halvings the kernel may use, and the boxes it meshed finer, with their cell.
+        w.WriteNumber("refinement", r.Refinement);
+        w.WriteStartArray("refined");
+        foreach (var (box, cell) in view.Part?.Refined ?? [])
+        {
+            w.WriteStartObject();
+            w.WritePropertyName("min");
+            Point(w, box.Min);
+            w.WritePropertyName("max");
+            Point(w, box.Max);
+            w.WriteNumber("cell", cell);
+            w.WriteEndObject();
+        }
+        w.WriteEndArray();
+
         w.WriteNumber("reused", r.Reused);
         w.WriteNumber("meshed", r.Meshed);
         Timing(w, r.Timing);

@@ -124,6 +124,8 @@ Object.assign(window.isoform, {
   focusDiagnostic: (index, feature) => diagnostics.focus(index, feature),
   marked: () => viewer.marks().map(([f, color]) => ({ face: store.state.result.faces[f][0], color })),
   cell: () => store.state.result?.cell ?? null,
+  /** The boxes the kernel meshed with a finer cell: [{min, max, cell}]. */
+  refined: () => store.state.result?.refined ?? [],
   target: () => viewer.target(),
   resolve: cell => useCell(cell),
 });

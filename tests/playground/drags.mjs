@@ -159,20 +159,15 @@ export function createDrags(page, { url, settled, timeout, shots }) {
       step(`1. plate/x+: ${JSON.stringify(last.edits)}`, last.edits.length === 1 && last.edits[0].set === 'plate.size.0' && agent[0] === widened.after && agent[1].includes('plate.size.0'));
       await shot('1-agent');
 
-      // 2. The hole towards the y+ edge, in fine steps (shift): a wall under 2 cells is a thin spot.
+      // 2. The hole towards the y+ edge, in fine steps (shift), to a 0.6 mm wall: under 2 cells, so the kernel meshes it
+      // again with finer cells and builds it, with nothing to report (resolving a thin spot is in e2e.mjs, diagnostics).
       h = await grab('hole/wall', 'hole:center');
       const y = s => s.edits.find(e => e.set === 'hole.center.1')?.value ?? 0;
       await drag(h, h.directionV, { px: 900, step: 2, modifiers: 8, until: s => y(s) >= 44.4, during: () => shot('2-drag-hole') });
       const thin = (await diagnostics()).find(d => d.code === 'below-resolution' && !d.stale);
-      step(`2. hole at y = ${(await feature('hole')).center[1]}: ${thin ? `${thin.thickness?.toFixed(3)} mm between ${thin.faces.join(' and ')}` : 'no thin spot'}`,
-        thin?.faces.join() === 'plate/y+,hole/wall' && thin.resolve);
-      await shot('2-thin-spot');
-      if (thin?.resolve) {
-        await evaluate(`document.querySelector('#diagnostics li.item[data-index="${thin.index}"] button.resolve').click()`);
-        await page.waitFor(`window.isoform.cell() === ${thin.resolve}`, { timeout });
-        step(`   resolved at ${thin.resolve} mm`, !(await diagnostics()).some(d => d.code === 'below-resolution'));
-        await shot('2-resolved');
-      }
+      const refined = await evaluate('window.isoform.refined()');
+      step(`2. hole at y = ${(await feature('hole')).center[1]}: ${thin ? `reported: ${thin.message}` : `built, ${refined.length} refined zone(s)`}`, !thin && refined.length > 0);
+      await shot('2-refined');
 
       // 3. On to tangent: whole millimetres again, so 45 exactly.
       h = await grab('hole/wall', 'hole:center');

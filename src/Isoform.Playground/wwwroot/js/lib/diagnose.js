@@ -84,11 +84,12 @@ export const finestCell = 0.01;
 
 /**
  * The cell size that resolves something of this size: walls, gaps and holes of 2 cells or more are always resolved
- * (ModelingSettings.CellSize), so size / 2, and at least half the current cell, since a coarse cell measures
- * roughly. Null when that is finer than finestCell (a zero-thickness contact) or the size is not known.
+ * (ModelingSettings.CellSize), and the kernel halves the cells locally up to `refinement` times where something is
+ * smaller, so size / 2 · 2^refinement; and at least half the current cell, since a coarse cell measures roughly. Null
+ * when that is finer than finestCell (a zero-thickness contact) or the size is not known.
  */
-export function resolveCell(size, cell) {
-  const target = Math.min(size > 0 ? size / 2 : cell / 2, cell / 2);
+export function resolveCell(size, cell, refinement = 0) {
+  const target = Math.min(size > 0 ? size / 2 * 2 ** refinement : cell / 2, cell / 2);
   if (!(target >= finestCell)) return null;
   return niceBelow(target);
 }
@@ -113,7 +114,7 @@ export function diagnose(result) {
     const stale = below && !!result.preview;
     return {
       ...d, index, title: title(d.code), error: errors.has(d.code), faces, spot, size, stale,
-      resolve: below && !stale && result.cell ? resolveCell(size, result.cell) : null,
+      resolve: below && !stale && result.cell ? resolveCell(size, result.cell, result.refinement ?? 0) : null,
     };
   });
 }

@@ -11,7 +11,7 @@ public static partial class Playground
     /// </summary>
     [JSExport]
     public static string Regenerate(string document, string edits, double cellSize, double chordTolerance, string slot, bool snapGrid) =>
-        ViewJson.Write(Session.Regenerate(document, edits, Settings(cellSize, chordTolerance, snapGrid), slot));
+        ViewJson.Write(Session.Regenerate(document, edits, Settings(cellSize, chordTolerance, snapGrid, slot), slot));
 
     // The last regeneration's mesh (see MeshBuffers), read by the page straight into WebGL buffers.
 

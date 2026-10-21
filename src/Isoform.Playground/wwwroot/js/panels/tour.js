@@ -1,7 +1,8 @@
 // The guided tour: a scripted agent. Each step is a caption and an edit list, committed like any other change
 // (commits.applyEdits, origin 'tour'), so the agent view, the history, the diagnostics and the pins all show what it did.
-// It follows the phase-1 demo (docs/playground-plan.md): widen the plate, move the hole into a thin wall and resolve
-// it, on to tangent, a fillet that does not fit, then undo step by step back to the hash it started from.
+// It follows the phase-1 demo (docs/playground-plan.md): widen the plate, move the hole into a thin wall the kernel
+// refines and builds, then one too thin for that and resolve it, on to tangent, a fillet that does not fit, then undo
+// step by step back to the hash it started from.
 // Next, Back and Play step through it; Escape exits. Back restores the history entry and cell the step before ended on.
 import { short } from '../lib/history.js';
 import { pretty } from './editor.js';
@@ -26,14 +27,20 @@ export const script = [
   },
   {
     title: 'Hole towards the edge', edits: [{ set: 'hole.center.1', value: 44.6 }], label: 'move the hole towards plate/y+',
-    expect: 'below-resolution',
-    caption: 'Move the hole until 0.4 mm of wall is left to plate/y+. At 0.5 mm cells that is below what the kernel '
-      + 'resolves, and it says so: both faces lit, the thickness at the spot.',
+    gone: 'below-resolution',
+    caption: 'Move the hole until 0.4 mm of wall is left to plate/y+. That is less than two 0.5 mm cells, so the kernel '
+      + 'meshes the wall again with finer cells, up to eight times finer, and builds it. Nothing to report.',
   },
   {
-    title: 'Resolve it', cell: 0.2, gone: 'below-resolution',
-    caption: 'Regenerate the same document at 0.2 mm cells: the wall is resolved and the report is gone. The hash does '
-      + 'not change, because it belongs to the document, not to the mesh.',
+    title: 'Closer still', edits: [{ set: 'hole.center.1', value: 44.92 }], label: 'move the hole closer to plate/y+',
+    expect: 'below-resolution',
+    caption: 'At 0.08 mm of wall even cells eight times finer are too coarse, and the kernel says so: both faces lit, '
+      + 'the thickness at the spot.',
+  },
+  {
+    title: 'Resolve it', cell: 0.25, gone: 'below-resolution',
+    caption: 'Regenerate the same document at 0.25 mm cells, refined down to 0.031 mm at the wall: it is resolved and '
+      + 'the report is gone. The hash does not change, because it belongs to the document, not to the mesh.',
   },
   {
     title: 'Until tangent', cell: 'default', edits: [{ set: 'hole.center.1', value: 45 }], label: 'hole tangent to plate/y+',
@@ -52,12 +59,16 @@ export const script = [
     caption: 'Undo is document history. One entry back, the fillet fits again.',
   },
   {
-    title: 'Undo', undo: true, expect: 'below-resolution', pins: { 'plate/y+': 'resolved' },
-    caption: 'The hole steps back from tangent, and the thin wall is reported again.',
+    title: 'Undo', undo: true, expect: 'below-resolution',
+    caption: 'The hole steps back from tangent to 0.08 mm of wall, and the thin wall is reported again.',
+  },
+  {
+    title: 'Undo', undo: true, gone: 'below-resolution', pins: { 'plate/y+': 'resolved' },
+    caption: 'Back to 0.4 mm of wall: refined and built, nothing to report. The pinned plate/y+ is one face again.',
   },
   {
     title: 'Undo', undo: true, gone: 'below-resolution',
-    caption: 'The hole is back where it was. Nothing to report.',
+    caption: 'The hole is back where it was.',
   },
   {
     title: 'Back at the start', undo: true, original: true,

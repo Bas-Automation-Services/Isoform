@@ -50,6 +50,10 @@ test('resolveCell: size / 2 and at least half the current cell, on a round value
   assert.equal(resolveCell(0.9, 0.5), 0.25, 'never coarser than half the current cell');
   assert.equal(resolveCell(null, 0.5), 0.25, 'size unknown: half the current cell');
   assert.equal(resolveCell(0.004, 0.5), null, 'a sliver no browser cell resolves');
+  // With local refinement (ModelingSettings.Refinement) a cell resolves down to 2 / 2^refinement of itself.
+  assert.equal(resolveCell(0.05, 0.5, 3), 0.2, 'the tour: a 0.05 mm wall is resolved at 0.2 mm cells, refined to 0.025');
+  assert.equal(resolveCell(0.004, 0.5, 3), 0.01);
+  assert.equal(resolveCell(0.001, 0.5, 3), null);
 });
 
 test('diagnose: a thin spot names both faces, its thinnest point, and the cell that resolves it', () => {

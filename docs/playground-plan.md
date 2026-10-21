@@ -125,7 +125,8 @@ typed.
 
 Phase 1 demo, about 2 minutes:
 1. Drag `plate/x+`: one `set` in the diff, the hash changes.
-2. Drag the hole towards the edge: a below-resolution thin spot with both names; resolve it at a finer cell.
+2. Drag the hole towards the edge: a 0.4 mm wall is refined locally and built; at 0.08 mm a below-resolution thin
+   spot with both names, resolved at a finer cell (the guided tour; the drag demo stops at the built wall).
 3. Carry on until tangent: `tangent-contact`.
 4. Drag the fillet radius up: `fillet-invalid`.
 5. Undo four times: back to the original hash.

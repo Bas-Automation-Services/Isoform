@@ -144,9 +144,10 @@ process.exitCode = failures || !picking || !diagnosing || !pinning || !committin
   || !touring || !sharing ? 1 : 0;
 
 /**
- * Diagnostics in place: example 0 with its hole moved to leave a 0.6 mm wall gives a below-resolution thin spot at
- * 0.5 mm cells. Clicking it lights both faces in two colours and flies the camera there; Resolve regenerates at
- * 0.25 mm cells, where the wall is resolved and the report is gone; "back to" returns to the default cell. Then a
+ * Diagnostics in place: example 0 with its hole moved to leave a 0.08 mm wall gives a below-resolution thin spot at
+ * 0.5 mm cells, even refined (down to 0.0625 mm). Clicking it lights both faces in two colours and flies the camera
+ * there; Resolve regenerates at 0.25 mm cells, refined to 0.031 mm at the wall, where it is resolved and the report is
+ * gone; "back to" returns to the default cell. Then a
  * fillet too large to fit gives fillet-invalid, lights the edge it names, and leaves the rest of the part.
  */
 async function diagnostics(page) {
@@ -162,7 +163,7 @@ async function diagnostics(page) {
   try {
     await page.open(`${site.url}?example=0`);
     await page.waitFor(settled, { timeout });
-    await page.evaluate(`(d => { d.features.find(f => f.id === 'hole').center = [30, 44.4]; return window.isoform.edit(JSON.stringify(d, null, 2)); })(JSON.parse(window.isoform.document()))`);
+    await page.evaluate(`(d => { d.features.find(f => f.id === 'hole').center = [30, 44.92]; return window.isoform.edit(JSON.stringify(d, null, 2)); })(JSON.parse(window.isoform.document()))`);
     const items = await page.evaluate('window.isoform.diagnostics()');
     found = items.find(d => d.code === 'below-resolution' && d.thickness);
     if (!found) throw new Error(`no below-resolution thin spot: ${JSON.stringify(items)}`);
@@ -176,7 +177,7 @@ async function diagnostics(page) {
     const colours = Object.fromEntries(marked.map(m => [m.face, m.color]));
     if (!colours['plate/y+'] || !colours['hole/wall'] || colours['plate/y+'] === colours['hole/wall'])
       problems.push(`both faces should be lit in two colours: ${JSON.stringify(marked)}`);
-    // The thin spot is on the y+ face, near y = 49.7.
+    // The thin spot is on the y+ face, near y = 49.96.
     await page.waitFor(`(t => t[1] > 49 && t[1] < 50.5)(window.isoform.target())`, { timeout: 5000 })
       .catch(e => problems.push(`the camera did not fly to the thin spot: ${e.message}`));
     await page.frames();

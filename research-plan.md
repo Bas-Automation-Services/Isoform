@@ -233,8 +233,8 @@ to `CellSize`. Polygons are dual to minimal edges, so the mesh has no cracks.
   only what is smaller still is reported, with the resolved size where it is. The lattice is refined by a power of two
   so every coarse node is a node of the fine one: outside the zones the mesh is the unrefined one, and with no zones
   it is bit-identical. A finest cell beside a finer zone keeps one vertex (its neighbours may be smaller). The
-  playground does not refine yet: its tour and diagnostics panel are built round reporting a thin wall and offering
-  the cell that resolves it.
+  playground refines too, except drag previews (they have a time budget); result v2 says how far (`refinement`) and
+  where (`refined`), and the cell it offers to resolve a report allows for it.
 - *Torture suite* (236 cases at 0.5 mm cells: pocket walls in x/y/z, a hole beside a 30°/45° face, two holes, slot
   gaps, small holes, thin plates; 0.2–3 cells; four grid alignments): all 87 cases ≥ 2 cells exact (faces, edges,
   vertices, one body, watertight) with nothing reported. Below 2 cells: 91 correct, 58 wrong but reported, 0 silent.
