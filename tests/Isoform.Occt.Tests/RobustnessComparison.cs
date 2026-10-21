@@ -28,7 +28,11 @@ public sealed record Comparison(PartDocument Doc, BackendRun Frep, BackendRun Oc
 /// </summary>
 public static class Robustness
 {
-    public static readonly ModelingSettings Settings = new();
+    // ISOFORM_K7_REFINEMENT sets ModelingSettings.Refinement (0 measures the unrefined kernel).
+    public static readonly ModelingSettings Settings = new()
+    {
+        Refinement = int.TryParse(Environment.GetEnvironmentVariable("ISOFORM_K7_REFINEMENT"), out var r) ? r : new ModelingSettings().Refinement,
+    };
     static readonly ModelingSettings Fine = new() { CellSize = Settings.CellSize / 4 };
     const double TruthCell = 0.25;
 

@@ -18,8 +18,9 @@ public static class TopologyBuilder
     /// </param>
     /// <param name="FaceOwners">Per face, the surfaces its polygons belong to.</param>
     /// <param name="EdgePoints">Per edge, the mesh vertices of its chain.</param>
+    /// <param name="VertexPoints">Per vertex, the mesh vertices of its cluster.</param>
     public sealed record Result(Topology Topology, int[] FaceOfQuad, IReadOnlyList<(Point3D At, int[] Owners)> Pinches,
-        IReadOnlyList<int[]> FaceOwners, IReadOnlyList<Point3D[]> EdgePoints);
+        IReadOnlyList<int[]> FaceOwners, IReadOnlyList<Point3D[]> EdgePoints, IReadOnlyList<Point3D[]> VertexPoints);
 
     /// <param name="surfaces">Best <see cref="Oriented"/>, so a face of a cut matches the coincident face it touches.</param>
     /// <param name="field">The body's field: with it, an edge between two planes that meet the part in one point collapses.</param>
@@ -187,15 +188,15 @@ public static class TopologyBuilder
             x.Faces.All(y.Faces.Contains) || y.Faces.All(x.Faces.Contains)
             || (vertices[x.Vertex] - vertices[y.Vertex]).Length <= 10 * tolerance;
         var (clusterIndex, _) = Number(corners.Count, clusters);
-        var topoVertices = corners
-            .Select((c, i) => (Cluster: clusterIndex[clusters.Find(i)], c.Faces))
+        var clustered = corners
+            .Select((c, i) => (Cluster: clusterIndex[clusters.Find(i)], c.Faces, At: vertices[c.Vertex]))
             .GroupBy(x => x.Cluster)
             .OrderBy(g => g.Key)
-            .Select(g => new TopoVertex(g.Key, g.SelectMany(x => x.Faces).Distinct().Order().ToList()))
             .ToList();
+        var topoVertices = clustered.Select(g => new TopoVertex(g.Key, g.SelectMany(x => x.Faces).Distinct().Order().ToList())).ToList();
 
         return new Result(new Topology(topoFaces, topoEdges, topoVertices, bodyOfQuad.Count), faceOfQuad, pinches,
-            [.. faceOwners.Select(o => o.Order().ToArray())], edgePoints);
+            [.. faceOwners.Select(o => o.Order().ToArray())], edgePoints, [.. clustered.Select(g => g.Select(x => x.At).ToArray())]);
     }
 
     /// <summary>

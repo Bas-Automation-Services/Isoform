@@ -99,6 +99,12 @@ public static partial class DualContouring
         /// <summary>A finest leaf holding more than one surface.</summary>
         public bool Multi;
 
+        /// <summary>The finest cell where a leaf is, in grid units: its own size if it is a finest leaf.</summary>
+        public int Unit = 1;
+
+        /// <summary>A finest leaf beside a finer zone: its neighbours may be smaller, so it keeps one vertex.</summary>
+        public bool Border;
+
         /// <summary>A region of a <see cref="MeshPlan"/>, not split yet: the field simplified for the node's box.</summary>
         public Field? Pending;
 
@@ -110,7 +116,37 @@ public static partial class DualContouring
     /// <param name="UnitDepth">Depth at which a plan stops splitting and leaves the node pending; -1 never stops.</param>
     /// <param name="Region">A region job builds only the nodes touching this node's closed box.</param>
     /// <param name="Serial">No nested parallelism: region jobs run in parallel with each other instead.</param>
-    internal sealed record Context(Grid Grid, bool Prune, bool Adaptive, double ChordTolerance, int UnitDepth = -1, Node? Region = null, bool Serial = false);
+    /// <param name="Coarse">The finest cell outside every zone, in grid units: 1 unless the grid was refined.</param>
+    /// <param name="Zones">Boxes of grid cells refined to a finer cell.</param>
+    internal sealed record Context(Grid Grid, bool Prune, bool Adaptive, double ChordTolerance, int UnitDepth = -1, Node? Region = null, bool Serial = false,
+        int Coarse = 1, Zone[]? Zones = null)
+    {
+        /// <summary>The finest cell a node may be split to: the smallest of the zones it overlaps.</summary>
+        public int Finest(Node n)
+        {
+            var unit = Coarse;
+            if (Zones is { } zones)
+                foreach (var z in zones)
+                    if (z.Unit < unit && z.Overlaps(n.I, n.J, n.K, n.Size, 0)) unit = z.Unit;
+            return unit;
+        }
+
+        /// <summary>A zone finer than the node lies within one node size of it.</summary>
+        public bool FinerNear(Node n)
+        {
+            if (Zones is { } zones)
+                foreach (var z in zones)
+                    if (z.Unit < n.Size && z.Overlaps(n.I, n.J, n.K, n.Size, n.Size)) return true;
+            return false;
+        }
+    }
+
+    /// <summary>Grid cells [I0, I1) × [J0, J1) × [K0, K1) whose finest cell is <see cref="Unit"/> grid units.</summary>
+    internal readonly record struct Zone(int I0, int J0, int K0, int I1, int J1, int K1, int Unit)
+    {
+        public bool Overlaps(int i, int j, int k, int size, int grow) =>
+            i - grow < I1 && i + size + grow > I0 && j - grow < J1 && j + size + grow > J0 && k - grow < K1 && k + size + grow > K0;
+    }
 
     /// <param name="chordTolerance">Largest distance a polygon may stray from a curved surface away from edges.</param>
     /// <param name="adaptive">False refines every surface cell to <paramref name="cellSize"/>.</param>
@@ -281,10 +317,13 @@ public static partial class DualContouring
             field = field.Simplify(box);
         }
         var patch = ctx.Prune ? field.SinglePatch(box) : null;
-        if (node.Size == 1 || ctx.Adaptive && patch is { } r && node.Size * g.H <= MaxCurvedCell(r, ctx.ChordTolerance))
+        var finest = ctx.Finest(node);
+        if (node.Size <= finest || ctx.Adaptive && patch is { } r && node.Size * g.H <= MaxCurvedCell(r, ctx.ChordTolerance))
         {
             node.Field = field;
-            node.Multi = ctx.Prune && node.Size == 1 && patch is null;
+            node.Unit = Math.Min(finest, node.Size);
+            node.Multi = ctx.Prune && node.Size <= finest && patch is null;
+            node.Border = node.Multi && ctx.FinerNear(node);
             return;
         }
         if (depth == ctx.UnitDepth)
@@ -482,7 +521,7 @@ public static partial class DualContouring
     /// <summary>The edge of a hit in a finest leaf: axis·4, plus its offsets along the next two axes.</summary>
     static int LocalEdge(Node leaf, in Hit hit)
     {
-        Span<int> d = [hit.I - leaf.I, hit.J - leaf.J, hit.K - leaf.K];
+        Span<int> d = [(hit.I - leaf.I) / leaf.Size, (hit.J - leaf.J) / leaf.Size, (hit.K - leaf.K) / leaf.Size];
         return 4 * hit.Axis + d[(hit.Axis + 1) % 3] + 2 * d[(hit.Axis + 2) % 3];
     }
 
@@ -503,8 +542,10 @@ public static partial class DualContouring
     /// </summary>
     static sbyte[]? Pieces(Node leaf, Grid grid)
     {
+        if (leaf.Border) return null;
         var f = leaf.Field!;
-        Point3D Corner(int c) => grid.Position(leaf.I + (c & 1), leaf.J + (c >> 1 & 1), leaf.K + (c >> 2));
+        var size = leaf.Size;
+        Point3D Corner(int c) => grid.Position(leaf.I + (c & 1) * size, leaf.J + (c >> 1 & 1) * size, leaf.K + (c >> 2) * size);
         var inside = 0; // bit c: corner c (x | y·2 | z·4) is inside
         for (var c = 0; c < 8; c++)
             if (f.Value(Corner(c)) < 0) inside |= 1 << c;
@@ -622,16 +663,17 @@ public static partial class DualContouring
         // The tip of a wedge too thin to hold grid points lies beyond the cells it cuts; where the vertex is on every
         // owner and on the solid it is that edge, and goes there. That far out only the whole field is exact.
         wide = true;
-        var far = whole.Simplify(grid.Box(node, Math.Max(node.Size, Reach)));
+        var far = whole.Simplify(grid.Box(node, Math.Max(node.Size, Reach * node.Unit)));
         v = Project(far, edge);
-        if (Inside(box, v, Reach * grid.H) && OnEvery(far, v, owners[..ownerCount])) return v;
+        var reach = Reach * node.Unit * grid.H;
+        if (Inside(box, v, reach) && OnEvery(far, v, owners[..ownerCount])) return v;
         // Or the edge ends nearby on a surface no crossing saw, as where a wedge's tip runs into a side face: the corner.
         var cut = far.Sample(edge).Owner;
         if (!owners[..ownerCount].Contains(cut))
         {
             owners[ownerCount++] = cut;
             v = Project(far, Refine(far, edge, owners[..ownerCount]));
-            if (Inside(box, v, Reach * grid.H) && OnEvery(far, v, owners[..ownerCount])) return v;
+            if (Inside(box, v, reach) && OnEvery(far, v, owners[..ownerCount])) return v;
         }
         // One vertex cannot hold this cell's surfaces. Where two of them face each other, the material or gap between
         // them is thinner than the cell (a wedge cut short by a side face), and is reported.
@@ -713,7 +755,8 @@ public static partial class DualContouring
         var field = node.Field!;
         var box = grid.Box(node);
         var c = box.Center;
-        var reach = grid.H * Math.Sqrt(3) / 2;
+        var cell = node.Size * grid.H;
+        var reach = cell * Math.Sqrt(3) / 2;
         var near = owners.Select(o => (Owner: o, Sample: field.SampleSurface(o, c)!.Value))
             .Where(x => Math.Abs(x.Sample.Value) <= reach).ToList();
         for (var i = 0; i < near.Count; i++)
@@ -730,7 +773,7 @@ public static partial class DualContouring
             if (!(va < 0 && vb < 0 && vf < 0) && !(va > 0 && vb > 0 && vf > 0)) continue;
             var q = Refine(field, c, [a, b]);
             var meet = Math.Abs(field.SampleSurface(a, q)!.Value.Value) + Math.Abs(field.SampleSurface(b, q)!.Value.Value) < 1e-6;
-            if (meet && Inside(box, q, Reach * grid.H)) continue;
+            if (meet && Inside(box, q, Reach * cell)) continue;
             spots.Add(new ThinSpot(Math.Min(a, b), Math.Max(a, b), mid, (pa - pb).Length));
         }
     }
@@ -852,6 +895,16 @@ public static partial class DualContouring
                 if (g.RegionSize <= size) return g;
                 size = g.RegionSize;
             }
+        }
+
+        /// <summary>
+        /// The same lattice with cells 2^<paramref name="levels"/> times smaller: every node of this grid is a node of
+        /// the refined one, 2^levels times as large.
+        /// </summary>
+        public Grid Refined(int levels)
+        {
+            var m = 1 << levels;
+            return levels == 0 ? this : new Grid(origin, h / m, nx * m, ny * m, nz * m, (offset.I * m, offset.J * m, offset.K * m));
         }
 
         public Point3D Position(int i, int j, int k) => new(origin.X + (offset.I + i) * h, origin.Y + (offset.J + j) * h, origin.Z + (offset.K + k) * h);

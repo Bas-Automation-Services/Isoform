@@ -228,6 +228,13 @@ to `CellSize`. Polygons are dual to minimal edges, so the mesh has no cracks.
   carries is searched for a patch of the part it still bounds (`LostFaces`: branch-and-bound on the margin by which it
   decides every ∩/∪ on its path); a patch wider than `Tolerance` is reported, and `no-effect` needs a proof that none
   exists. Faces coincident within `Tolerance` (cut faces oriented as the part sees them) are one face.
+- *Local refinement (2026-10-21):* a report with a place and a size is meshed again in a zone round it with cells
+  small enough for it, down to `CellSize / 2^Refinement` (default 3: 1/8), up to three times while new reports appear;
+  only what is smaller still is reported, with the resolved size where it is. The lattice is refined by a power of two
+  so every coarse node is a node of the fine one: outside the zones the mesh is the unrefined one, and with no zones
+  it is bit-identical. A finest cell beside a finer zone keeps one vertex (its neighbours may be smaller). The
+  playground does not refine yet: its tour and diagnostics panel are built round reporting a thin wall and offering
+  the cell that resolves it.
 - *Torture suite* (236 cases at 0.5 mm cells: pocket walls in x/y/z, a hole beside a 30°/45° face, two holes, slot
   gaps, small holes, thin plates; 0.2–3 cells; four grid alignments): all 87 cases ≥ 2 cells exact (faces, edges,
   vertices, one body, watertight) with nothing reported. Below 2 cells: 91 correct, 58 wrong but reported, 0 silent.
@@ -320,6 +327,14 @@ but about half are features a finer local mesh would build.
   it, which plain branch-and-bound cannot clear. Planes nested in the siblings (and the two planes of a rounded
   edge, which only removes material) now count, and two or three planes whose gaps slope against each other on the
   surface cap the margin by their weighted average, so such a cut is proven `no-effect` (the bench's chamfer).
+- *False vertices:* a vertex is real only if its faces' surfaces have a point in common on the part (Gauss-Newton
+  on the surfaces, fillets included). Two fillets that just touch at a corner, or a face a cut leaves as a small
+  triangle, collapse into one vertex that fails this, and are reported.
+- *Local refinement* (K3) on 1000 more seeds (150–1149): F-rep refuses 38.5% where OCCT builds, against 48.2%
+  unrefined, and both build and agree 30.1% against 22.9%. Mean regeneration 57 ms against 29 (median 33 against 25).
+  Silent: 0.9% refined against 0.4% unrefined. The difference is not new error: in each case the unrefined run
+  reported something else nearby, which hid a feature smaller than the finest cell that even uniform 1/8 cells mesh
+  wrong without a report. Those gaps (sub-cell steps of 1e-6 to 0.1 mm against another face) are next.
 
 **Review.** An independent read of the K4 code found 15 problems (wrong geometry without a diagnostic in several);
 all fixed, each with a regression test (`ReviewFindingTests`).

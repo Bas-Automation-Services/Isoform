@@ -9,9 +9,16 @@ public sealed record ModelingSettings
 
     /// <summary>
     /// Finest cell size in mm for meshing and topology extraction: the resolution at edges and corners. Walls, gaps
-    /// and holes of at least 2 × CellSize are always resolved; smaller ones give a below-resolution diagnostic.
+    /// and holes of at least 2 × CellSize are always resolved; smaller ones are refined locally (see
+    /// <see cref="Refinement"/>), and what is still smaller gives a below-resolution diagnostic.
     /// </summary>
     public double CellSize { get; init; } = 0.5;
+
+    /// <summary>
+    /// How many times the cells may be halved locally: where a feature is below the resolution it is meshed again with
+    /// cells small enough for it, down to CellSize / 2^Refinement, and only what is smaller is reported. 0: never.
+    /// </summary>
+    public int Refinement { get; init; } = 3;
 
     /// <summary>Largest distance in mm the mesh may stray from a curved surface away from its edges.</summary>
     public double ChordTolerance { get; init; } = 0.01;

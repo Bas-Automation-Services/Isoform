@@ -21,10 +21,10 @@ public class CultureTests
     [Fact]
     public void Diagnostics_use_a_decimal_point_in_a_decimal_comma_culture()
     {
-        // The hole moved to a 0.6 mm wall from the plate's edge: below the 1 mm that 0.5 mm cells resolve.
+        // The hole moved to a 0.6 mm wall from the plate's edge: below the 1 mm that 0.5 mm cells resolve, unrefined.
         var doc = new PartDocument([.. EditSuite.Base.Features.Select(f => f is Hole h ? h with { Center = [30, 44.4] } : f)]);
 
-        var result = In("nl-NL", () => new FrepModeler(new ModelingSettings { CellSize = 0.5 }).Regenerate(doc));
+        var result = In("nl-NL", () => new FrepModeler(new ModelingSettings { CellSize = 0.5, Refinement = 0 }).Regenerate(doc));
 
         var message = result.Diagnostics.Single(d => d.Code == Diagnostic.BelowResolution && d.Message.Contains("apart")).Message;
         message.Should().MatchRegex(@"\d\.\d+ mm apart near \(\d+\.\d+, \d+\.\d+, \d+\.\d+\)").And.NotMatchRegex(@"\d,\d");

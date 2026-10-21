@@ -412,4 +412,20 @@ public class RobustnessReproTests
 
         r.Diagnostics.Where(d => d.FeatureId == "chamfer").Should().ContainSingle().Which.Code.Should().Be(Diagnostic.NoEffect);
     }
+
+    /// <summary>
+    /// Faces that meet across an edge shorter than a cell collapse into one vertex of four faces with no common point:
+    /// a boss overlapping the plate by 0.02 mm (the edge between boss1/x- and plate/z- is 0.02 mm long), and two
+    /// fillets whose faces just touch at a corner. Both were silent; the first only surfaced once refinement resolved
+    /// the boss's 0.5 mm width, whose report had hidden it.
+    /// </summary>
+    [Theory]
+    [InlineData("""[{"id":"plate","type":"block","op":"new","origin":[0,0.8,0],"size":[30,37,10]},{"id":"boss1","type":"block","op":"join","origin":[20,37.779999000000004,-2],"size":[10,0.5,10]}]""", 11, 27, 18)]
+    [InlineData("""[{"id":"plate","type":"block","op":"new","origin":[0,0,0],"size":[20,20,3.5]},{"id":"round1","type":"fillet","edge":["plate/y-","plate/z-"],"radius":1.5},{"id":"round2","type":"fillet","edge":["plate/x-","plate/z+"],"radius":2.1}]""", 8, 18, 12)]
+    public void Short_edge_collapsed_into_a_vertex_is_built_or_reported(string features, int faces, int edges, int vertices)
+    {
+        var r = Regenerate(features);
+
+        (Reported(r) || Counts(r) == (faces, edges, vertices, 1)).Should().BeTrue($"got {Counts(r)}");
+    }
 }

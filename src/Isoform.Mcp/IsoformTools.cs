@@ -24,7 +24,7 @@ namespace Isoform.Mcp;
 public static class IsoformTools
 {
     const string DocumentHelp = "A part document (format isoform/0): its JSON text, or a path to a .json file. See describe_format.";
-    const string CellHelp = "Finest cell size in mm (default 0.5). Walls, gaps and holes under 2 × cellSize are reported as below-resolution.";
+    const string CellHelp = "Finest cell size in mm (default 0.5). Walls, gaps and holes under 2 × cellSize are meshed with cells up to 8 times finer where they are; only what is smaller still is reported as below-resolution.";
     const string ChordHelp = "Largest distance in mm the mesh may stray from a curved face (default 0.01).";
 
     /// <summary>How tool results are written: one line, and + or ≥ as themselves (face names are full of + signs).</summary>

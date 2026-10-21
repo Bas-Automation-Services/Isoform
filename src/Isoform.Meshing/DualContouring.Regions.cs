@@ -13,10 +13,27 @@ public static partial class DualContouring
     /// so an edit that moves the part's bounding box keeps the unchanged regions' keys. The mesh is then that of
     /// <c>Build(snapGrid: true)</c>: another lattice than the unsnapped one, so another mesh, as deterministic.
     /// </summary>
-    public static MeshPlan Plan(Field field, Point3D min, Point3D max, double cellSize, double chordTolerance, bool snapGrid = false)
+    /// <param name="refine">
+    /// Boxes whose finest cell is smaller than <paramref name="cellSize"/>: a power of two smaller (rounded down to
+    /// one). The lattice is then refined to the smallest of them; outside the boxes the mesh is the one without them.
+    /// </param>
+    public static MeshPlan Plan(Field field, Point3D min, Point3D max, double cellSize, double chordTolerance, bool snapGrid = false,
+        IReadOnlyList<(Box3D Box, double Cell)>? refine = null)
     {
-        var grid = Grid.Around(min, max, cellSize, snapGrid);
-        var ctx = new Context(grid, Prune: true, Adaptive: true, chordTolerance, UnitDepth: grid.UnitDepth);
+        var coarse = Grid.Around(min, max, cellSize, snapGrid);
+        static int Levels(double ratio) => Math.Max(0, (int)Math.Ceiling(Math.Log2(ratio) - 1e-9));
+        var levels = refine is null or { Count: 0 } ? 0 : refine.Max(z => Levels(cellSize / z.Cell));
+        var grid = coarse.Refined(levels);
+        Zone[]? zones = null;
+        if (levels > 0)
+        {
+            int At(double x, double o, int offset, bool up) => (int)(up ? Math.Ceiling((x - o) / grid.H) : Math.Floor((x - o) / grid.H)) - offset;
+            zones = [.. refine!.Select(z => new Zone(
+                At(z.Box.Min.X, grid.Origin.X, grid.Offset.I, false), At(z.Box.Min.Y, grid.Origin.Y, grid.Offset.J, false), At(z.Box.Min.Z, grid.Origin.Z, grid.Offset.K, false),
+                At(z.Box.Max.X, grid.Origin.X, grid.Offset.I, true), At(z.Box.Max.Y, grid.Origin.Y, grid.Offset.J, true), At(z.Box.Max.Z, grid.Origin.Z, grid.Offset.K, true),
+                1 << (levels - Levels(cellSize / z.Cell))))];
+        }
+        var ctx = new Context(grid, Prune: true, Adaptive: true, chordTolerance, UnitDepth: grid.UnitDepth, Coarse: 1 << levels, Zones: zones);
         var root = new Node(0, 0, 0, grid.RootSize);
         Subdivide(root, field, ctx, 0);
         var units = new List<Node>();
@@ -90,6 +107,20 @@ public static partial class DualContouring
         f.Add(g.Offset.K + u.K);
         f.Add(u.Size);
         foreach (var end in new[] { g.Nx - u.I, g.Ny - u.J, g.Nz - u.K }) f.Add(Math.Clamp(end, -reach, u.Size + reach));
+        // Refinement: the coarse cell and the zones the region or its neighbours reach, clipped to that reach.
+        f.Add(ctx.Coarse);
+        foreach (var z in ctx.Zones ?? [])
+        {
+            if (!z.Overlaps(u.I, u.J, u.K, u.Size, reach)) continue;
+            int Clip(int x, int lo) => Math.Clamp(x - lo, -reach, u.Size + reach);
+            f.Add(Clip(z.I0, u.I));
+            f.Add(Clip(z.J0, u.J));
+            f.Add(Clip(z.K0, u.K));
+            f.Add(Clip(z.I1, u.I));
+            f.Add(Clip(z.J1, u.J));
+            f.Add(Clip(z.K1, u.K));
+            f.Add(z.Unit);
+        }
         f.Add(u.Pending is null);
         f.Add(u.Pending ?? u.Field);
         f.Add(near);

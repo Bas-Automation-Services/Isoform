@@ -180,7 +180,7 @@ public class SessionTests
     {
         // A hole 0.2 mm from the plate's edge: a wall below the resolved size of 1 mm.
         var document = Text(Examples.All[0].Name);
-        var r = new Session().Regenerate(document, """{"set": "hole.center", "value": [5.2, 25]}""", Settings);
+        var r = new Session().Regenerate(document, """{"set": "hole.center", "value": [5.2, 25]}""", Settings with { Refinement = 0 });
 
         r.View!.ThinSpots.Should().NotBeEmpty();
         using var json = JsonDocument.Parse(ViewJson.Write(r));

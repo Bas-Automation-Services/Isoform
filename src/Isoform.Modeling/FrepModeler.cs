@@ -46,12 +46,80 @@ public sealed class FrepModeler(ModelingSettings settings, RegionCache? cache = 
         foreach (var plan in Prepare(document).Plans) plan.MeshRegions(Cache!, r => plan.Share(r, count) == index);
     }
 
+    /// <summary>A box meshed with a finer cell, and the feature whose size asked for it (null for a spot of the mesh).</summary>
+    sealed record Zone(Box3D Box, double Cell, string? Feature);
+
+    /// <summary>Something below the resolution with a place: where it is, how small (NaN: not known) and whose.</summary>
+    readonly record struct Finding(Box3D Where, double Size, string? Feature);
+
+    // Refinement passes after the first: each meshes again with the zones found so far.
+    const int Passes = 3;
+
     public FrepResult Regenerate(PartDocument document)
     {
         var (_, part, plans) = Prepare(document);
         if (part.Field is null) return new FrepResult(part.Diagnostics, null, part, null, [], []);
         document = Parametric.Resolve(document);
 
+        var zones = new List<Zone>();
+        var findings = new List<Finding>();
+        var result = Pass(document, part, plans, zones, findings);
+        for (var pass = 0; pass < Passes; pass++)
+        {
+            var added = Zones(findings, zones);
+            if (added.Count == 0) break;
+            zones.AddRange(added);
+            var refine = zones.Select(z => (z.Box, z.Cell)).ToList();
+            plans = [.. part.Bodies.Select(b => DualContouring.Plan(b.Field, b.Min, b.Max, Settings.CellSize, Settings.ChordTolerance, Settings.SnapGrid, refine))];
+            findings.Clear();
+            result = Pass(document, part, plans, zones, findings);
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// The zones the findings ask for that the ones there do not give: the cell that resolves the size (two cells
+    /// across it), or the finest allowed where the size is not known, over the finding grown by two cells.
+    /// </summary>
+    List<Zone> Zones(List<Finding> findings, List<Zone> zones)
+    {
+        var added = new List<Zone>();
+        var pad = new Vector3D(1, 1, 1) * (2 * Settings.CellSize);
+        foreach (var f in findings)
+        {
+            var levels = double.IsNaN(f.Size) ? Settings.Refinement : (int)Math.Ceiling(Math.Log2(2 * Settings.CellSize / f.Size) - 1e-9);
+            if (levels <= 0 || levels > Settings.Refinement) continue;
+            var cell = Settings.CellSize / (1 << levels);
+            if (zones.Concat(added).Any(z => z.Cell <= cell && Contains(z.Box, f.Where))) continue;
+            added.Add(new Zone(new Box3D(f.Where.Min - pad, f.Where.Max + pad), cell, f.Feature));
+        }
+        return added;
+    }
+
+    static bool Contains(Box3D outer, Box3D inner) =>
+        outer.Min.X <= inner.Min.X && outer.Min.Y <= inner.Min.Y && outer.Min.Z <= inner.Min.Z
+        && outer.Max.X >= inner.Max.X && outer.Max.Y >= inner.Max.Y && outer.Max.Z >= inner.Max.Z;
+
+    static Box3D Around(Point3D p) => new(p, p);
+
+    static Box3D Around(IEnumerable<Point3D> points)
+    {
+        var (lo, hi) = (new Point3D(double.MaxValue, double.MaxValue, double.MaxValue), new Point3D(double.MinValue, double.MinValue, double.MinValue));
+        foreach (var p in points)
+            (lo, hi) = (new(Math.Min(lo.X, p.X), Math.Min(lo.Y, p.Y), Math.Min(lo.Z, p.Z)), new(Math.Max(hi.X, p.X), Math.Max(hi.Y, p.Y), Math.Max(hi.Z, p.Z)));
+        return new Box3D(lo, hi);
+    }
+
+    /// <summary>The resolved size at a point: two of the finest cells there.</summary>
+    double ResolvedAt(IReadOnlyList<Zone> zones, Point3D p) =>
+        2 * zones.Where(z => Contains(z.Box, Around(p))).Select(z => z.Cell).Append(Settings.CellSize).Min();
+
+    /// <summary>The resolved size for a feature's own size: two of the cells of the zones it asked for.</summary>
+    double ResolvedFor(IReadOnlyList<Zone> zones, string feature) =>
+        2 * zones.Where(z => z.Feature == feature).Select(z => z.Cell).Append(Settings.CellSize).Min();
+
+    FrepResult Pass(PartDocument document, CompiledPart part, MeshPlan[] plans, IReadOnlyList<Zone> zones, List<Finding> findings)
+    {
         var diagnostics = part.Diagnostics.ToList();
         // Each body is a solid of its own, meshed and given topology alone, so overlapping bodies stay apart. The
         // results are laid end to end: one mesh and one topology, with every face knowing its body.
@@ -61,6 +129,7 @@ public sealed class FrepModeler(ModelingSettings settings, RegionCache? cache = 
         var bodies = new List<BodyResult>();
         var pinched = new List<(Point3D At, int[] Owners)>();
         var falseEdges = new List<FalseEdges.Found>();
+        var falseCorners = new List<FalseEdges.Corner>();
         var carried = new List<(HashSet<int> Owners, IReadOnlyList<Surface> Oriented)>();
         var pieces = 0;
         foreach (var (body, plan) in part.Bodies.Zip(plans))
@@ -71,6 +140,7 @@ public sealed class FrepModeler(ModelingSettings settings, RegionCache? cache = 
             var built = TopologyBuilder.Build(bodyMesh, oriented, Settings.Tolerance, body.Field);
             pinched.AddRange(built.Pinches);
             falseEdges.AddRange(FalseEdges.Find(body.Field, oriented, built, Settings.Tolerance, Settings.CellSize));
+            falseCorners.AddRange(FalseEdges.Corners(body.Field, built, Settings.Tolerance));
             var t = built.Topology;
             if (t.BodyCount > 1)
                 diagnostics.Add(new Diagnostic(Diagnostic.MultipleBodies, part.Bodies.Count == 1 ? null : body.Name,
@@ -89,22 +159,34 @@ public sealed class FrepModeler(ModelingSettings settings, RegionCache? cache = 
         var mesh = new Mesh(vertices, quads, spots);
         var topology = new Topology(faces, edges, corners, pieces);
 
-        diagnostics.AddRange(Resolution(document, part, mesh, diagnostics));
+        diagnostics.AddRange(Resolution(document, part, mesh, diagnostics, zones, findings));
         // Surface pieces the cells merged into one vertex: something there is thinner than a cell. The later feature's.
         foreach (var g in pinched.GroupBy(x => string.Join(",", x.Owners)))
         {
             var (at, owners) = g.First();
+            findings.AddRange(g.Select(x => new Finding(Around(x.At), double.NaN, null)));
             diagnostics.Add(new Diagnostic(Diagnostic.BelowResolution, part.Surfaces[owners[^1]].Source.Split('/')[0],
-                Invariant($"{string.Join(" and ", owners.Select(o => part.Surfaces[o].Source).Distinct())} pinch the mesh near ({at.X:F2}, {at.Y:F2}, {at.Z:F2}): pieces of them there are below the resolved size of {2 * Settings.CellSize:G4} mm")));
+                Invariant($"{string.Join(" and ", owners.Select(o => part.Surfaces[o].Source).Distinct())} pinch the mesh near ({at.X:F2}, {at.Y:F2}, {at.Z:F2}): pieces of them there are below the resolved size of {ResolvedAt(zones, at):G4} mm")));
         }
 
         // Faces the cells joined across a piece of a third one narrower than a cell. The later feature's.
         var reported = diagnostics.Select(d => d.FeatureId).ToHashSet();
         foreach (var g in falseEdges.GroupBy(x => part.Surfaces[Math.Max(x.A, x.B)].Source.Split('/')[0]).Where(g => !reported.Contains(g.Key)))
         {
-            var (a, b, at) = g.First();
+            var (a, b, at, _, _) = g.First();
+            findings.AddRange(g.Select(x => new Finding(x.Extent, x.Gap, null)));
             diagnostics.Add(new Diagnostic(Diagnostic.BelowResolution, g.Key,
-                Invariant($"{part.Surfaces[a].Source} and {part.Surfaces[b].Source} do not meet near ({at.X:F2}, {at.Y:F2}, {at.Z:F2}), but the cells join them: a face between them is below the resolved size of {2 * Settings.CellSize:G4} mm")));
+                Invariant($"{part.Surfaces[a].Source} and {part.Surfaces[b].Source} do not meet near ({at.X:F2}, {at.Y:F2}, {at.Z:F2}), but the cells join them: a face between them is below the resolved size of {ResolvedAt(zones, at):G4} mm")));
+        }
+
+        // Faces the cells joined in one vertex across an edge or face between them shorter than a cell. The later feature's.
+        reported = diagnostics.Select(d => d.FeatureId).ToHashSet();
+        foreach (var g in falseCorners.GroupBy(x => part.Surfaces[x.Owners.Max()].Source.Split('/')[0]).Where(g => !reported.Contains(g.Key)))
+        {
+            var (owners, at, _) = g.First();
+            findings.AddRange(g.Select(x => new Finding(x.Extent, double.NaN, null)));
+            diagnostics.Add(new Diagnostic(Diagnostic.BelowResolution, g.Key,
+                Invariant($"{string.Join(", ", owners.Select(o => part.Surfaces[o].Source))} meet in a vertex near ({at.X:F2}, {at.Y:F2}, {at.Z:F2}) that the part does not have: an edge or face between them is below the resolved size of {ResolvedAt(zones, at):G4} mm")));
         }
 
         // A feature that already has a diagnostic (below resolution, rejected, unsupported) says enough.
@@ -116,8 +198,9 @@ public sealed class FrepModeler(ModelingSettings settings, RegionCache? cache = 
         foreach (var g in lost.Where(x => x.Value.Verdict == LostFaces.Verdict.Face).GroupBy(x => FeatureOf(part.Surfaces[Math.Max(x.Key, x.Value.By)])))
         {
             var (id, r) = g.MaxBy(x => x.Value.Margin);
+            findings.AddRange(g.Select(x => new Finding(Around(x.Value.At), 2 * x.Value.Margin, null)));
             diagnostics.Add(new Diagnostic(Diagnostic.BelowResolution, g.Key,
-                Invariant($"{part.Surfaces[id].Source} bounds the part over a patch {2 * r.Margin:G3} mm across near ({r.At.X:F2}, {r.At.Y:F2}, {r.At.Z:F2}) that the cells lose, below the resolved size of {smallest:G4} mm")));
+                Invariant($"{part.Surfaces[id].Source} bounds the part over a patch {2 * r.Margin:G3} mm across near ({r.At.X:F2}, {r.At.Y:F2}, {r.At.Z:F2}) that the cells lose, below the resolved size of {ResolvedAt(zones, r.At):G4} mm")));
         }
         unresolved = diagnostics.Select(d => d.FeatureId).ToHashSet();
 
@@ -133,7 +216,7 @@ public sealed class FrepModeler(ModelingSettings settings, RegionCache? cache = 
                 : new Diagnostic(Diagnostic.BelowResolution, feature.Id, Invariant($"{feature.Id} has no face the cells resolve, and its effect could not be shown to be below the tolerance; below the resolved size of {smallest:G4} mm")));
         }
 
-        return new FrepResult(diagnostics, topology, part, mesh, faceOfQuad, bodies);
+        return new FrepResult(diagnostics, topology, part, mesh, faceOfQuad, bodies) { Refined = [.. zones.Select(z => (z.Box, z.Cell))] };
     }
 
     /// <summary>
@@ -182,11 +265,15 @@ public sealed class FrepModeler(ModelingSettings settings, RegionCache? cache = 
     /// surfaces the mesher found with a thinner wall or gap between them. A thin spot at a tangent contact is
     /// already reported as such.
     /// </summary>
-    IEnumerable<Diagnostic> Resolution(PartDocument document, CompiledPart part, Mesh mesh, IReadOnlyList<Diagnostic> earlier)
+    IEnumerable<Diagnostic> Resolution(PartDocument document, CompiledPart part, Mesh mesh, IReadOnlyList<Diagnostic> earlier, IReadOnlyList<Zone> zones, List<Finding> findings)
     {
-        var smallest = 2 * Settings.CellSize;
+        string FeatureOf(int owner) => part.Surfaces[owner].Source.Split('/')[0];
+        // Where each feature's faces are in the mesh: a feature too small there is refined over them.
+        var extent = mesh.Quads.GroupBy(q => FeatureOf(q.Owner))
+            .ToDictionary(g => g.Key, g => Around(g.SelectMany(q => new[] { mesh.Vertices[q.A], mesh.Vertices[q.B], mesh.Vertices[q.C], mesh.Vertices[q.D] })));
         foreach (var feature in document.Features)
         {
+            var smallest = ResolvedFor(zones, feature.Id);
             var size = feature switch
             {
                 Hole x => x.Diameter,
@@ -198,14 +285,29 @@ public sealed class FrepModeler(ModelingSettings settings, RegionCache? cache = 
                 Revolve { Blend: > 0 } x => x.Blend,
                 _ => double.PositiveInfinity,
             };
+            // Only a feature with faces in the mesh: one without is searched for as a lost face, or has no effect. A
+            // fillet's face has no closed form to search for, so a fillet without faces and without another diagnostic
+            // is reported by its size, with nowhere to refine.
+            if (!extent.TryGetValue(feature.Id, out var where))
+            {
+                if (feature is Fillet && size < smallest && !earlier.Any(d => d.FeatureId == feature.Id))
+                    yield return new Diagnostic(Diagnostic.BelowResolution, feature.Id, Invariant($"{feature.Id} ({size:G4} mm) is below the resolved size of {smallest:G4} mm; use a smaller CellSize"));
+                continue;
+            }
             if (size < smallest)
+            {
+                findings.Add(new Finding(where, size, feature.Id));
                 yield return new Diagnostic(Diagnostic.BelowResolution, feature.Id, Invariant($"{feature.Id} ({size:G4} mm) is below the resolved size of {smallest:G4} mm; use a smaller CellSize"));
+            }
             if (feature is Lattice l)
-                foreach (var d in LatticeResolution(l, smallest)) yield return d;
+                foreach (var d in LatticeResolution(l, 2 * Settings.CellSize)) yield return d;
             // A profile edge sweeps a face as wide as the edge is long.
             var profile = feature switch { Extrude e => e.Profile, Revolve r => r.Profile, _ => null };
             if (profile is not null && Profiles.CounterClockwise(profile).FirstOrDefault(x => Width(x.Edge) < smallest) is { Id: { } edge } narrow)
+            {
+                findings.Add(new Finding(where, Width(narrow.Edge), feature.Id));
                 yield return new Diagnostic(Diagnostic.BelowResolution, feature.Id, Invariant($"{feature.Id}/{edge} ({Width(narrow.Edge):G4} mm) is below the resolved size of {smallest:G4} mm; use a smaller CellSize"));
+            }
         }
 
         static double Width(ProfileEdge2D e) => e.IsArc
@@ -213,15 +315,15 @@ public sealed class FrepModeler(ModelingSettings settings, RegionCache? cache = 
             : Math.Sqrt((e.U1 - e.U0) * (e.U1 - e.U0) + (e.V1 - e.V0) * (e.V1 - e.V0));
 
         var tangent = earlier.Where(d => d.Code == Diagnostic.TangentContact).Select(d => d.FeatureId).ToHashSet();
-        string FeatureOf(int owner) => part.Surfaces[owner].Source.Split('/')[0];
         foreach (var pair in mesh.ThinSpots.GroupBy(s => (s.OwnerA, s.OwnerB)))
         {
             var (a, b) = (FeatureOf(pair.Key.OwnerA), FeatureOf(pair.Key.OwnerB));
             if (tangent.Contains(a) || tangent.Contains(b)) continue;
             var thinnest = pair.MinBy(s => s.Thickness);
             var p = thinnest.Location;
+            findings.Add(new Finding(Around(pair.Select(s => s.Location)), thinnest.Thickness, null));
             yield return new Diagnostic(Diagnostic.BelowResolution, b,
-                Invariant($"{part.Surfaces[pair.Key.OwnerA].Source} and {part.Surfaces[pair.Key.OwnerB].Source} are {thinnest.Thickness:G3} mm apart near ({p.X:F2}, {p.Y:F2}, {p.Z:F2}), below the resolved size of {smallest:G4} mm"));
+                Invariant($"{part.Surfaces[pair.Key.OwnerA].Source} and {part.Surfaces[pair.Key.OwnerB].Source} are {thinnest.Thickness:G3} mm apart near ({p.X:F2}, {p.Y:F2}, {p.Z:F2}), below the resolved size of {ResolvedAt(zones, p):G4} mm"));
         }
     }
 }
@@ -234,6 +336,9 @@ public sealed class FrepResult(IReadOnlyList<Diagnostic> diagnostics, Topology? 
     : ModelResult(diagnostics, topology)
 {
     public IReadOnlyList<BodyResult> Bodies { get; } = bodies;
+
+    /// <summary>Boxes meshed with a finer cell than <see cref="ModelingSettings.CellSize"/>, and that cell.</summary>
+    public IReadOnlyList<(Box3D Box, double Cell)> Refined { get; init; } = [];
 
     public CompiledPart Part { get; } = part;
     public Mesh? Mesh { get; } = mesh;
