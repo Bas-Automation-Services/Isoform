@@ -13,7 +13,7 @@ node tests/playground/run.mjs path/to/wwwroot      # or any other published wwwr
 The parts on their own:
 
 ```sh
-node --test tests/playground/{kernel-client,store,diagnose,references,diff,history,dragmath,features,preview}.test.mjs   # front end only, no publish
+node --test tests/playground/{kernel-client,store,diagnose,references,diff,history,dragmath,features,preview,share}.test.mjs   # front end only, no publish
 node --test tests/playground/kernel.test.mjs       # kernel only; ISOFORM_PLAYGROUND=<wwwroot> to point elsewhere
 node tests/playground/e2e.mjs [wwwroot]            # browser only
 node tests/playground/serve.mjs [wwwroot] [port]   # serve the page to look at it yourself (default port 8137)
@@ -75,6 +75,11 @@ face belongs to the item its name starts with; the inspector's fields come from 
 `DocumentEdits` path it sets (`rib.profile.edges.0.to.1`, `components.pin.placement.origin.2`, `parameters.width`);
 typed values and scrubbing give numbers or `=expressions`.
 
+**`share.test.mjs`** (`wwwroot/js/lib/share.js`, share links): `#doc=` holds the deflate-raw of the canonical text in
+base64url and `&hash=` its first 16 hex digits. Text packs and unpacks to itself (UTF-8 included); the packed form is
+URL-safe; a 400 kB document compresses to under a fifth and comes back exactly; a link drops the page's query and old
+fragment; a fragment without `doc` reads as nothing, and a broken pack is rejected.
+
 **`kernel.test.mjs`** loads `_framework/dotnet.js` from the published folder in Node and calls the same exports the
 page's worker calls. For every example from `Examples()`, at the page's default settings (0.5 mm cells, 0.05 mm chord):
 
@@ -116,6 +121,14 @@ towards the y+ edge with shift until a below-resolution thin spot names `plate/y
 on to y = 45 (`tangent-contact`), drag the fillet radius past 11 mm (`fillet-invalid`), undo four times to the original
 hash. It prints what the previews took per cell and the wasm memory of the primary and preview kernels.
 
+Then the guided tour (`wwwroot/js/panels/tour.js`) on example 0: starting it pins its four faces; it steps to the end
+with `tour.next()` (once Back and Next again, which must return to the step before's hash), and every step in its
+`script` must have reported its `expect` code and not its `gone` one, with the pin statuses it expects (`plate/y+`
+split at tangent, `fillet/face` gone at fillet-invalid); the edits are history entries of origin `tour`, and the last
+undo shows the hash the tour started from. Escape closes it. Screenshots `tour-2.png` (thin spot), `tour-5.png`
+(fillet-invalid) and `tour-9.png` (back at the original hash). Last, a share link: example 0 with an edit, its
+`#doc=` link (the Share button puts it in the address bar), opened in the page again, gives the same hash and says so.
+
 ## Screenshots
 
 `tests/playground/out/screenshots/example-N.png` (git-ignored), 1500×900, one per example, numbered as in `?example=N`,
@@ -148,6 +161,9 @@ selected face's feature), each `{id, feature, kind, label, value, faces, readOnl
 the point to grab it by and `direction` the unit screen direction of its axis (where `t` grows; a planar handle also
 has `directionV`, its `v`'s), `dragging()` (the drag under way: `{id, t, value, edits}`, or null), `preview()` (the
 preview on screen: `{cell, ms, t, handle, hash, diagnostics}`, or null), `previewTimings()`, `ghost()` and `memory()`.
+For the tour, `tour`: `start()`, `next()`, `back()` (each resolves to that step's log entry), `play()`, `pause()`,
+`exit()` and `state()` (`{active, index, count, playing, busy, original, log: [{index, title, hash, before, codes, ok,
+problems}]}`); for share links `shareLink()` (resolves to the link to the shown document) and `shareStatus()`.
 Later tasks add to it. For example:
 
 ```js

@@ -7,6 +7,7 @@
   <link rel="stylesheet" href="playground.css">
   <link rel="stylesheet" href="model.css">
   <link rel="stylesheet" href="agent.css">
+  <link rel="stylesheet" href="tour.css">
   <!-- three r0.160.0, vendored (MIT, vendor/three/LICENSE): pinned, and the page works offline. -->
   <script type="importmap">
     {
@@ -22,7 +23,10 @@
     <header>
       <h1>Isoform</h1>
       <span class="muted">kernel playground · runs in your browser</span>
+      <!-- Guided tour and share link (T1: js/panels/tour.js, share.js; tour.css) -->
+      <span class="header-actions"><button id="tour">Tour</button><button id="share">Share</button></span>
     </header>
+    <div id="share-status" class="share-status"></div>
 
     <label class="row">
       <span>Example</span>

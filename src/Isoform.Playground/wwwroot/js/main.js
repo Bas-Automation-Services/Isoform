@@ -16,6 +16,8 @@ import { createTree } from './panels/tree.js';
 import { createInspector } from './panels/inspector.js';
 import { createPreview } from './lib/preview.js';
 import { createGhosts } from './ghosts.js';
+import { createTour } from './panels/tour.js';
+import { createShare } from './panels/share.js';
 
 const $ = id => document.getElementById(id);
 const store = createStore();
@@ -71,11 +73,15 @@ $('cell').addEventListener('change', () => regenerate());
 
 /** Regenerates at this cell size, keeping the view; the cell select shows it, with an option of its own if needed. */
 function useCell(cell) {
+  pickCell(cell);
+  return regenerate();
+}
+/** Sets the cell select to this size, for the next regeneration. */
+function pickCell(cell) {
   const box = $('cell');
   if (![...box.options].some(o => +o.value === cell))
     box.add(new Option(`${cell} mm`, String(cell)), [...box.options].find(o => +o.value < cell) ?? null);
   box.value = [...box.options].find(o => +o.value === cell).value;
-  return regenerate();
 }
 $('chord').addEventListener('change', () => regenerate());
 
@@ -175,6 +181,18 @@ const handles = createHandles(viewer, store, {
 window.isoform.handles = handles.list;
 window.isoform.dragging = handles.dragging;
 
+// --- Guided tour and share links (T1) ---------------------------------------------------------------------------
+// The tour commits its edits like an agent (origin 'tour'); a #doc= link opens its document instead of an example.
+const tour = createTour(store, {
+  box: $('view'), agentBox: $('agent'), examplesBox: $('examples'), viewer, commits, diagnostics, references,
+  call: client.call, regenerate, pickCell, defaultCell,
+});
+$('tour').onclick = () => tour.start();
+const share = createShare(store, { button: $('share'), status: $('share-status'), examplesBox: $('examples'), regenerate });
+Object.assign(window.isoform, { tour, shareLink: () => share.link(), shareStatus: () => share.status() });
+// --- end tour and share -----------------------------------------------------------------------------------------
+
 await client.start();
 editor.load((await client.call('examples')).result);
+await share.open();
 await regenerate({ fit: true });
