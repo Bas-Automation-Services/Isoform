@@ -250,4 +250,69 @@ public class LatticeTests
         result.Mesh!.IsWatertight().Should().BeFalse("this is the case the report is for");
         result.Diagnostics.Should().Contain(d => d.Code == Diagnostic.BelowResolution && d.FeatureId == "infill" && d.Message.Contains("pinch the mesh"));
     }
+
+    [Theory]
+    [InlineData("gyroid", 6, 1, 1.5, 0.0852)]
+    [InlineData("schwarz-p", 10, 1, 1.5, 0.0843)]
+    [InlineData("diamond", 6, 1, 1.5, 0.0852)]
+    [InlineData("schwarz-p", 8, 0.8, 1.2, 0.0674)]
+    public void The_narrowest_channel_between_the_sheets_and_the_skin_is_as_wide_as_the_field_says(string kind, double cell, double thickness, double skin, double width)
+    {
+        // Where a sheet comes within a cell of the skin's inner face, facing it, the void between them is a channel; the
+        // search finds its narrowest place. Across it, along the normal, the field is void for just that width.
+        var doc = new PartDocument([new Block("box", BooleanOp.New, [0, 0, 0], [20, 20, 20]), new Lattice("infill", kind, cell, thickness, skin)]);
+        var part = new Compiler(Settings).Compile(doc);
+        var channel = LatticeChannels.Find(doc, part, 2 * Settings.CellSize, Settings.Tolerance)[0].MinBy(c => c.Width);
+
+        channel.Width.Should().BeApproximately(width, 1e-4);
+        var n = (channel.Wall - channel.Sheet) / channel.Width;
+        var across = Enumerable.Range(-200, 1400).Select(i => i * 1e-4).Where(s => part.Field!.Value(channel.Sheet + n * s) > 0).ToList();
+        across.Min().Should().BeApproximately(0, 2e-4);
+        across.Max().Should().BeApproximately(channel.Width, 2e-4);
+        across.Should().HaveCount((int)Math.Round((across.Max() - across.Min()) / 1e-4) + 1, "one void, from the sheet to the wall");
+    }
+
+    [Fact]
+    public void A_channel_the_cells_fill_in_is_reported_and_meshes_at_a_cell_that_resolves_it()
+    {
+        // A gyroid of 6 mm cells in a 1.5 mm skin comes within 0.085 mm of the skin's inner faces at a saddle: a channel
+        // between two voids, closed where the sheet meets the wall on either side. 0.5 mm cells fill it in.
+        var doc = new PartDocument([new Block("box", BooleanOp.New, [0, 0, 0], [7.5, 7.5, 7.5]), new Lattice("infill", "gyroid", 6, 1, 1.5)]);
+        var coarse = new FrepModeler(Settings).Regenerate(doc);
+        var channel = LatticeChannels.Find(doc, coarse.Part, 2 * Settings.CellSize, Settings.Tolerance)[0].MinBy(c => c.Width);
+        static double Distance(Isoform.Meshing.Mesh mesh, Point3D p) => new Isoform.Meshing.TriangleBvh(mesh.Vertices, mesh.Triangles().ToList()).Distance(p);
+
+        Distance(coarse.Mesh!, channel.Middle).Should().BeGreaterThan(channel.Width, "no polygon runs through the channel: the cells filled it in");
+        coarse.Diagnostics.Should().ContainSingle(d => d.Code == Diagnostic.BelowResolution && d.FeatureId == "infill").Which.Message.Should()
+            .StartWith("the sheets of infill leave a channel 0.0852 mm wide against its skin near").And.EndWith("below the resolved size of 1 mm; use a CellSize of 0.0426 mm or less");
+
+        // One more level of refinement resolves it: the zones round the channels carry them, and nothing is reported.
+        var fine = new FrepModeler(Settings with { Refinement = 4 }).Regenerate(doc);
+        fine.Diagnostics.Should().BeEmpty();
+        Distance(fine.Mesh!, channel.Middle).Should().BeApproximately(channel.Width / 2, 1e-3, "the sheet and the wall each half the width away");
+    }
+
+    [Fact]
+    public void A_sliver_the_sheets_cut_off_the_cavity_at_an_edge_is_reported()
+    {
+        // In an 8 mm box the gyroid passes 0.01 mm inside an edge of the skin's cavity and cuts a sliver of void off it
+        // that no cell holds a vertex of: lost whole. The channels are refined away, as above.
+        var doc = new PartDocument([new Block("box", BooleanOp.New, [0, 0, 0], [8, 8, 8]), new Lattice("infill", "gyroid", 6, 1, 1.5)]);
+        var result = new FrepModeler(Settings with { Refinement = 4 }).Regenerate(doc);
+
+        result.Diagnostics.Should().ContainSingle(d => d.Code == Diagnostic.BelowResolution && d.FeatureId == "infill").Which.Message.Should()
+            .StartWith("infill leaves a gap 0.0127 mm across near (1.51, 6.36, 1.51) that the cells lose whole");
+    }
+
+    [Fact]
+    public void A_channel_the_cells_carry_is_not_reported()
+    {
+        // A gyroid of 7 mm cells in a 1.3 mm skin leaves channels 0.68 mm wide, below the resolved size of 1 mm, but
+        // 0.5 mm cells carry them.
+        var doc = new PartDocument([new Block("box", BooleanOp.New, [0, 0, 0], [8, 8, 8]), new Lattice("infill", "gyroid", 7, 1, 1.3)]);
+        var result = new FrepModeler(Settings).Regenerate(doc);
+
+        LatticeChannels.Find(doc, result.Part, 2 * Settings.CellSize, Settings.Tolerance)[0].Should().NotBeEmpty().And.OnlyContain(c => c.Width < 1);
+        result.Diagnostics.Should().NotContain(d => d.Message.Contains("channel"));
+    }
 }

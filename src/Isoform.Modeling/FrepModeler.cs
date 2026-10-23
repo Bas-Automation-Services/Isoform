@@ -63,7 +63,9 @@ public sealed class FrepModeler(ModelingSettings settings, RegionCache? cache = 
 
         var zones = new List<Zone>();
         var findings = new List<Finding>();
-        var result = Pass(document, part, plans, zones, findings);
+        // The channels a lattice's sheets leave against its skin depend on the field alone: looked for once.
+        var channels = LatticeChannels.Find(document, part, 2 * Settings.CellSize, Settings.Tolerance);
+        var result = Pass(document, part, plans, zones, findings, channels);
         for (var pass = 0; pass < Passes; pass++)
         {
             var added = Zones(findings, zones);
@@ -72,7 +74,7 @@ public sealed class FrepModeler(ModelingSettings settings, RegionCache? cache = 
             var refine = zones.Select(z => (z.Box, z.Cell)).ToList();
             plans = [.. part.Bodies.Select(b => DualContouring.Plan(b.Field, b.Min, b.Max, Settings.CellSize, Settings.ChordTolerance, Settings.SnapGrid, refine))];
             findings.Clear();
-            result = Pass(document, part, plans, zones, findings);
+            result = Pass(document, part, plans, zones, findings, channels);
         }
         return result;
     }
@@ -118,7 +120,7 @@ public sealed class FrepModeler(ModelingSettings settings, RegionCache? cache = 
     double ResolvedFor(IReadOnlyList<Zone> zones, string feature) =>
         2 * zones.Where(z => z.Feature == feature).Select(z => z.Cell).Append(Settings.CellSize).Min();
 
-    FrepResult Pass(PartDocument document, CompiledPart part, MeshPlan[] plans, IReadOnlyList<Zone> zones, List<Finding> findings)
+    FrepResult Pass(PartDocument document, CompiledPart part, MeshPlan[] plans, IReadOnlyList<Zone> zones, List<Finding> findings, List<LatticeChannels.Channel>[] channels)
     {
         var diagnostics = part.Diagnostics.ToList();
         // Each body is a solid of its own, meshed and given topology alone, so overlapping bodies stay apart. The
@@ -132,10 +134,12 @@ public sealed class FrepModeler(ModelingSettings settings, RegionCache? cache = 
         var falseCorners = new List<FalseEdges.Corner>();
         var carried = new List<Carried>();
         var pockets = new List<(Pocket Pocket, string Feature)>();
+        var filled = new List<LatticeChannels.Channel>();
         var pieces = 0;
-        foreach (var (body, plan) in part.Bodies.Zip(plans))
+        foreach (var (body, plan, bodyChannels) in part.Bodies.Zip(plans, channels))
         {
             var bodyMesh = plan.Build(Cache);
+            filled.AddRange(LatticeChannels.Lost(bodyChannels, bodyMesh));
             var oriented = TopologyBuilder.Oriented(part.Surfaces, body.Field);
             var built = TopologyBuilder.Build(bodyMesh, oriented, Settings.Tolerance, body.Field);
             carried.Add(new Carried(bodyMesh.Quads.Select(q => q.Owner).ToHashSet(), oriented, bodyMesh, [.. built.EdgePoints, .. built.VertexPoints]));
@@ -144,10 +148,12 @@ public sealed class FrepModeler(ModelingSettings settings, RegionCache? cache = 
             falseCorners.AddRange(FalseEdges.Corners(body.Field, built, Settings.Tolerance));
             foreach (var p in LostPockets(bodyMesh))
             {
-                // A lattice is judged by its own sizes (LatticeResolution): where its sheets run into the skin they
-                // leave channels thinner than any cell.
+                // A lattice alone is judged by its own sizes (LatticeResolution); a sliver its sheets cut off against
+                // another face, its skin's at a corner of the cavity, is lost whole like any other. A face that bounds
+                // it may be one whose surface is elsewhere (a profile's corner rounds its offset): the owner there says.
                 var near = Bounding(part, body.Field, p);
-                if (!near.Any(s => s.Kind == SurfaceKind.Lattice)) pockets.Add((p, near.MaxBy(s => s.Id)!.Source.Split('/')[0]));
+                if (!near.All(s => s.Kind == SurfaceKind.Lattice) || part.Surfaces[body.Field.Sample(p.Location).Owner].Kind != SurfaceKind.Lattice)
+                    pockets.Add((p, near.MaxBy(s => s.Id)!.Source.Split('/')[0]));
             }
             var t = built.Topology;
             if (t.BodyCount > 1)
@@ -204,6 +210,16 @@ public sealed class FrepModeler(ModelingSettings settings, RegionCache? cache = 
             findings.AddRange(g.Select(x => new Finding(x.Extent, double.NaN, null)));
             diagnostics.Add(new Diagnostic(Diagnostic.BelowResolution, g.Key,
                 Invariant($"{string.Join(", ", owners.Select(o => part.Surfaces[o].Source))} meet in a vertex near ({at.X:F2}, {at.Y:F2}, {at.Z:F2}) that the part does not have: an edge or face between them is below the resolved size of {ResolvedAt(zones, at):G4} mm")));
+        }
+
+        // Channels between a lattice's sheets and its skin that the cells fill in: the narrowest of each lattice.
+        foreach (var g in filled.GroupBy(c => c.Lattice))
+        {
+            var c = g.MinBy(x => x.Width);
+            var (at, resolved) = (c.Middle, ResolvedAt(zones, c.Middle));
+            findings.AddRange(g.Select(x => new Finding(Around([x.Sheet, x.Wall]), x.Width, null)));
+            diagnostics.Add(new Diagnostic(Diagnostic.BelowResolution, g.Key,
+                Invariant($"the sheets of {g.Key} leave a channel {c.Width:G3} mm wide against its skin near ({at.X:F2}, {at.Y:F2}, {at.Z:F2}) that the cells fill in, {(c.Width < resolved ? "below" : "at")} the resolved size of {resolved:G4} mm; use a CellSize of {c.Width / 2:G3} mm or less")));
         }
 
         // Material or a gap the cells lost whole, with nothing of the mesh near it. The latest feature's there.

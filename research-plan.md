@@ -373,6 +373,21 @@ but about half are features a finer local mesh would build.
   newly refused; one refused document now built and agreeing (both build and agree 30.3% and 31.7%). Cost: the
   search is 1–4 ms of the 20-op part's 0.1–0.6 s mesh at 0.5 to 0.1 mm cells and about 0.3 ms on a random part;
   end to end within the noise.
+- *Lattice channels (2026-10-23):* where a TPMS sheet comes within a cell of its skin's inner face, facing it, the
+  void between them is a channel: at a saddle of the wall's depth on the sheet a lens 0.07–0.09 mm thick and about
+  1 mm wide joining two voids (gyroid and diamond of 6 mm cells in a 1.5 mm skin 0.0852 mm, Schwarz P of 10 mm 0.0843,
+  of 8 mm in a 1.2 mm skin 0.0674). 0.5 mm cells fill it in, and neither the lattice's sizes nor the thin-spot search
+  (which takes the saddle's sides for short wedges) saw it. `LatticeChannels` now finds these critical points once per
+  regeneration (seeds in boxes of an eighth of the lattice cell where the depth may be below 2 cells and the sheet may
+  pass; Newton on the sheet's value and the tangential difference of the two normals from those whose sheet faces the
+  wall within 60°; void all the way across), and each pass reports those no polygon crosses the line across on both
+  sides of the middle, with the cell that resolves them, and refines round them. Channels the cells carry are not
+  reported: at 0.5 mm cells every one from 0.585 mm up was carried, every one below 0.09 mm filled in; one more
+  refinement level meshes the 0.085 mm ones right. Pockets that a lattice and another face bound (the sheet cutting a
+  sliver off an edge of the cavity, 0.01–0.07 mm) are now reported too; the bracket example's skin went from 1.5 to
+  1.6 mm, where it has none. Cost: the search 6–35 ms on a 20 mm cube and 40–60 ms on the bracket (1–3% of the
+  regeneration), the mesh check under 10 ms a pass. Still silent: channels against a region's faces (no skin) and a
+  sheet grazing an edge or a corner of the cavity, where the depth is not smooth.
 
 **Review.** An independent read of the K4 code found 15 problems (wrong geometry without a diagnostic in several);
 all fixed, each with a regression test (`ReviewFindingTests`).
