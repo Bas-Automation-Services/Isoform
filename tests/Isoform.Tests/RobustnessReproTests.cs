@@ -456,11 +456,12 @@ public class RobustnessReproTests
     }
 
     /// <summary>
-    /// K7, seeds 1150–2149: a hole clipping the plate's corner leaves a separate body 0.007 mm thick there. The cells
-    /// lose it whole: its faces are all pieces of faces the mesh carries elsewhere, and the corner is far from every
-    /// edge the mesh made, so the search for lost pieces never looks there. OCCT builds the second body.
+    /// K7, seeds 1150–2149 (1547): a hole clipping the plate's corner, 0.007 mm outside it, leaves a separate body of
+    /// 0.012 × 0.009 mm there. The cells lose it whole: its faces are all pieces of faces the mesh carries elsewhere,
+    /// and the corner is 5.8 mm from every edge the mesh made, where the search for lost pieces looked. It now also
+    /// searches the body's box, down to the blocks where three surfaces may bound the part. OCCT builds the second body.
     /// </summary>
-    [Fact(Skip = Open)]
+    [Fact]
     public void Sliver_body_at_a_clipped_corner_is_built_or_reported()
     {
         var r = Regenerate("""
@@ -471,5 +472,23 @@ public class RobustnessReproTests
             """);
 
         (r.Diagnostics.Any(d => d.Code is Diagnostic.BelowResolution or Diagnostic.TangentContact) || Counts(r) == (12, 24, 16, 2)).Should().BeTrue($"got {Counts(r)}");
+    }
+
+    /// <summary>
+    /// The same sliver body at the plate's other three corners (all silent before), and its mirror: a pin joined into
+    /// an inside corner of the part, 0.007 mm short of it, leaves a through groove of the same section between the pin
+    /// and the two walls (the faces the cells lose are pieces of the walls and the pin; 12 faces where the groove is
+    /// built).
+    /// </summary>
+    [Theory]
+    [InlineData("""[{"id":"plate","type":"block","op":"new","origin":[0,0,0],"size":[55.9,10,10]},{"id":"hole3","type":"hole","center":[2.9,3.834],"diameter":9.6}]""", 12, 24, 16, 2)]
+    [InlineData("""[{"id":"plate","type":"block","op":"new","origin":[0,0,0],"size":[55.9,10,10]},{"id":"hole3","type":"hole","center":[2.9,6.166],"diameter":9.6}]""", 12, 24, 16, 2)]
+    [InlineData("""[{"id":"plate","type":"block","op":"new","origin":[0,0,0],"size":[55.9,10,10]},{"id":"hole3","type":"hole","center":[53,6.166],"diameter":9.6}]""", 12, 24, 16, 2)]
+    [InlineData("""[{"id":"plate","type":"block","op":"new","origin":[0,0,0],"size":[40,20,10]},{"id":"slot","type":"block","op":"cut","origin":[20,5,-1],"size":[30,30,12]},{"id":"pin","type":"extrude","op":"join","plane":{"origin":[0,0,0],"x":[1,0,0],"normal":[0,0,1]},"profile":{"start":[18.1,8.834],"edges":[{"id":"a","to":[27.7,8.834],"bulge":1},{"id":"b","to":[18.1,8.834],"bulge":1}]},"start":0,"end":10}]""", 12, 30, 20, 1)]
+    public void Sliver_at_a_corner_is_built_or_reported(string features, int faces, int edges, int vertices, int bodies)
+    {
+        var r = Regenerate(features);
+
+        (Reported(r) || Counts(r) == (faces, edges, vertices, bodies)).Should().BeTrue($"got {Counts(r)}");
     }
 }
