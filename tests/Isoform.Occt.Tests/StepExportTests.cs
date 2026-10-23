@@ -177,6 +177,11 @@ public class StepExportTests(ITestOutputHelper output)
                 new Sketch("spots", new SketchPlacement(Face: "plate/z+"), new Dictionary<string, double[]> { ["near"] = [20, 25], ["far"] = [80, 25] }, [], []),
                 new Hole("holes", [], 5) { Sketch = "spots", Points = ["near", "far"], Depth = 3 },
             ]), 50000 - 2 * Math.PI * 6.25 * 3);
+
+        // Sweeps whose joints are lines along the arcs' axes (a profile side parallel to it: a plane meets a cylinder
+        // tangentially), and a circle swept round a circle (one torus). Joints across the axis are not written yet.
+        foreach (var sweep in SweepTests.Parts().Where(s => s.Name is "square bar turning right" or "torus"))
+            yield return new($"sweep: {sweep.Name}", SweepTests.Document(sweep.Name), sweep.Volume);
     }
 
     /// <summary>The plate below z = 10 − (x − 20)·slope, clipped at z = 0.</summary>
@@ -240,6 +245,22 @@ public class StepExportTests(ITestOutputHelper output)
         var build = () => ExactBrep.Build(new FrepModeler(settings).Regenerate(doc), settings);
 
         build.Should().Throw<NotSupportedException>().WithMessage("*boss/blend (Blend)*");
+    }
+
+    [Theory]
+    [InlineData("elbow pipe", "pipe/l1:wall and pipe/a1:wall (Cylinder–Torus)")]
+    [InlineData("triangle along a loop and a bend", "(Plane–Cone)")]
+    public void Sweep_joints_across_an_arc_are_named_until_written(string name, string message)
+    {
+        // Where a line piece meets an arc piece the faces touch along the profile edge in the joint plane: a circle
+        // between a cylinder and a torus, a line between a plane and a cone. Not written yet, so named.
+        var settings = new ModelingSettings { CellSize = 0.5 };
+        var frep = new FrepModeler(settings).Regenerate(SweepTests.Document(name));
+        frep.Diagnostics.Should().BeEmpty();
+
+        var build = () => ExactBrep.Build(frep, settings);
+
+        build.Should().Throw<NotSupportedException>().WithMessage($"*{message}*");
     }
 
     [Fact]
