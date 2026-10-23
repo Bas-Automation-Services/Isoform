@@ -8,6 +8,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <ProjectReference Include="../Isoform.Interactive/Isoform.Interactive.csproj" />
     <ProjectReference Include="../Isoform.Modeling/Isoform.Modeling.csproj" />
     <ProjectReference Include="../Isoform.Occt/Isoform.Occt.csproj" />
   </ItemGroup>
