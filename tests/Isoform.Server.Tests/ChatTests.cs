@@ -109,7 +109,7 @@ public class ChatTests(WebApplicationFactory<Program> factory) : IClassFixture<W
         ChatTools.Definitions.Select(d => d.Name).Should().Contain("sketch_edit");
     }
 
-    [Fact(Skip = "needs SketchEdits")]
+    [Fact]
     public void A_sketch_edit_is_stored_as_edits_for_the_page()
     {
         var document = CanonicalFormat.Write(new PartDocument([FormatGuide.Plate, FormatGuide.Examples.Select(e => e.Feature).OfType<Sketch>().First()]));

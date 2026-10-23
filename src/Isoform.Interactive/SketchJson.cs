@@ -124,7 +124,8 @@ public static class SketchJson
         }
     }
 
-    // The sketch's field expressions after an edit: a constraint's follows the constraint (same kind and refs), a point's
+    // The sketch's field expressions after an edit: a constraint's follows the constraint (same kind and refs, or rewritten
+    // in its place with its value), a point's
     // its point, an entity's its entity while it keeps its shape; one whose target is gone goes with it (the edit lists
     // a dropped constraint). Other features' expressions stay as they are.
     static IReadOnlyDictionary<string, string> Carried(IReadOnlyDictionary<string, string> expressions, string id, Sketch before, Sketch after)
@@ -140,7 +141,7 @@ public static class SketchJson
             }
             var at = parts[1] switch
             {
-                "constraints" when before.Constraints[Index(parts[2])] is var c => Position(after.Constraints, d => d.Kind == c.Kind && d.Refs.SequenceEqual(c.Refs)),
+                "constraints" when before.Constraints[Index(parts[2])] is var c => Position(after.Constraints, d => Same(d, c)) ?? Rewritten(after, before, Index(parts[2]), c),
                 "entities" when before.Entities[Index(parts[2])] is var e => Position(after.Entities, d => d.Id == e.Id && d.GetType() == e.GetType()),
                 "points" => after.Points.ContainsKey(parts[2]) ? parts[2] : null,
                 _ => parts[2],
@@ -152,6 +153,12 @@ public static class SketchJson
         return kept;
 
         static int Index(string s) => int.Parse(s, CultureInfo.InvariantCulture);
+        static bool Same(SketchConstraint a, SketchConstraint b) => a.Kind == b.Kind && a.Refs.SequenceEqual(b.Refs);
+        // A dimension the edit rewrote in its place (a fillet's length of a line cut short becomes a distance from the
+        // corner): a new constraint there with the same value.
+        static string? Rewritten(Sketch after, Sketch before, int k, SketchConstraint c) =>
+            k < after.Constraints.Count && after.Constraints[k] is var d && d.Value == c.Value && !before.Constraints.Any(b => Same(b, d))
+                ? k.ToString(CultureInfo.InvariantCulture) : null;
         static string? Position<T>(IReadOnlyList<T> list, Func<T, bool> match)
         {
             for (var i = 0; i < list.Count; i++)

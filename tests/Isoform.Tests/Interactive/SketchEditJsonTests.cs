@@ -76,7 +76,7 @@ public class SketchEditJsonTests
 
     // ---- With the real edits (SketchEdits.Fillet and Trim) ----
 
-    [Fact(Skip = "needs SketchEdits")]
+    [Fact]
     public void A_fillet_rounds_a_corner_with_an_arc_and_keeps_the_corner_and_the_expressions()
     {
         var r = JsonNode.Parse(SketchJson.WriteEdit(Parametric, "r", """{"op": "fillet", "corner": "c", "radius": 5}"""))!;
@@ -89,10 +89,15 @@ public class SketchEditJsonTests
         var added = r["added"]!.AsArray().Select(n => (string)n!).ToList();
         sketch.Entities.Where(e => added.Contains(e.Id)).OfType<SketchArc>().Should().ContainSingle();
         sketch.Points.Keys.Should().Contain("c");
-        settled.Expressions.Values.Should().Contain(["h", "w", "h / 4"], "a fillet drops no dimension");
+        // The right side is cut short: its length =h is now a distance from the corner, in its place, still =h.
+        sketch.Constraints[5].Kind.Should().Be("distance");
+        settled.Expressions.Should().BeEquivalentTo(new Dictionary<string, string>
+        {
+            ["r.constraints.5.value"] = "h", ["r.constraints.6.value"] = "w", ["hole.diameter"] = "h / 4",
+        });
     }
 
-    [Fact(Skip = "needs SketchEdits")]
+    [Fact(Skip = "needs SketchEdits.Trim")]
     public void A_trim_of_a_circle_leaves_an_arc_and_lists_the_constraint_on_the_piece_it_deleted()
     {
         // A bore of radius 4 round h, a chord across it, and a point m on its top.

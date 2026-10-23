@@ -375,12 +375,13 @@ public class ToolTests
         notSketch.Should().Throw<McpException>().WithMessage("*not a sketch*");
     }
 
-    [Fact(Skip = "needs SketchEdits")]
+    [Fact]
     public void Sketch_edit_fillets_a_corner_and_returns_the_new_document()
     {
         var r = Parse(IsoformTools.SketchEdit(Doc(Plate, Outline), "outline", "fillet", corner: "c", radius: 3));
 
         r["solved"]!.GetValue<bool>().Should().BeTrue();
+        r["freeDegrees"]!.GetValue<int>().Should().Be(0, "the outline was fully constrained and the fillet's radius is set");
         Strings(r["added"]).Should().NotBeEmpty();
         Strings(r["dropped"]).Should().BeEmpty();
         var sketch = (Sketch)CanonicalFormat.Read(r["settled"]!["text"]!.GetValue<string>())["outline"];

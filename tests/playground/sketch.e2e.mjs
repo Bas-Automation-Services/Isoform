@@ -58,6 +58,35 @@ async function draw() {
     await page.frames();
     await page.screenshot(join(shots, 'sketch-draw.png'));
 
+    // A fillet on the corner p3: click it, type 4, Enter; one undo step, then undone.
+    const steps = s.undo;
+    await button('.sketch-bar button[title^="Fillet"]');
+    await page.click(await at(s.sketch.points.p3));
+    await page.waitFor(`!document.querySelector('.sketch-value').hidden`, { timeout: 5000 });
+    await page.evaluate(`(i => { i.value = '4'; i.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); })(document.querySelector('.sketch-value input'))`);
+    s = await solved(`s.note && s.sketch.entities.some(e => e.id === 'p3-fillet' && e.arc)`);
+    if (s.note.level !== 'ok' || s.undo !== steps + 1) problems.push(`fillet: note ${JSON.stringify(s.note)}, ${s.undo - steps} undo steps`);
+    if (s.regions.length !== 1) problems.push(`${s.regions.length} regions after the fillet`);
+    await page.frames();
+    await page.screenshot(join(shots, 'sketch-fillet.png'));
+    await button('.sketch-bar button[title="Ctrl+Z"]');
+    s = await solved(`s.sketch.entities.length === 4`);
+
+    // A trim of the top line: the piece under the pointer lights, a click asks the kernel; whatever it answers is
+    // noted in the panel (an applied trim is undone).
+    await button('.sketch-bar button[title^="Trim"]');
+    const top = await at([70, 35]);
+    await page.mouse('mouseMoved', top);
+    await page.waitFor(`!!document.querySelector('.sketch-svg path.trim')`, { timeout: 5000 });
+    await page.click(top);
+    s = await page.waitFor(`(s => s.note && s)(${sketch}.state())`, { timeout: 10000 });
+    if (!await page.evaluate(`!!document.querySelector('.sketch-panel .sketch-edited.${s.note.level}')`)) problems.push(`trim note ${JSON.stringify(s.note)} not in the panel`);
+    if (s.note.level !== 'error') {
+      await button('.sketch-bar button[title="Ctrl+Z"]');
+      await solved(`s.sketch.entities.length === 4`);
+    }
+    console.log(`        trim: ${s.note.text}`);
+
     // Its region picked, a depth, and Finish.
     await button('.sketch-bar button[title^="Select"]');
     await page.click(await at([70, 20]));
