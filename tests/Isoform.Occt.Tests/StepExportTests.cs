@@ -125,6 +125,12 @@ public class StepExportTests(ITestOutputHelper output)
             50000 - Math.PI * 25 * 10 - (97 * 47 * 7 - Math.PI * 6.5 * 6.5 * 7));
         yield return new("shelled edit-suite base", new([.. EditSuite.Base.Features, new Shell("shell", 1)]),
             50000 - Math.PI * 25 * 10 - Spandrel(2) * 50 - (98 * 48 * 8 - Math.PI * 36 * 8 - Spandrel(1) * 48));
+        // An offset of a shell: the outside grows by 0.5 and the cavity shrinks by 0.5, a wall of 2.5.
+        yield return new("offset shelled plate with hole", new([Plate, new Hole("hole", [30, 25], 10), new Shell("shell", 1.5), new Offset("grow", 0.5)]),
+            101 * 51 * 11 - Math.PI * 4.5 * 4.5 * 11 - (96 * 46 * 6 - Math.PI * 7 * 7 * 6));
+        // Fillets grow with it, outside (2.5) and in the cavity (2.5 − 2 = 0.5).
+        yield return new("offset shelled edit-suite base", new([.. EditSuite.Base.Features, new Shell("shell", 1), new Offset("grow", 0.5)]),
+            101 * 51 * 11 - Math.PI * 4.5 * 4.5 * 11 - Spandrel(2.5) * 51 - (97 * 47 * 7 - Math.PI * 6.5 * 6.5 * 7 - Spandrel(0.5) * 47));
 
         // Bodies stay solids of their own.
         yield return new("two overlapping bodies", new([Plate, new Block("post", BooleanOp.New, [40, 15, 5], [20, 20, 30])]), 50000 + 12000, Solids: 2);

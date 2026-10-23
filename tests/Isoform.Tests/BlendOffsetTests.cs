@@ -24,6 +24,15 @@ public class BlendOffsetTests(ITestOutputHelper output)
 
     static PartDocument OffsetPlate(double d) => new([Plate, new Hole("hole", [30, 25], 10), new Offset("grow", d)]);
 
+    static PartDocument OffsetShell(double d) =>
+        new([Plate, new Hole("hole", [30, 25], 10), new Shell("shell", 1.5), .. d == 0 ? Array.Empty<Feature>() : [new Offset("grow", d)]]);
+
+    static PartDocument OffsetFilletShell(double d) =>
+        new([.. EditSuite.Base.Features, new Shell("shell", 1), .. d == 0 ? Array.Empty<Feature>() : [new Offset("grow", d)]]);
+
+    static PartDocument RoundedShell(double d) =>
+        new([.. EditSuite.Base.Features, new Shell("shell", 1), new Fillet("outer", ["plate/z+", "plate/y-"], 1), new Offset("grow", d)]);
+
     static PartDocument OffsetHexagon(double d) => new(
     [
         new Extrude("hex", BooleanOp.New, new SketchPlane([0, 0, 0], [1, 0, 0], [0, 0, 1]),
@@ -112,17 +121,72 @@ public class BlendOffsetTests(ITestOutputHelper output)
     }
 
     [Fact]
-    public void An_offset_part_can_be_shelled_but_a_shell_cannot_be_offset()
+    public void An_offset_part_can_be_shelled()
     {
         var shelled = Modeler.Regenerate(new PartDocument([Plate, new Offset("grow", 1), new Shell("shell", 1.5)]));
         shelled.Diagnostics.Should().BeEmpty();
         shelled.Mesh!.IsWatertight().Should().BeTrue();
-
-        var rejected = Modeler.Regenerate(new PartDocument([Plate, new Shell("shell", 1.5), new Offset("grow", 1)]));
-        rejected.Diagnostics.Should().ContainSingle().Which.Message.Should().Contain("offset before the shell");
     }
 
-    public static IEnumerable<object[]> Parts => [["blended boss"], ["blended pocket"], ["offset plate"], ["offset fillet"], ["offset hexagon"]];
+    [Theory]
+    [InlineData(0.5)]
+    [InlineData(-0.5)]
+    public void Offset_of_a_shell_moves_the_outside_out_and_the_cavity_in(double d)
+    {
+        const double t = 1.5;
+        var result = Modeler.Regenerate(OffsetShell(d));
+
+        result.Diagnostics.Should().BeEmpty();
+        result.Mesh!.IsWatertight().Should().BeTrue();
+        result.Topology!.BodyCount.Should().Be(1);
+        // The outside grows by d and the cavity, the solid shrunk by t, shrinks by d more: a wall of t + 2d.
+        var (s, c) = (2 * d, 2 * (t + d));
+        var outside = (100 + s) * (50 + s) * (10 + s) - Math.PI * Math.Pow(5 - d, 2) * (10 + s);
+        var cavity = (100 - c) * (50 - c) * (10 - c) - Math.PI * Math.Pow(5 + t + d, 2) * (10 - c);
+        var exact = outside - cavity;
+        var volume = SignedVolume(result.Mesh);
+        output.WriteLine($"volume {volume:F4} vs {exact:F4}");
+        volume.Should().BeApproximately(exact, exact * VolumeTolerance);
+        MaxVertexError(result).Should().BeLessThan(1e-7);
+        // Every face keeps its name, the cavity's included.
+        result.Topology.Faces.SelectMany(f => f.Sources).Should().BeEquivalentTo(Modeler.Regenerate(OffsetShell(0)).Topology!.Faces.SelectMany(f => f.Sources));
+        result.Part.Surfaces.Last(x => x.Source == "shell/inner:plate/z+").Origin.Z.Should().BeApproximately(10 - t - d, 1e-12);
+    }
+
+    [Fact]
+    public void Offset_of_a_shell_with_rounds_keeps_its_faces()
+    {
+        // Fillets inside the shell grow with the faces; a round after the shell is on the outside only.
+        foreach (var doc in new[] { OffsetFilletShell(0.5), RoundedShell(0.5) })
+        {
+            var result = Modeler.Regenerate(doc);
+            result.Diagnostics.Should().BeEmpty();
+            result.Mesh!.IsWatertight().Should().BeTrue();
+            MaxVertexError(result).Should().BeLessThan(1e-7);
+            var sources = result.Topology!.Faces.SelectMany(f => f.Sources).ToList();
+            sources.Should().Contain(["shell/inner:plate/z+", "shell/inner:hole/wall", "shell/inner:fillet/face"]);
+        }
+    }
+
+    [Theory]
+    [InlineData(-0.75)]
+    [InlineData(-1)]
+    public void Offset_that_closes_the_shell_wall_is_rejected(double d)
+    {
+        var result = Modeler.Regenerate(OffsetShell(d));
+
+        result.Diagnostics.Should().ContainSingle().Which.Code.Should().Be(Diagnostic.InvalidParameter);
+    }
+
+    [Fact]
+    public void A_shell_rounded_after_shelling_can_grow_but_not_shrink()
+    {
+        Modeler.Regenerate(RoundedShell(0.5)).Diagnostics.Should().BeEmpty();
+        Modeler.Regenerate(RoundedShell(-0.25)).Diagnostics.Should().ContainSingle().Which.Message.Should().Contain("can only grow");
+    }
+
+    public static IEnumerable<object[]> Parts =>
+        [["blended boss"], ["blended pocket"], ["offset plate"], ["offset fillet"], ["offset hexagon"], ["grown shell"], ["shrunk shell"], ["grown rounded shell"]];
 
     static PartDocument Part(string name) => name switch
     {
@@ -130,6 +194,9 @@ public class BlendOffsetTests(ITestOutputHelper output)
         "blended pocket" => BlendedPocket(2),
         "offset plate" => OffsetPlate(-1),
         "offset fillet" => new([.. EditSuite.Base.Features, new Offset("grow", 1)]),
+        "grown shell" => OffsetFilletShell(0.5),
+        "shrunk shell" => OffsetShell(-0.5),
+        "grown rounded shell" => RoundedShell(0.5),
         _ => OffsetHexagon(1),
     };
 
@@ -145,6 +212,8 @@ public class BlendOffsetTests(ITestOutputHelper output)
         [
             (BlendedBoss(2), JsonNode.Parse("""{ "set": "boss.blend", "value": 3 }""")!),
             (OffsetPlate(1), JsonNode.Parse("""{ "set": "grow.distance", "value": 2 }""")!),
+            (OffsetShell(0.5), JsonNode.Parse("""{ "set": "grow.distance", "value": -0.25 }""")!),
+            (OffsetFilletShell(0.5), JsonNode.Parse("""{ "set": "shell.thickness", "value": 0.8 }""")!),
         ];
         foreach (var (doc, edit) in cases)
         {

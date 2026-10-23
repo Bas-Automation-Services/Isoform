@@ -287,14 +287,18 @@ public sealed class Compiler(ModelingSettings settings)
                     break;
 
                 case Offset o:
-                    if (OffsetOf(FieldAlgebra.Normalize(tree!), o.Distance, Register, new Dictionary<(LeafField, double), LeafField>(), o.Id) is { } grown)
+                    if (OffsetOf(FieldAlgebra.Normalize(tree!), o.Distance, Register, new Dictionary<(LeafField, double), LeafField>(), o.Id, surfaces) is { } grown)
                     {
                         tree = grown;
                         // Growing moves every face out by at most the distance, and the box with them.
                         if (o.Distance > 0) Grow([min - new Vector3D(1, 1, 1) * o.Distance, max + new Vector3D(1, 1, 1) * o.Distance]);
+                        // A thicker wall leaves a smaller cavity, which may now be too thin to mesh.
+                        foreach (var s in FieldAlgebra.Descendants(grown).OfType<ShellField>())
+                            if (ThinCavity(new Shell(o.Id, s.Thickness), s.Child, min, max) is { } thin) diagnostics.Add(thin);
                     }
                     else
-                        diagnostics.Add(new Diagnostic(Diagnostic.InvalidParameter, o.Id, "a shelled part cannot be offset; offset before the shell"));
+                        diagnostics.Add(new Diagnostic(Diagnostic.InvalidParameter, o.Id,
+                            Invariant($"offset {o.Distance} cannot move this shell: its wall changes by twice the distance and must stay thicker than zero, and a shell rounded after shelling can only grow")));
                     break;
 
                 case Fillet { Loop: { } loop } f:
@@ -459,9 +463,10 @@ public sealed class Compiler(ModelingSettings settings)
     /// <summary>
     /// The tree with every face moved by d (material grows for d > 0). Faces get real offset surfaces under their
     /// own names, fillet radii grow with them (a fillet shrunk to nothing leaves a sharp edge), and later features
-    /// see true geometry. Each leaf is offset once, so faces shared by fillets stay shared. Null for a shell.
+    /// see true geometry. Each leaf is offset once, so faces shared by fillets stay shared. A shell's wall changes by
+    /// twice the distance; null when that closes it.
     /// </summary>
-    static Field? OffsetOf(Field f, double d, Func<Surface, Surface> register, Dictionary<(LeafField, double), LeafField> done, string id)
+    static Field? OffsetOf(Field f, double d, Func<Surface, Surface> register, Dictionary<(LeafField, double), LeafField> done, string id, IReadOnlyList<Surface> surfaces)
     {
         LeafField Leaf(LeafField l, double by)
         {
@@ -470,7 +475,7 @@ public sealed class Compiler(ModelingSettings settings)
         }
         Field? Each(IReadOnlyList<Field> children, Func<List<Field>, Field> make)
         {
-            var moved = children.Select(c => OffsetOf(c, d, register, done, id)).ToList();
+            var moved = children.Select(c => OffsetOf(c, d, register, done, id, surfaces)).ToList();
             return moved.Any(c => c is null) ? null : make(moved!);
         }
         switch (f)
@@ -487,16 +492,16 @@ public sealed class Compiler(ModelingSettings settings)
                 var parts = m.Children.Select(c => c switch
                 {
                     LeafField l when l.Surface.Id == rim.Cap.Surface.Id => Leaf(l, -d),
-                    LoopEdgeField l when l == rim => OffsetOf(rim, d, register, done, id),
-                    _ when c == tool => OffsetOf(tool, -d, register, done, id),
-                    _ => OffsetOf(c, d, register, done, id),
+                    LoopEdgeField l when l == rim => OffsetOf(rim, d, register, done, id, surfaces),
+                    _ when c == tool => OffsetOf(tool, -d, register, done, id, surfaces),
+                    _ => OffsetOf(c, d, register, done, id, surfaces),
                 }).ToList();
                 return parts.Any(c => c is null) ? null : new MinField(parts!);
             case MinField m:
                 return Each(m.Children, c => new MinField(c));
             case NegateField n:
                 // −g − d = −(g + d): the complement's own faces move the other way.
-                return OffsetOf(n.Child, -d, register, done, id) is { } child ? new NegateField(child) : null;
+                return OffsetOf(n.Child, -d, register, done, id, surfaces) is { } child ? new NegateField(child) : null;
             case RoundedEdgeField r:
                 var (a, b) = (Leaf(r.A, d), Leaf(r.B, d));
                 return r.Radius + d > 1e-9
@@ -510,7 +515,7 @@ public sealed class Compiler(ModelingSettings settings)
             case LoopEdgeField lp:
                 // A rounded loop grows with the faces; a chamfer plane (a + b + s)/√2 moves by d when s grows by (2 − √2)d.
                 var size = lp.Round ? lp.Size + d : lp.Size + (2 - Math.Sqrt(2)) * d;
-                if (OffsetOf(lp.Side, d, register, done, id) is not { } side) return null;
+                if (OffsetOf(lp.Side, d, register, done, id, surfaces) is not { } side) return null;
                 if (size <= 1e-9) return new MaxField([Leaf(lp.Cap, d), side]);
                 var faces = lp.FaceOf.ToDictionary(kv => kv.Key, kv => register(kv.Value with { Radius = size }));
                 // The side's owners are offset leaves now (moved by ±d: a cut's side is a complement): map the new ids
@@ -524,6 +529,18 @@ public sealed class Compiler(ModelingSettings settings)
                 foreach (var l in FieldAlgebra.Descendants(side).OfType<ProfileField>().SelectMany(pf => pf.Leaves).Where(l => !remapped.ContainsKey(l.Surface.Id)))
                     remapped[l.Surface.Id] = register(new Surface(0, $"{prefix}/{l.Surface.Source}", SurfaceKind.Fillet, new Point3D(0, 0, 0), new Vector3D(0, 0, 1), size));
                 return new LoopEdgeField(Leaf(lp.Cap, d), side, size, lp.Round, remapped);
+            case ShellField sh:
+                // max(outer, −c − t) − d = max(outer − d, −(c − d) − (t + 2d)): the cavity is the moved child's, the
+                // wall t + 2d thick, and its faces are named again as the shell named them. Null once the wall closes.
+                // An outside rounded after the shell is thinner than t at the round, and thinner still once shrunk: it
+                // may only grow.
+                var wall = sh.Thickness + 2 * d;
+                var plain = ReferenceEquals(sh.Outer, sh.Child);
+                if (wall <= 1e-9 || !plain && d < 0 || OffsetOf(sh.Child, d, register, done, id, surfaces) is not { } solid) return null;
+                var inner = surfaces[sh.InnerOf.Values.First()].Source;
+                var shelled = ShellOf(new Shell(inner[..inner.IndexOf("/inner:", StringComparison.Ordinal)], wall), solid, register);
+                if (plain) return shelled;
+                return OffsetOf(sh.Outer, d, register, done, id, surfaces) is { } outside ? shelled.WithOuter(outside) : null;
             default:
                 return null;
         }
