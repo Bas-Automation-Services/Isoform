@@ -1,4 +1,5 @@
 using Isoform.Document;
+using Isoform.Meshing;
 using Isoform.Modeling;
 
 namespace Isoform.Tests;
@@ -493,13 +494,20 @@ public class RobustnessReproTests
     }
 
     /// <summary>
-    /// The sliver body again, 0.007 mm outside a small hole (2.4 and 3.4 mm) at the corner: the hole's wall and the
-    /// plate's faces are carried 1.7–2.5 mm away, within reach of the sliver, so the search takes a piece there for
-    /// those faces and spends its budget beside them. Needs a check in the mesher on cells without a vertex.
+    /// The sliver body again, 0.007 mm outside a small hole (2.4 and 3.4 mm) at the corner, here and at the other
+    /// corners: the hole's wall and the plate's faces are carried 1.7–2.5 mm away, within reach of the sliver, so the
+    /// search for lost pieces takes it for those faces. No cell corner or edge reaches the sliver, so the cells round it
+    /// have no vertex; the mesher looks for the other sign in those (a pocket) and the modeler reports one that no
+    /// polygon comes nearer than the cell's corner.
     /// </summary>
-    [Theory(Skip = Open)]
+    [Theory]
     [InlineData("""[{"id":"plate","type":"block","op":"new","origin":[0,0,0],"size":[55.9,10,10]},{"id":"hole3","type":"hole","center":[55.0465,0.8535],"diameter":2.4}]""")]
     [InlineData("""[{"id":"plate","type":"block","op":"new","origin":[0,0,0],"size":[55.9,10,10]},{"id":"hole3","type":"hole","center":[54.7,1.25],"diameter":3.4}]""")]
+    [InlineData("""[{"id":"plate","type":"block","op":"new","origin":[0,0,0],"size":[55.9,10,10]},{"id":"hole3","type":"hole","center":[0.8535,0.8535],"diameter":2.4}]""")]
+    [InlineData("""[{"id":"plate","type":"block","op":"new","origin":[0,0,0],"size":[55.9,10,10]},{"id":"hole3","type":"hole","center":[0.8535,9.1465],"diameter":2.4}]""")]
+    [InlineData("""[{"id":"plate","type":"block","op":"new","origin":[0,0,0],"size":[55.9,10,10]},{"id":"hole3","type":"hole","center":[55.0465,9.1465],"diameter":2.4}]""")]
+    [InlineData("""[{"id":"plate","type":"block","op":"new","origin":[0,0,0],"size":[55.9,10,10]},{"id":"hole3","type":"hole","center":[1.2,8.75],"diameter":3.4}]""")]
+    [InlineData("""[{"id":"plate","type":"block","op":"new","origin":[0,0,0],"size":[55.9,10,10]},{"id":"hole3","type":"hole","center":[55.198,0.702],"diameter":1.98}]""")]
     public void Sliver_body_beside_its_own_faces_is_built_or_reported(string features)
     {
         var r = Regenerate(features);
@@ -510,21 +518,67 @@ public class RobustnessReproTests
     /// <summary>
     /// A cap of a ball 0.007 mm high and 0.53 mm across, cut off by a slab whose top is flush with a shelf's underside:
     /// a separate body bounded by two surfaces, the ball and the slab's top, both carried elsewhere (the slab's top as
-    /// the shelf's face). Fewer than three surfaces bound it, so no block is searched there. Built, it is two bodies.
+    /// the shelf's face). Fewer than three surfaces bound it, so no block of the lost-piece search is looked at there;
+    /// the cells round it have no vertex, and the mesher finds it as a pocket. Built, it is two bodies. Also off the
+    /// grid's lines and lower.
     /// </summary>
-    [Fact(Skip = Open)]
-    public void Ball_cap_bounded_by_two_faces_is_built_or_reported()
+    [Theory]
+    [InlineData(30, 10, 14.993)]
+    [InlineData(30.17, 9.71, 14.993)]
+    [InlineData(29.9, 10.2, 14.996)]
+    public void Ball_cap_bounded_by_two_faces_is_built_or_reported(double x, double y, double top)
     {
-        var r = Regenerate("""
+        var r = Regenerate(FormattableString.Invariant($$"""
             [
               {"id":"plate","type":"block","op":"new","origin":[0,0,0],"size":[60,20,10]},
-              {"id":"ball","type":"revolve","op":"join","plane":{"origin":[30,10,10],"x":[1,0,0],"normal":[0,-1,0]},"profile":{"start":[0,-5],"edges":[{"id":"arc","to":[0,5],"bulge":1},{"id":"axis","to":[0,-5]}]},"angle":360},
-              {"id":"slab","type":"block","op":"cut","origin":[22,2,10.5],"size":[16,16,4.493]},
+              {"id":"ball","type":"revolve","op":"join","plane":{"origin":[{{x}},{{y}},10],"x":[1,0,0],"normal":[0,-1,0]},"profile":{"start":[0,-5],"edges":[{"id":"arc","to":[0,5],"bulge":1},{"id":"axis","to":[0,-5]}]},"angle":360},
+              {"id":"slab","type":"block","op":"cut","origin":[22,2,10.5],"size":[16,16,{{top - 10.5}}]},
               {"id":"pillar","type":"block","op":"join","origin":[50,0,10],"size":[10,20,6]},
-              {"id":"shelf","type":"block","op":"join","origin":[45,0,14.993],"size":[5,20,1.007]}
+              {"id":"shelf","type":"block","op":"join","origin":[45,0,{{top}}],"size":[5,20,{{16 - top}}]}
             ]
-            """);
+            """));
 
         (Reported(r) || r.Topology!.BodyCount == 2).Should().BeTrue($"got {Counts(r)}");
+    }
+
+    /// <summary>
+    /// A fillet run ending at a reflex corner (SweptEdgeTests' riser): the foot's top gains a piece between the fillet
+    /// and the end face, which meet tangentially, so it tapers to a cusp. Cells beside it fit no vertex on their
+    /// crossings' surfaces and kept their crossings' mean, up to 0.1 mm off the surface with nothing reported; they now
+    /// take the real edge of two of their surfaces. At several cell sizes and radii, every vertex is on the surface.
+    /// </summary>
+    [Theory]
+    [InlineData(0.2, 1)]
+    [InlineData(0.25, 1)]
+    [InlineData(0.3, 1)]
+    [InlineData(0.5, 1)]
+    [InlineData(0.3, 2)]
+    [InlineData(0.25, 1.5)]
+    public void Vertices_beside_a_fillet_cusp_are_on_the_surface(double cell, double r)
+    {
+        var profile = new Profile([0, 0], [new("bottom", [40, 0]), new("tip", [40, 5]), new("inner", [5, 5]), new("riser", [5, 30]), new("top", [0, 30]), new("back", [0, 0])]);
+        var result = new FrepModeler(new ModelingSettings { CellSize = cell }).Regenerate(new PartDocument(
+        [
+            new Extrude("bracket", BooleanOp.New, new SketchPlane([0, 0, 0], [1, 0, 0], [0, 0, 1]), profile, 0, 20),
+            new Fillet("round", ["bracket/end", "bracket/riser"], r),
+        ]));
+
+        result.Diagnostics.Should().BeEmpty();
+        result.Mesh!.Vertices.Max(p => Math.Abs(result.Part.Field!.Value(p))).Should().BeLessThan(1e-7);
+    }
+
+    /// <summary>
+    /// A pocket with polygons beside it is not lost: where a hole runs out through a plate's side, the wedges of
+    /// material between its wall and the side reach into cells whose corners are all in the hole, 0.002–0.06 mm from
+    /// the polygons there. Nothing is reported.
+    /// </summary>
+    [Fact]
+    public void Pocket_beside_polygons_is_not_reported()
+    {
+        var doc = RobustnessDocuments.Parse("""[{"id":"plate","type":"block","op":"new","origin":[0,0,0],"size":[40,20,10]},{"id":"h","type":"hole","center":[20,1.25],"diameter":3.4}]""");
+        var body = new Compiler(Settings).Compile(doc).Bodies[0];
+
+        DualContouring.Build(body.Field, body.Min, body.Max, Settings.CellSize, Settings.ChordTolerance).Pockets.Should().NotBeEmpty();
+        new FrepModeler(Settings).Regenerate(doc).Diagnostics.Should().BeEmpty();
     }
 }

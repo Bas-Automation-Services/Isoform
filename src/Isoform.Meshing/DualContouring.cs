@@ -18,11 +18,18 @@ public readonly record struct Triangle(int A, int B, int C, int Owner);
 /// <summary>Material or a gap between two surfaces that is thinner than the finest cells can resolve.</summary>
 public readonly record struct ThinSpot(int OwnerA, int OwnerB, Point3D Location, double Thickness);
 
-public sealed class Mesh(IReadOnlyList<Point3D> vertices, IReadOnlyList<Quad> quads, IReadOnlyList<ThinSpot>? thinSpots = null)
+/// <summary>
+/// A point of a cell without a vertex where the field has the other sign than at the cell's corners: |Value| is how
+/// far the material (or gap) there reaches round it, Corner how far the cell's nearest corner is.
+/// </summary>
+public readonly record struct Pocket(Point3D Location, double Value, double Corner);
+
+public sealed class Mesh(IReadOnlyList<Point3D> vertices, IReadOnlyList<Quad> quads, IReadOnlyList<ThinSpot>? thinSpots = null, IReadOnlyList<Pocket>? pockets = null)
 {
     public IReadOnlyList<Point3D> Vertices { get; } = vertices;
     public IReadOnlyList<Quad> Quads { get; } = quads;
     public IReadOnlyList<ThinSpot> ThinSpots { get; } = thinSpots ?? [];
+    public IReadOnlyList<Pocket> Pockets { get; } = pockets ?? [];
 
     /// <summary>Each quad split along its shorter diagonal.</summary>
     public IEnumerable<Triangle> Triangles()
@@ -261,7 +268,19 @@ public static partial class DualContouring
         var thin = Sorted(spots);
         Stage($"thin spots ({thin.Count:N0})");
 
-        return new Mesh(positions, quads, thin);
+        // Leaves round no crossing have no vertex: the field may still take the other sign inside them.
+        var vertexless = new bool[leaves.Count];
+        if (prune) Array.Fill(vertexless, true);
+        for (var v = 0; v < cellCount; v++) vertexless[(int)(pairs[cellStart[v]] >> 32)] = false;
+        var found = new ConcurrentBag<Pocket>();
+        Parallel.For(0, leaves.Count, l =>
+        {
+            if (vertexless[l] && FindPocket(leaves[l], grid) is { } p) found.Add(p);
+        });
+        var pockets = Sorted(found);
+        Stage($"pockets ({pockets.Count:N0} in {vertexless.Count(x => x):N0} cells without a vertex)");
+
+        return new Mesh(positions, quads, thin, pockets);
     }
 
     static List<ThinSpot> Sorted(IEnumerable<ThinSpot> spots) =>
@@ -686,7 +705,43 @@ public static partial class DualContouring
                     spots.Add(new ThinSpot(a.Owner, b.Owner, mp, thickness));
                     return mp;
                 }
+        // Or the cell holds a real edge of two of its surfaces, a crossing's and maybe one no crossing saw, as beside the
+        // cusp where a piece of face tapers between two tangent surfaces (a fillet run's end at a reflex corner) and
+        // their corner with it cannot be reached: that edge.
+        var all = new List<int>(owners[..ownerCount].ToArray());
+        Surfaces(field, all);
+        for (var i = 0; i < ownerCount; i++)
+        for (var j = i + 1; j < all.Count; j++)
+            if (Edge(field, mp, all[i], all[j]) is { } e && Inside(box, e, 0)) return e;
         return mp;
+    }
+
+    /// <summary>
+    /// A point of the solid's boundary on both surfaces, by Gauss-Newton from <paramref name="p"/> (as in
+    /// <see cref="Refine"/>); null where it does not get there or a surface has no value on the way.
+    /// </summary>
+    static Point3D? Edge(Field field, Point3D p, int a, int b)
+    {
+        for (var it = 0; it < 8; it++)
+        {
+            if (field.SampleSurface(a, p) is not { } sa || field.SampleSurface(b, p) is not { } sb) return null;
+            var jtj = new double[3, 3];
+            var jtr = new double[3];
+            foreach (var s in (FieldSample[])[sa, sb])
+            {
+                double[] g = [s.Gradient.X, s.Gradient.Y, s.Gradient.Z];
+                for (var r = 0; r < 3; r++)
+                {
+                    jtr[r] -= g[r] * s.Value;
+                    for (var c = 0; c < 3; c++) jtj[r, c] += g[r] * g[c];
+                }
+            }
+            var dx = SymmetricSolver.PseudoSolve(jtj, jtr, relativeCutoff: 1e-6);
+            p = new Point3D(p.X + dx[0], p.Y + dx[1], p.Z + dx[2]);
+        }
+        p = Project(field, p);
+        return Math.Abs(field.Value(p)) <= 1e-9 && field.SampleSurface(a, p) is { } x && Math.Abs(x.Value) <= 1e-9
+            && field.SampleSurface(b, p) is { } y && Math.Abs(y.Value) <= 1e-9 ? p : null;
     }
 
     static bool OnEvery(Field field, Point3D p, ReadOnlySpan<int> owners)

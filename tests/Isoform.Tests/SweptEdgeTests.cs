@@ -74,7 +74,7 @@ public class SweptEdgeTests(ITestOutputHelper output)
         output.WriteLine($"volume {volume:F4} vs {exact:F4}");
         volume.Should().BeApproximately(exact, exact * VolumeTolerance);
         Deviation(result, "round/face", p => Math.Sqrt(Sq(p.X - (5 - r)) + Sq(p.Z - (20 - r))) - r).Should().BeLessThan(1e-7);
-        MaxVertexError(result, new Point3D(5 - r, 5, 20)).Should().BeLessThan(1e-7);
+        MaxVertexError(result).Should().BeLessThan(1e-7);
         // The foot's top gains the strip under the fillet's end, under its own name: no new face but the fillet.
         result.Topology!.Faces.SelectMany(f => f.Sources).Should().BeEquivalentTo(
             ["bracket/bottom", "bracket/tip", "bracket/inner", "bracket/riser", "bracket/top", "bracket/back", "bracket/start", "bracket/end", "round/face"]);
@@ -110,7 +110,7 @@ public class SweptEdgeTests(ITestOutputHelper output)
         Deviation(result, "round/face", p => Math.Sqrt(Sq(p.X - 4) + Sq(p.Z - 19)) - 1).Should().BeLessThan(1e-7);
         Deviation(result, "round/bracket/bend", p => Math.Sqrt(Sq(Math.Sqrt(Sq(p.X - 2) + Sq(p.Y - 27)) - 2) + Sq(p.Z - 19)) - 1).Should().BeLessThan(1e-7);
         Deviation(result, "round/bracket/top", p => Math.Sqrt(Sq(p.Y - 29) + Sq(p.Z - 19)) - 1).Should().BeLessThan(1e-7);
-        MaxVertexError(result, new Point3D(4, 5, 20)).Should().BeLessThan(1e-7);
+        MaxVertexError(result).Should().BeLessThan(1e-7);
     }
 
     [Fact]
@@ -145,7 +145,7 @@ public class SweptEdgeTests(ITestOutputHelper output)
         output.WriteLine($"volume {volume:F4} vs {exact:F4}");
         volume.Should().BeApproximately(exact, exact * VolumeTolerance);
         Deviation(result, "round/face", p => Math.Sqrt(Sq(p.Y - 14) + Sq(p.Z - 9)) - 1).Should().BeLessThan(1e-7);
-        MaxVertexError(result, new Point3D(30, 14, 10), new Point3D(70, 14, 10)).Should().BeLessThan(1e-7);
+        MaxVertexError(result).Should().BeLessThan(1e-7);
         result.Topology!.Faces.Should().HaveCount(6 + 4 + 1);
     }
 
@@ -256,14 +256,11 @@ public class SweptEdgeTests(ITestOutputHelper output)
     }
 
     /// <summary>
-    /// Largest |field| at a mesh vertex, away from the cusps: where a run ends at a reflex corner the neighbour's
-    /// face gains a piece between the fillet and the cap, which meet tangentially, so it tapers to a point thinner
-    /// than any cell. Within a few cells of that point the mesher cannot put the corner vertex on the surface; the
-    /// exact B-rep has it (StepExportTests).
+    /// Largest |field| at a mesh vertex. Where a run ends at a reflex corner the neighbour's face gains a piece between
+    /// the fillet and the cap, which meet tangentially, so it tapers to a point thinner than any cell; the vertices of
+    /// the cells there are on the surface too, if not on its corner (the exact B-rep has that: StepExportTests).
     /// </summary>
-    static double MaxVertexError(FrepResult r, params Point3D[] cusps) => r.Mesh!.Vertices
-        .Where(p => cusps.All(c => (p - c).Length > 3 * Modeler.Settings.CellSize))
-        .Max(p => Math.Abs(r.Part.Field!.Value(p)));
+    static double MaxVertexError(FrepResult r) => r.Mesh!.Vertices.Max(p => Math.Abs(r.Part.Field!.Value(p)));
 
     static double Sq(double x) => x * x;
 

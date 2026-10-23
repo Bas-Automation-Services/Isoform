@@ -39,9 +39,9 @@ public sealed class MeshRegion
 }
 
 /// <summary>
-/// What one region adds to the mesh: the vertices of its leaves, the polygons of its edges and its thin spots. Cells
-/// and edges are on the absolute lattice and owners are local surface numbers, so the result fits any plan whose
-/// region has the same key.
+/// What one region adds to the mesh: the vertices of its leaves, the polygons of its edges, its thin spots and its
+/// pockets. Cells and edges are on the absolute lattice and owners are local surface numbers, so the result fits any
+/// plan whose region has the same key.
 /// </summary>
 public sealed class RegionMesh
 {
@@ -52,6 +52,7 @@ public sealed class RegionMesh
     internal int[] Polygons = [];
     internal int[] ThinOwners = [];   // per thin spot: two owners
     internal double[] Thin = [];      // per thin spot: x, y, z, thickness
+    internal double[] Pockets = [];   // per pocket: x, y, z, value, corner
 
     /// <summary>False when a vertex needed the whole field (a coarse node at the region's side, an acute edge): not reusable.</summary>
     public bool Cacheable { get; internal set; } = true;
@@ -70,6 +71,7 @@ public sealed class RegionMesh
         Array(w, Polygons);
         Array(w, ThinOwners);
         Array(w, Thin);
+        Array(w, Pockets);
     }
 
     public static RegionMesh Read(BinaryReader r)
@@ -80,7 +82,7 @@ public sealed class RegionMesh
             r.Read(MemoryMarshal.AsBytes(a.AsSpan()));
             return a;
         }
-        return new RegionMesh { Cells = Array<int>(r), Positions = Array<double>(r), Polygons = Array<int>(r), ThinOwners = Array<int>(r), Thin = Array<double>(r) };
+        return new RegionMesh { Cells = Array<int>(r), Positions = Array<double>(r), Polygons = Array<int>(r), ThinOwners = Array<int>(r), Thin = Array<double>(r), Pockets = Array<double>(r) };
     }
 }
 
