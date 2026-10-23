@@ -776,12 +776,14 @@ public static partial class DualContouring
         return p;
     }
 
-    // Newton steps along the exact gradient: puts smooth-region vertices on the surface.
+    // Newton steps along the exact gradient: puts smooth-region vertices on the surface. Where the gradient vanishes
+    // (a blend whose two gradients cancel) there is no direction to step in, and the point stays.
     static Point3D Project(Field field, Point3D p)
     {
         for (var it = 0; it < 4; it++)
         {
             var s = field.Sample(p);
+            if (s.Gradient.LengthSquared < 1e-24) break;
             p = p - s.Gradient * (s.Value / s.Gradient.LengthSquared);
         }
         return p;

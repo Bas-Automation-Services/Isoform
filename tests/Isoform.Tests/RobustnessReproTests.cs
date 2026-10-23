@@ -654,4 +654,18 @@ public class RobustnessReproTests
 
         (Reported(r) || t.Faces.Any(f => f.Sources.Contains("boss2/y+") && t.Signature(f.Index).Contains("body/step1"))).Should().BeTrue();
     }
+
+    /// <summary>
+    /// F-rep only seed 1771: inside the shell, where the knob's blend makes its two gradients cancel, the mesher's Newton
+    /// projection divided by a zero gradient, and the NaN vertex crashed the profile field's lookup.
+    /// </summary>
+    [Fact]
+    public void Blend_whose_gradients_cancel_does_not_crash()
+    {
+        var r = Regenerate("""
+            [{"id":"body","type":"revolve","op":"new","plane":{"origin":[0,0,0],"x":[1,0,0],"normal":[0,-1,0]},"profile":{"start":[0,0],"edges":[{"id":"base","to":[10,0]},{"id":"side0","to":[10,12]},{"id":"step0","to":[14,10]},{"id":"side1","to":[10,14.5]},{"id":"step1","to":[0,14.5]},{"id":"axis","to":[0,0]}]},"angle":360},{"id":"knob2","type":"extrude","op":"join","plane":{"origin":[0,0,14.5],"x":[1,0,0],"normal":[0,0,1]},"profile":{"start":[7.456,-9.466],"edges":[{"id":"a","to":[10,-10]},{"id":"b","to":[7.456,-9.466],"bulge":1}]},"start":0,"end":10,"blend":2},{"id":"shell3","type":"shell","thickness":0.3}]
+            """);
+
+        (Reported(r) || r.Mesh!.IsWatertight()).Should().BeTrue();
+    }
 }
