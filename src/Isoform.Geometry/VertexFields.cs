@@ -56,6 +56,12 @@ public sealed class VertexSphereField : Field
         if (edges.Count != 3 || edges.Any(e => e is MeridianEdgeField || e.A.Surface.Kind != SurfaceKind.Plane || e.B.Surface.Kind != SurfaceKind.Plane)
             || Leaves(edges) is not { } leaves)
             return null;
+        return Meet(leaves, inset);
+    }
+
+    /// <summary>Where three planes meet, each moved inward by <paramref name="inset"/>; null when they have no single point in common.</summary>
+    public static Point3D? Meet(IReadOnlyList<LeafField> leaves, double inset)
+    {
         var origin = new Point3D(0, 0, 0);
         var g = leaves.Select(l => l.Sample(origin).Gradient).ToArray();
         var det = g[0].Dot(g[1].Cross(g[2]));

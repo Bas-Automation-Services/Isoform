@@ -93,22 +93,29 @@ public class CornerFilletTests(ITestOutputHelper output)
         Deviation(result, "f3/face", p => Math.Sqrt(Sq(p.X - 17) + Sq(p.Y - 13)) - 3).Should().BeLessThan(1e-7);
     }
 
-    [Fact]
-    public void Every_corner_of_a_fully_rounded_block_is_a_sphere()
+    /// <summary>A 20 × 16 × 12 block with all twelve edges rounded.</summary>
+    public static PartDocument Rounded(double r)
     {
         string[] faces = ["x-", "x+", "y-", "y+", "z-", "z+"];
         var edges = from i in Enumerable.Range(0, 6) from j in Enumerable.Range(i + 1, 5 - i)
                     where faces[i][0] != faces[j][0] select (faces[i], faces[j]);
-        var doc = new PartDocument([new Block("box", BooleanOp.New, [0, 0, 0], [20, 16, 12]),
-            .. edges.Select((e, k) => new Fillet($"r{k}", [$"box/{e.Item1}", $"box/{e.Item2}"], 2))]);
+        return new PartDocument([new Block("box", BooleanOp.New, [0, 0, 0], [20, 16, 12]),
+            .. edges.Select((e, k) => new Fillet($"r{k}", [$"box/{e.Item1}", $"box/{e.Item2}"], r))]);
+    }
 
-        var result = Modeler.Regenerate(doc);
+    /// <summary>Four edges of each length between the corners, less 2r; a whole ball's worth of corners.</summary>
+    public static double RoundedVolume(double r) =>
+        20 * 16 * 12 - r * r * (1 - Math.PI / 4) * 4 * (20 + 16 + 12 - 6 * r) - 8 * r * r * r * (1 - Math.PI / 6);
+
+    [Fact]
+    public void Every_corner_of_a_fully_rounded_block_is_a_sphere()
+    {
+        var result = Modeler.Regenerate(Rounded(2));
 
         result.Diagnostics.Should().BeEmpty();
         result.Mesh!.IsWatertight().Should().BeTrue();
         result.Topology!.Faces.Count(f => f.Sources.Any(s => s.Contains("/corner:", StringComparison.Ordinal))).Should().Be(8);
-        // Edges of 20 − 4, 16 − 4 and 12 − 4 between the corners, four of each; a whole ball of r at the corners.
-        var exact = 20 * 16 * 12 - 2 * 2 * (1 - Math.PI / 4) * 4 * (16 + 12 + 8) - 8 * 8 * (1 - Math.PI / 6);
+        var exact = RoundedVolume(2);
         var volume = MassProperties.Of(result.Part.Field!, result.Mesh!).Volume;
         output.WriteLine($"volume {volume:F6} vs {exact:F6}");
         // Curved all round: the mesh is 2e-6 off at 0.25 mm cells (mitres at the corners would be 1e-3 off).
@@ -135,7 +142,77 @@ public class CornerFilletTests(ITestOutputHelper output)
         Deviation(result, sphere.Source, p => (p - sphere.Origin).Length - 1.5).Should().BeLessThan(1e-7);
     }
 
-    public static IEnumerable<object[]> Parts => [["box"], ["slanted"], ["unequal"]];
+    // A 20 × 16 × 8 boss joined on a plate, the inside edges round its foot rounded: two meeting at its corner at
+    // (20, 10, 10), or all four.
+    public static PartDocument Boss(double r, double? r2 = null, bool all = false) => new(
+    [
+        new Block("plate", BooleanOp.New, [0, 0, 0], [60, 40, 10]),
+        new Block("boss", BooleanOp.Join, [20, 10, 10], [20, 16, 8]),
+        new Fillet("f1", ["plate/z+", "boss/x-"], r),
+        new Fillet("f2", ["plate/z+", "boss/y-"], r2 ?? r),
+        .. all ? new Feature[] { new Fillet("f3", ["plate/z+", "boss/x+"], r), new Fillet("f4", ["plate/z+", "boss/y+"], r) } : [],
+    ]);
+
+    /// <summary>
+    /// Plate, boss and the fillers: along each rounded edge the corner less a quarter disc, and at each corner where
+    /// two meet a quarter of the spandrel swept round the boss's edge (Pappus: its ∫ρ dA is r³(5/6 − π/4)).
+    /// </summary>
+    public static double BossVolume(double r, bool all = false) =>
+        60 * 40 * 10 + 20 * 16 * 8 + r * r * (1 - Math.PI / 4) * (all ? 72 : 36) + (all ? 4 : 1) * Math.PI / 2 * r * r * r * (5.0 / 6 - Math.PI / 4);
+
+    [Theory]
+    [InlineData(1.5)]
+    [InlineData(3)]
+    public void Two_inside_fillets_meet_round_the_boss_edge_in_a_horn_torus(double r)
+    {
+        var result = Modeler.Regenerate(Boss(r));
+
+        result.Diagnostics.Should().BeEmpty();
+        result.Mesh!.IsWatertight().Should().BeTrue();
+        // Round the boss's edge at (20, 10): the ball centre circle of radius r at height 10 + r, a tube of r.
+        Deviation(result, "f2/corner:f1+f2", p => Math.Sqrt(Sq(Math.Sqrt(Sq(p.X - 20) + Sq(p.Y - 10)) - r) + Sq(p.Z - 10 - r)) - r).Should().BeLessThan(1e-7);
+        var exact = BossVolume(r);
+        var volume = MassProperties.Of(result.Part.Field!, result.Mesh!).Volume;
+        output.WriteLine($"volume {volume:F6} vs {exact:F6}");
+        volume.Should().BeApproximately(exact, exact * VolumeTolerance);
+    }
+
+    [Fact]
+    public void Four_inside_fillets_round_a_boss_close_all_four_corners()
+    {
+        var result = Modeler.Regenerate(Boss(2, all: true));
+
+        result.Diagnostics.Should().BeEmpty();
+        result.Mesh!.IsWatertight().Should().BeTrue();
+        result.Topology!.Faces.SelectMany(f => f.Sources).Where(s => s.Contains("/corner:", StringComparison.Ordinal)).Should()
+            .BeEquivalentTo(["f2/corner:f1+f2", "f3/corner:f2+f3", "f4/corner:f1+f4", "f4/corner:f3+f4"]);
+        var exact = BossVolume(2, all: true);
+        MassProperties.Of(result.Part.Field!, result.Mesh!).Volume.Should().BeApproximately(exact, exact * VolumeTolerance);
+    }
+
+    [Fact]
+    public void Horn_corner_keeps_its_name_when_the_radius_changes()
+    {
+        static string[] Names(FrepResult r) => r.Topology!.Faces.SelectMany(f => f.Sources).Order(StringComparer.Ordinal).ToArray();
+        var before = Names(Modeler.Regenerate(Boss(2)));
+
+        before.Should().Contain("f2/corner:f1+f2");
+        foreach (var r in new[] { 1.25, 3.5 })
+            Names(Modeler.Regenerate(Boss(r))).Should().Equal(before);
+    }
+
+    [Fact]
+    public void Inside_fillets_of_unequal_radii_leave_the_corner_open_and_say_so()
+    {
+        var result = Modeler.Regenerate(Boss(2, r2: 3));
+
+        var d = result.Diagnostics.Should().ContainSingle().Which;
+        d.Code.Should().Be(Diagnostic.CornerOpen);
+        output.WriteLine(d.Message);
+        result.Topology!.Faces.SelectMany(f => f.Sources).Should().NotContain(s => s.Contains("corner", StringComparison.Ordinal));
+    }
+
+    public static IEnumerable<object[]> Parts => [["box"], ["slanted"], ["unequal"], ["boss"], ["boss all round"]];
 
     [Theory]
     [MemberData(nameof(Parts))]
@@ -144,6 +221,8 @@ public class CornerFilletTests(ITestOutputHelper output)
         {
             "box" => Box(3),
             "slanted" => Slanted(1.5),
+            "boss" => Boss(3),
+            "boss all round" => Boss(2, all: true),
             _ => Box(2, r3: 3),
         }));
 

@@ -282,8 +282,11 @@ Sample, bounds enclose, simplification bit-exact) and keeps its face names under
   3D view with face names on hover, edge picking for fillets, diagnostics, example parts. One thread there, so
   0.3–2 s per regeneration against ~50–100 ms on the desktop.
 
-Not yet: a spherical or rolled patch where fillets meet at a corner (they mitre, and two flush inside fillets leave
-the corner between them open); fillets on cone, sphere and torus edges off a common axis (no closed form), chamfers
+Corners (2026-10-23): three plane–plane fillets of one radius at a convex corner meet in a sphere
+(`<id>/corner:a+b+c`), and two inside fillets round a joined boss meet round its square edge in a horn torus
+(`<id>/corner:a+b`), both exact in STEP (a horn's apex, like a sphere's pole, needs the reader's healing). Not yet:
+corners of unequal radii (convex ones keep their mitre, `corner-mitred`; inside ones stay open, `corner-open`), and
+inside corners round a leaning or curved edge; fillets on cone, sphere and torus edges off a common axis (no closed form), chamfers
 on them, and fillets next to a hollow torus. The OCCT baseline does not run the new features, so they are checked
 against analytic answers only; cross-checking them is part of K7.
 

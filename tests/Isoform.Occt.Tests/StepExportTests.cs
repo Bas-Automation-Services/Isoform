@@ -30,9 +30,11 @@ public class StepExportTests(ITestOutputHelper output)
 
     /// <summary>
     /// A part and its analytic volume. <paramref name="Healed"/>: the file still needs the reader's healing (a sphere
-    /// cap holding a pole needs a degenerate edge there, which STEP cannot say).
+    /// cap holding a pole needs a degenerate edge there, which STEP cannot say; OCCT's own files leave it out too).
+    /// <paramref name="Baseline"/>: OCCT's own modeller builds the same shape from the document, so its vertices and edges
+    /// can be compared.
     /// </summary>
-    public sealed record Part(string Name, PartDocument Doc, double Volume, int Solids = 1, bool Healed = false);
+    public sealed record Part(string Name, PartDocument Doc, double Volume, int Solids = 1, bool Healed = false, bool Baseline = true);
 
     // The corner a rolling ball of radius r leaves out of a right-angled edge, its centroid's distance from either
     // face, and what two such edges mitring at a convex corner leave out twice (2 · area · centroid).
@@ -67,10 +69,10 @@ public class StepExportTests(ITestOutputHelper output)
         yield return new("cone with a dome", new([new Revolve("nose", BooleanOp.New, Xz, Loop([0, 0],
             ("base", 10, 0, 0), ("side", 10, 10, 0), ("cone", 5, 20, 0), ("dome", 0, 25, Math.Tan(Math.PI / 8)), ("axis", 0, 0, 0)))]),
             Math.PI * (1000 + 10.0 / 3 * (100 + 50 + 25) + 2.0 / 3 * 125), Healed: true);
-        // A shallower dome: a cap of less than a hemisphere, whose poles the placement turns away.
+        // A shallower dome: a cap of any height keeps its axis, so its rim is a circle of latitude (an exact image).
         yield return new("flat dome", new([new Revolve("cap", BooleanOp.New, Xz, Loop([0, 0],
             ("base", 8, 0, 0), ("side", 8, 4, 0), ("dome", 0, 20 - Math.Sqrt(192), Math.Tan(Math.PI / 24)), ("axis", 0, 0, 0)))]),
-            Math.PI * 64 * 4 + Math.PI * Math.Pow(16 - Math.Sqrt(192), 2) * (3 * 16 - (16 - Math.Sqrt(192))) / 3);
+            Math.PI * 64 * 4 + Math.PI * Math.Pow(16 - Math.Sqrt(192), 2) * (3 * 16 - (16 - Math.Sqrt(192))) / 3, Healed: true);
         yield return new("torus", new([new Revolve("ring", BooleanOp.New, Xz, Loop([20, -3], ("outer", 20, 3, 1), ("inner", 20, -3, 1)))]),
             2 * Math.PI * Math.PI * 20 * 9);
         yield return new("quarter turn", new([new Revolve("elbow", BooleanOp.New, Xz, Loop([5, 0],
@@ -146,13 +148,22 @@ public class StepExportTests(ITestOutputHelper output)
         // Fillets between two surfaces round one axis: tori round the ball centre circle (Pappus).
         yield return new("countersink rim fillet", CoaxialFilletTests.Countersink(1), CoaxialFilletTests.CountersinkVolume(1));
         yield return new("fillet where a bore leaves a cone", CoaxialFilletTests.BoredCone(0.5), CoaxialFilletTests.BoredConeVolume(0.5));
-        yield return new("fillet where a dome meets a plate", CoaxialFilletTests.Dome(1.5), CoaxialFilletTests.DomeVolume(1.5));
+        yield return new("fillet where a dome meets a plate", CoaxialFilletTests.Dome(1.5), CoaxialFilletTests.DomeVolume(1.5), Healed: true);
+        yield return new("fillet where a hemisphere meets a plate", CoaxialFilletTests.Hemisphere(1.5), CoaxialFilletTests.HemisphereVolume(1.5), Healed: true);
         yield return new("fillet where a bore leaves a torus", CoaxialFilletTests.Knob(1), CoaxialFilletTests.KnobVolume(1));
+
+        // Three equal fillets at a corner meet in a sphere, tangent to all three.
+        yield return new("box corner rounded by three fillets", CornerFilletTests.Box(3), CornerFilletTests.BoxVolume(3));
+        yield return new("block with every edge rounded", CornerFilletTests.Rounded(2), CornerFilletTests.RoundedVolume(2));
+        // Two inside fillets round a boss's foot meet round its edge in a horn torus, whose apex is a pole as a sphere's is.
+        // OCCT runs the second fillet on differently past the first, so its own model is another shape.
+        yield return new("inside fillets meeting round a boss's corner", CornerFilletTests.Boss(3), CornerFilletTests.BossVolume(3), Healed: true, Baseline: false);
+        yield return new("boss rounded all round its foot", CornerFilletTests.Boss(2, all: true), CornerFilletTests.BossVolume(2, all: true), Healed: true, Baseline: false);
 
         // Profile corners next to arcs rounded in the profile: a tangent cylinder (extrude) or torus (revolve).
         yield return new("D with a corner rounded into its arc", ArcCornerTests.D(3), ArcCornerTests.DVolume(3));
         yield return new("tab with a reflex corner rounded", ArcCornerTests.Tab(2), ArcCornerTests.TabVolume(2));
-        yield return new("lens with its rim rounded between two spheres", ArcCornerTests.Lens(1.5), ArcCornerTests.LensVolume(1.5));
+        yield return new("lens with its rim rounded between two spheres", ArcCornerTests.Lens(1.5), ArcCornerTests.LensVolume(1.5), Healed: true);
 
         // Shells: the cavity is a void of the solid.
         yield return new("shelled block", new([new Block("box", BooleanOp.New, [0, 0, 0], [40, 30, 20]), new Shell("shell", 2)]), 24000 - 36 * 26 * 16);
@@ -221,12 +232,12 @@ public class StepExportTests(ITestOutputHelper output)
         shape.SolidCount.Should().Be(part.Solids);
         counts.Should().Be(Counts(brep));
         // Where more than three faces meet the mesh can split the corner and leave an edge of no length between
-        // its halves; the exact B-rep has the one corner.
+        // its halves (one vertex too many as well); the exact B-rep has the one corner.
         counts.Faces.Should().Be(t.Faces.Count);
-        counts.Edges.Should().BeInRange(t.Edges.Count - 2, t.Edges.Count);
+        counts.Edges.Should().BeInRange(t.Edges.Count - Math.Max(2, t.Vertices.Count - counts.Vertices), t.Edges.Count);
 
         // The OCCT baseline models blocks, holes along Z, plane cuts and fillets.
-        if (part.Solids == 1 && part.Doc.Features.All(f => f is Block or Hole { On: null, Sketch: null } or PlaneCut or Fillet { Loop: null }))
+        if (part.Solids == 1 && part.Baseline && part.Doc.Features.All(f => f is Block or Hole { On: null, Sketch: null } or PlaneCut or Fillet { Loop: null }))
         {
             var occt = new OcctModeler(settings).Regenerate(part.Doc).Shape!;
             var (vertexGap, edgeGap) = Gaps(shape, occt);

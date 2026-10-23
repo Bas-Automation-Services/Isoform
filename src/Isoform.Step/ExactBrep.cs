@@ -411,7 +411,8 @@ public static class ExactBrep
         /// loop to a vertex of the other; a sphere cap from its rim to the pole; a whole torus along both circles. A
         /// loop's corners are where they are, but the vertex of a closed edge can go anywhere on it, so bands with a
         /// corner go first and pass the angle of their seam on through their closed edges; the rest take angle 0.
-        /// A sphere face within a hemisphere instead gets its poles turned away, and needs no seam at all. Faces whose
+        /// A sphere face within a hemisphere that does not go round its axis (a corner ball) instead gets its poles
+        /// turned away, and needs no seam at all. Faces whose
         /// loops have no vertices at a common angle are left for the reader to cut.
         /// </summary>
         void Seams(List<BrepLoop>[] loops, List<List<Point3D>>[] points, bool[] outward)
@@ -421,7 +422,10 @@ public static class ExactBrep
             {
                 var s = _surface[f];
                 if (s.Kind == SurfaceKind.Plane) continue;
-                if (s.Kind == SurfaceKind.Sphere && PoleFree(f) is { } axis)
+                // A cap or band round the sphere's own axis keeps it: its rims are circles of latitude, exact as
+                // straight images. Turned away, a rim near a pole is a curve no reader integrates exactly.
+                bool Latitude(List<Point3D> loop) => loop.Max(p => s.Axis.Dot(p - s.Origin)) - loop.Min(p => s.Axis.Dot(p - s.Origin)) <= Fit;
+                if (s.Kind == SurfaceKind.Sphere && !(points[f].Count > 0 && points[f].All(Latitude)) && PoleFree(f) is { } axis)
                 {
                     _surface[f] = s with { Axis = axis };
                     continue;
@@ -747,11 +751,13 @@ public static class ExactBrep
 
             (Point3D Point, double Transversality)? best = null;
             var lines = new List<Line>();
+            var circles = new List<Circle>();
             for (var i = 0; i < faces.Count; i++)
             for (var j = i + 1; j < faces.Count; j++)
             {
                 if (SurfaceIntersection.Curve(_surface[faces[i]], _surface[faces[j]], seed) is not { } curve) continue;
                 if (curve is Line line) lines.Add(line);
+                if (curve is Circle circle) circles.Add(circle);
                 foreach (var k in faces)
                     if (k != faces[i] && k != faces[j] && SurfaceIntersection.Cross(curve, _surface[k], seed) is { } hit
                         && (hit.Point - seed).Length <= reach && (best is null || hit.Transversality > best.Value.Transversality))
@@ -760,6 +766,10 @@ public static class ExactBrep
             for (var i = 0; i < lines.Count; i++)
             for (var j = i + 1; j < lines.Count; j++)
                 if (Crossing(lines[i], lines[j]) is { } hit && (hit.Point - seed).Length <= reach && (best is null || hit.Transversality > best.Value.Transversality))
+                    best = hit;
+            foreach (var l in lines)
+            foreach (var c in circles)
+                if (Through(l, c) is { } hit && (hit.Point - seed).Length <= reach && (best is null || hit.Transversality > best.Value.Transversality))
                     best = hit;
             if (best is null) throw new NotSupportedException($"no closed-form vertex of {string.Join(", ", faces.Select(Name))}");
             return _vertexOfMesh[meshVertex] = AddVertex(best.Value.Point);
@@ -775,6 +785,19 @@ public static class ExactBrep
             var (da, db) = (a.Direction.Dot(w), b.Direction.Dot(w));
             var (p, q) = (a.At((c * db - da) / sin2), b.At((db - c * da) / sin2));
             return (p - q).Length > 1e-9 ? null : (p + (q - p) * 0.5, Math.Sqrt(sin2));
+        }
+
+        /// <summary>
+        /// Where a line meets a circle, through the circle's plane, and how square to it; null if it misses. Where faces
+        /// touch tangentially every surface meets a curve at a graze, but a straight edge still crosses the plane of a
+        /// round one cleanly (a fillet running into the torus of a corner).
+        /// </summary>
+        static (Point3D Point, double Transversality)? Through(Line l, Circle c)
+        {
+            var s = c.Normal.Dot(l.Direction);
+            if (Math.Abs(s) < 1e-9) return null;
+            var p = l.At(c.Normal.Dot(c.Center - l.Origin) / s);
+            return Math.Abs((p - c.Center).Length - c.Radius) > 1e-9 ? null : (p, Math.Abs(s));
         }
 
         // Corners found from different mesh vertices (a corner spread over several cells) are one vertex.
