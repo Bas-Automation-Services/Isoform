@@ -491,4 +491,40 @@ public class RobustnessReproTests
 
         (Reported(r) || Counts(r) == (faces, edges, vertices, bodies)).Should().BeTrue($"got {Counts(r)}");
     }
+
+    /// <summary>
+    /// The sliver body again, 0.007 mm outside a small hole (2.4 and 3.4 mm) at the corner: the hole's wall and the
+    /// plate's faces are carried 1.7–2.5 mm away, within reach of the sliver, so the search takes a piece there for
+    /// those faces and spends its budget beside them. Needs a check in the mesher on cells without a vertex.
+    /// </summary>
+    [Theory(Skip = Open)]
+    [InlineData("""[{"id":"plate","type":"block","op":"new","origin":[0,0,0],"size":[55.9,10,10]},{"id":"hole3","type":"hole","center":[55.0465,0.8535],"diameter":2.4}]""")]
+    [InlineData("""[{"id":"plate","type":"block","op":"new","origin":[0,0,0],"size":[55.9,10,10]},{"id":"hole3","type":"hole","center":[54.7,1.25],"diameter":3.4}]""")]
+    public void Sliver_body_beside_its_own_faces_is_built_or_reported(string features)
+    {
+        var r = Regenerate(features);
+
+        (Reported(r) || Counts(r) == (12, 24, 16, 2)).Should().BeTrue($"got {Counts(r)}");
+    }
+
+    /// <summary>
+    /// A cap of a ball 0.007 mm high and 0.53 mm across, cut off by a slab whose top is flush with a shelf's underside:
+    /// a separate body bounded by two surfaces, the ball and the slab's top, both carried elsewhere (the slab's top as
+    /// the shelf's face). Fewer than three surfaces bound it, so no block is searched there. Built, it is two bodies.
+    /// </summary>
+    [Fact(Skip = Open)]
+    public void Ball_cap_bounded_by_two_faces_is_built_or_reported()
+    {
+        var r = Regenerate("""
+            [
+              {"id":"plate","type":"block","op":"new","origin":[0,0,0],"size":[60,20,10]},
+              {"id":"ball","type":"revolve","op":"join","plane":{"origin":[30,10,10],"x":[1,0,0],"normal":[0,-1,0]},"profile":{"start":[0,-5],"edges":[{"id":"arc","to":[0,5],"bulge":1},{"id":"axis","to":[0,-5]}]},"angle":360},
+              {"id":"slab","type":"block","op":"cut","origin":[22,2,10.5],"size":[16,16,4.493]},
+              {"id":"pillar","type":"block","op":"join","origin":[50,0,10],"size":[10,20,6]},
+              {"id":"shelf","type":"block","op":"join","origin":[45,0,14.993],"size":[5,20,1.007]}
+            ]
+            """);
+
+        (Reported(r) || r.Topology!.BodyCount == 2).Should().BeTrue($"got {Counts(r)}");
+    }
 }
