@@ -91,7 +91,8 @@ public static class SurfaceIntersection
         return (v - axis * v.Dot(axis)).Length;
     }
 
-    static (Point3D Point, Vector3D Direction)? CommonAxis(Surface a, Surface b)
+    /// <summary>The axis two surfaces are both surfaces of revolution round, if any (planes across it included).</summary>
+    public static (Point3D Point, Vector3D Direction)? CommonAxis(Surface a, Surface b)
     {
         if (!IsAxial(a) && IsAxial(b)) (a, b) = (b, a);
         if (IsAxial(a))
@@ -136,26 +137,36 @@ public static class SurfaceIntersection
         public static Shape2 Ring(double u, double v, double r) => new(u, v, 0, 0, r, true);
     }
 
+    /// <summary>Every circle in which two surfaces of revolution round one axis meet; none if they have no common axis.</summary>
+    public static IEnumerable<Circle> Circles(Surface a, Surface b)
+    {
+        if (CommonAxis(a, b) is not var (on, axis) || Meridian(a, on, axis) is not { } ma || Meridian(b, on, axis) is not { } mb) yield break;
+        foreach (var (u, v) in Meet(ma, mb))
+            if (u > OnAxis) yield return new Circle(on + axis * v, axis, Perpendicular(axis), u);
+    }
+
     // Origin of the section at the seed's foot keeps coordinates small, so the answer carries full precision.
     static Circle? Revolved(Surface a, Surface b, Point3D on, Vector3D axis, Point3D seed)
     {
         var origin = on + axis * axis.Dot(seed - on);
-        Shape2? Meridian(Surface s)
-        {
-            var z = axis.Dot(s.Origin - origin);
-            return s.Kind switch
-            {
-                SurfaceKind.Plane => Shape2.Line(0, z, 1, 0),
-                SurfaceKind.Cylinder => Shape2.Line(s.Radius, 0, 0, 1),
-                SurfaceKind.Cone => Shape2.Line(0, z, Math.Sin(s.Angle), Math.Sign(s.Axis.Dot(axis)) * Math.Cos(s.Angle)),
-                SurfaceKind.Sphere => Shape2.Ring(0, z, s.Radius),
-                SurfaceKind.Torus => Shape2.Ring(s.Radius, z, s.Minor),
-                _ => null,
-            };
-        }
-        if (Meridian(a) is not { } ma || Meridian(b) is not { } mb) return null;
+        if (Meridian(a, origin, axis) is not { } ma || Meridian(b, origin, axis) is not { } mb) return null;
         if (Nearest(ma, mb, OffAxis(seed, on, axis), 0) is not { } m || m.U <= OnAxis) return null;
         return new Circle(origin + axis * m.V, axis, Perpendicular(axis), m.U);
+    }
+
+    /// <summary>A surface of revolution round the axis through <paramref name="origin"/> as a line or circle in (ρ, z).</summary>
+    static Shape2? Meridian(Surface s, Point3D origin, Vector3D axis)
+    {
+        var z = axis.Dot(s.Origin - origin);
+        return s.Kind switch
+        {
+            SurfaceKind.Plane => Shape2.Line(0, z, 1, 0),
+            SurfaceKind.Cylinder => Shape2.Line(s.Radius, 0, 0, 1),
+            SurfaceKind.Cone => Shape2.Line(0, z, Math.Sin(s.Angle), Math.Sign(s.Axis.Dot(axis)) * Math.Cos(s.Angle)),
+            SurfaceKind.Sphere => Shape2.Ring(0, z, s.Radius),
+            SurfaceKind.Torus => Shape2.Ring(s.Radius, z, s.Minor),
+            _ => null,
+        };
     }
 
     static Line? Swept(Surface a, Surface b, Vector3D d, Point3D seed)
