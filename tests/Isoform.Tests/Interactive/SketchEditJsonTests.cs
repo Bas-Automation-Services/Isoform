@@ -97,22 +97,27 @@ public class SketchEditJsonTests
         });
     }
 
-    [Fact(Skip = "needs SketchEdits.Trim")]
-    public void A_trim_of_a_circle_leaves_an_arc_and_lists_the_constraint_on_the_piece_it_deleted()
+    [Fact]
+    public void A_trim_leaves_a_circle_an_arc_and_lists_the_constraints_it_dropped()
     {
-        // A bore of radius 4 round h, a chord across it, and a point m on its top.
+        // A bore of radius 4 round h, and a chord 10 long across it.
         var withBore = Rectangle with
         {
-            Points = new Dictionary<string, double[]>(Rectangle.Points) { ["h"] = [40, 20], ["p"] = [35, 20], ["q"] = [45, 20], ["m"] = [40, 24] },
+            Points = new Dictionary<string, double[]>(Rectangle.Points) { ["h"] = [40, 20], ["p"] = [35, 20], ["q"] = [45, 20] },
             Entities = [.. Rectangle.Entities, new SketchCircle("bore", "h", 4), new SketchLine("chord", "p", "q")],
-            Constraints = [.. Rectangle.Constraints.Take(5), new("length", ["right"], 20), new("length", ["bottom"], 60), new("on", ["m", "bore"])],
+            Constraints = [.. Rectangle.Constraints.Take(5), new("length", ["right"], 20), new("length", ["bottom"], 60), new("length", ["chord"], 10)],
         };
         var doc = CanonicalFormat.Write(new PartDocument([Plate, withBore]));
-        var r = JsonNode.Parse(SketchJson.WriteEdit(doc, "r", """{"op": "trim", "entity": "bore", "x": 40, "y": 24}"""))!;
+        JsonNode Trim(string entity, double x, double y) => JsonNode.Parse(SketchJson.WriteEdit(doc, "r", $$"""{"op": "trim", "entity": "{{entity}}", "x": {{x}}, "y": {{y}}}"""))!;
 
-        r["error"].Should().BeNull();
-        var sketch = (Sketch)CanonicalFormat.Read((string)r["settled"]!["text"]!)["r"];
-        sketch.Entities.Single(e => e.Id == "bore").Should().BeOfType<SketchArc>();
-        r["dropped"]!.AsArray().Select(n => (string)n!).Should().Contain(d => d.Contains("on m bore"));
+        var top = Trim("bore", 40, 24);
+        top["error"].Should().BeNull();
+        ((Sketch)CanonicalFormat.Read((string)top["settled"]!["text"]!)["r"]).Entities.Single(e => e.Id == "bore").Should().BeOfType<SketchArc>();
+
+        var end = Trim("chord", 35, 20);
+        end["solved"]!.GetValue<bool>().Should().BeTrue();
+        end["dropped"]!.AsArray().Select(n => (string)n!).Should().Contain("#7 (length chord = 10)", "its end moved");
+
+        Error(SketchJson.WriteEdit(doc, "r", """{"op": "trim", "entity": "bottom", "x": 40, "y": 10}""")).Should().Contain("delete it instead");
     }
 }

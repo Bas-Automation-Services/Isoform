@@ -118,21 +118,24 @@ function crossings(k, m) {
 
 /**
  * The piece of entity id a trim at `at` would delete: the stretch between its crossings with the other entities
- * (or its ends) that `at` is nearest, as {from, to} along it and the polyline to draw. A circle crossed fewer than
- * twice is all one piece.
+ * (or its ends) that `at` is nearest, as {from, to} along it and the polyline to draw. Construction geometry neither
+ * cuts nor is cut (SketchIntersections); null where the kernel would refuse: construction, nothing crossing, a circle
+ * crossed once.
  */
 export function trimPiece(sketch, points, radii, id, at) {
-  const k = curveOf(sketch.entities.find(e => e.id === id), points, radii), end = extent(k);
-  const cuts = sketch.entities.filter(e => e.id !== id).flatMap(e => {
+  const entity = sketch.entities.find(e => e.id === id);
+  if (entity.construction) return null;
+  const k = curveOf(entity, points, radii), end = extent(k);
+  const cuts = sketch.entities.filter(e => e.id !== id && !e.construction).flatMap(e => {
     const m = curveOf(e, points, radii);
     return crossings(k, m).filter(p => onCurve(k, p) && onCurve(m, p)).map(p => along(k, p));
   }).filter(t => t > EPS && t < end - EPS).sort((x, y) => x - y).filter((t, i, all) => i === 0 || t - all[i - 1] > EPS);
+  if (cuts.length < (k.closed ? 2 : 1)) return null;
   let s = along(k, at);
   // Off a segment's ends, or off an arc's sweep: the nearer end.
   if (!k.closed) s = k.a ? Math.max(0, Math.min(1, s)) : s <= end ? s : s - end < TAU - s ? end : 0;
   let from, to;
-  if (k.closed && cuts.length < 2) [from, to] = [0, TAU];
-  else if (k.closed) {
+  if (k.closed) {
     const i = cuts.findIndex(t => t > s);
     [from, to] = i <= 0 ? [cuts.at(-1), cuts[0] + TAU] : [cuts[i - 1], cuts[i]];
   } else {

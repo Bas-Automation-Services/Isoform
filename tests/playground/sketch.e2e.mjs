@@ -1,7 +1,8 @@
 // Sketch mode in the page (wwwroot/js/sketch/), in headless Edge or Chrome: on example 0, select plate/z+, enter
-// sketch mode, draw a rectangle with the mouse, dimension its bottom line, pick its region and finish it as an
-// extrude: one history entry, faces <feature>/<entity>. Then edit the sketch from the tree (a dimension changed in the
-// panel saves as one set), and Escape leaves a new sketch without touching the document. Exits non-zero on failure.
+// sketch mode, draw a rectangle with the mouse, dimension its bottom line, fillet a corner and trim (each undone),
+// pick its region and finish it as an extrude: one history entry, faces <feature>/<entity>. Then edit the sketch from
+// the tree (a dimension changed in the panel saves as one set), and Escape leaves a new sketch without touching the
+// document. Exits non-zero on failure.
 // node tests/playground/sketch.e2e.mjs [published wwwroot]      (env: ISOFORM_BROWSER, ISOFORM_TIMEOUT, ISOFORM_SERVER)
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -72,20 +73,32 @@ async function draw() {
     await button('.sketch-bar button[title="Ctrl+Z"]');
     s = await solved(`s.sketch.entities.length === 4`);
 
-    // A trim of the top line: the piece under the pointer lights, a click asks the kernel; whatever it answers is
-    // noted in the panel (an applied trim is undone).
+    // Trim: the top line crosses nothing, so the kernel refuses and the panel says why; with a line drawn up across
+    // the rectangle, the piece above it lights under the pointer and a click trims it off: one undo step.
     await button('.sketch-bar button[title^="Trim"]');
-    const top = await at([70, 35]);
-    await page.mouse('mouseMoved', top);
-    await page.waitFor(`!!document.querySelector('.sketch-svg path.trim')`, { timeout: 5000 });
-    await page.click(top);
+    await page.click(await at([70, 35]));
     s = await page.waitFor(`(s => s.note && s)(${sketch}.state())`, { timeout: 10000 });
-    if (!await page.evaluate(`!!document.querySelector('.sketch-panel .sketch-edited.${s.note.level}')`)) problems.push(`trim note ${JSON.stringify(s.note)} not in the panel`);
-    if (s.note.level !== 'error') {
-      await button('.sketch-bar button[title="Ctrl+Z"]');
-      await solved(`s.sketch.entities.length === 4`);
-    }
-    console.log(`        trim: ${s.note.text}`);
+    if (s.note.level !== 'error' || !/delete it instead/.test(s.note.text) || s.undo !== steps) problems.push(`trim of a line crossing nothing: ${JSON.stringify(s.note)}`);
+    if (!await page.evaluate(`!!document.querySelector('.sketch-panel .sketch-edited.error')`)) problems.push('the refusal is not in the panel');
+    await button('.sketch-bar button[title^="Line"]');
+    await page.click(await at([70, 4]));
+    await page.click(await at([70, 41]));
+    await page.evaluate(`dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }))`);
+    s = await solved('s.sketch.entities.length === 5');
+    await button('.sketch-bar button[title^="Trim"]');
+    const above = await at([70, 39]);
+    await page.mouse('mouseMoved', above);
+    await page.waitFor(`!!document.querySelector('.sketch-svg path.trim')`, { timeout: 5000 });
+    await page.frames();
+    await page.screenshot(join(shots, 'sketch-trim.png'));
+    await page.click(above);
+    s = await solved(`s.note && s.note.level !== 'error'`).catch(async () => state());
+    const line = s.sketch.entities.find(e => e.id === 'e5');
+    if (!s.note || s.note.level === 'error' || s.undo !== steps + 2 || !line || Math.max(...line.line.map(p => s.sketch.points[p][1])) > 35 + 1e-6)
+      problems.push(`trim above the rectangle: ${JSON.stringify({ note: s.note, line, undo: s.undo - steps })}`);
+    await button('.sketch-bar button[title="Ctrl+Z"]');
+    await button('.sketch-bar button[title="Ctrl+Z"]');
+    s = await solved(`s.sketch.entities.length === 4 && s.undo === ${steps}`);
 
     // Its region picked, a depth, and Finish.
     await button('.sketch-bar button[title^="Select"]');

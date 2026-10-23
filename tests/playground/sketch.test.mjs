@@ -320,7 +320,10 @@ test('the trim tool lights the piece between crossings nearest the pointer', () 
   assert.deepEqual(piece([60, 5]), [[60, 0], [60, 10]]);
   assert.deepEqual(piece([61, 25]), [[60, 10], [60, 30]]);
   assert.deepEqual(piece([60, 39]), [[60, 30], [60, 40]]);
-  assert.deepEqual(trimPiece(s, s.points, {}, 'e1', [30, 0]).polyline, [[0, 0], [60, 0]], 'a side nothing crosses is one piece');
+  assert.equal(trimPiece(s, s.points, {}, 'e1', [30, 0]), null, 'a side nothing crosses has nothing to trim to');
+  const drawn = toggleConstruction(s, ['e5']);
+  assert.equal(trimPiece(drawn, drawn.points, {}, 'e2', [61, 25]), null, 'construction does not cut');
+  assert.equal(trimPiece(drawn, drawn.points, {}, 'e5', [70, 20]), null, 'nor is it cut');
   const round = trimPiece(s, s.points, {}, 'e5', [70, 20]);
   close(round.to - round.from, Math.PI);
   closeAll(round.polyline[0], [60, 10]);
@@ -328,8 +331,8 @@ test('the trim tool lights the piece between crossings nearest the pointer', () 
   const left = trimPiece(s, s.points, {}, 'e5', [50, 20]);
   closeAll(left.polyline[0], [60, 30]);
   closeAll(left.polyline.at(-1), [60, 10]);
-  const lone = addCircle(blank(), at(0, 0), at(5, 0)).sketch;
-  assert.equal(trimPiece(lone, lone.points, {}, 'e1', [5, 0]).to, 2 * Math.PI, 'a circle crossed by nothing is all one piece');
+  const once = addLine(addCircle(blank(), at(0, 0), at(5, 0)).sketch, at(0, 0), at(10, 0)).sketch; // from inside, out once
+  assert.equal(trimPiece(once, once.points, {}, 'e1', [5, 0]), null, 'a circle crossed once has no piece');
   // An arc crossed once: past its sweep, the pointer picks the nearer end's piece.
   const a = addLine(addArc(blank(), at(0, 0), at(10, 0), at(-10, 0)).sketch, at(0, -5), at(0, 15)).sketch; // upper half, a line up the middle
   closeAll(trimPiece(a, a.points, {}, 'e1', [9, -3]).polyline[0], [10, 0]);

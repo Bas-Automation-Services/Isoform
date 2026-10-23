@@ -112,14 +112,19 @@ end; the view maps the plane with x right and y up and zooms about the pointer. 
 fillet tool picks points where exactly two lines or arcs end, nearest first, and previews a line corner's arc tangent to
 both (none where the tangent points would run off a line, or next to an arc); the trim tool lights the piece of the
 entity under the pointer between its crossings with the others (a segment's, a circle's either side, an arc's nearer
-end past its sweep). Against a fake kernel an edit asks `sketchEdit` with `{document, id, edit}` on the working
+end past its sweep), and none where the kernel would refuse (nothing crossing, a circle crossed once, construction,
+which neither cuts nor is cut). Against a fake kernel an edit asks `sketchEdit` with `{document, id, edit}` on the working
 document, takes the kernel's settled sketch as one undo step, and notes it; the constraints a trim dropped are listed
 in the note, and a refusal or a failed call keeps the sketch and the undo stack and notes why.
 
 **`sketch.e2e.mjs`** drives sketch mode in the browser, against the published folder or (`ISOFORM_SERVER`) the native
 server. On example 0 it selects `plate/z+`, presses the Sketch button, draws a rectangle with two clicks (four lines,
 two horizontal and two vertical, 4 free degrees), clicks its bottom line and a spot below it with the Dimension tool
-and types 20 in the value box (the line becomes 20 long, 3 free degrees, one region), picks the region in the Select
+and types 20 in the value box (the line becomes 20 long, 3 free degrees, one region); with the Fillet tool clicks the
+corner `p3` and types 4 (an arc `p3-fillet`, one undo step, still one region, `sketch-fillet.png`) and undoes it; with
+the Trim tool clicks the top line, which crosses nothing (refused, the reason in the panel), then draws a line up
+across the rectangle, sees the piece above it lit under the pointer (`sketch-trim.png`), trims it off (one undo step)
+and undoes both; then it picks the region in the Select
 tool, sets the depth to 5 and finishes: the document gains `sketch1` and `extrude1` as one history entry of origin
 `sketch` with two inserts, and the part has the faces `extrude1/e1`…`e4` and `extrude1/end` with no sketch diagnostic
 (`out/screenshots/sketch-draw.png`, `sketch-extrude.png`). Then it double-clicks `sketch1` in the tree, sets the

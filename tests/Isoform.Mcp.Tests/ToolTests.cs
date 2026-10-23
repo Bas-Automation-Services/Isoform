@@ -373,6 +373,8 @@ public class ToolTests
         noRadius.Should().Throw<McpException>().WithMessage("*needs a radius*");
         noPoint.Should().Throw<McpException>().WithMessage("*needs y*");
         notSketch.Should().Throw<McpException>().WithMessage("*not a sketch*");
+        var alone = () => IsoformTools.SketchEdit(doc, "outline", "trim", entity: "bore", x: 75, y: 29);
+        alone.Should().Throw<McpException>().WithMessage("*'bore' crosses nothing*delete it instead*");
     }
 
     [Fact]
