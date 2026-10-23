@@ -102,6 +102,9 @@ public sealed class FrepModeler(ModelingSettings settings, RegionCache? cache = 
 
     static Box3D Around(Point3D p) => new(p, p);
 
+    /// <summary>A coordinate to the nanometre and never −0, for a message.</summary>
+    static double Round(double x) => Math.Round(x, 9) + 0.0;
+
     static Box3D Around(IEnumerable<Point3D> points)
     {
         var (lo, hi) = (new Point3D(double.MaxValue, double.MaxValue, double.MaxValue), new Point3D(double.MinValue, double.MinValue, double.MinValue));
@@ -161,6 +164,16 @@ public sealed class FrepModeler(ModelingSettings settings, RegionCache? cache = 
                 var at = contact.At;
                 diagnostics.Add(new Diagnostic(Diagnostic.TangentContact, later,
                     Invariant($"{a} and {b} touch within the tolerance near ({at.X:F2}, {at.Y:F2}, {at.Z:F2}), but the pieces they bound are kept apart: a contact of zero thickness")));
+            }
+            // A corner on an edge that does not end in it: the body touches itself in a point.
+            if (SelfContacts.Find(built, oriented, Settings.Tolerance, 2 * Settings.CellSize) is { } touch)
+            {
+                string Name(int f) => string.Join("+", t.Faces[f].Sources);
+                var (corner, edge) = (t.Vertices[touch.Vertex].Faces, t.Edges[touch.Edge]);
+                var later = part.Surfaces[corner.Append(edge.FaceA).Append(edge.FaceB).Max(f => built.FaceOwners[f].Max())].Source.Split('/')[0];
+                var at = touch.At;
+                diagnostics.Add(new Diagnostic(Diagnostic.TangentContact, later,
+                    Invariant($"the solid touches itself at ({Round(at.X):G6}, {Round(at.Y):G6}, {Round(at.Z):G6}): the corner of {string.Join(", ", corner.Select(Name))} lies on the edge between {Name(edge.FaceA)} and {Name(edge.FaceB)}, a contact of zero thickness")));
             }
             var (v0, f0, e0, c0) = (vertices.Count, faces.Count, edges.Count, corners.Count);
             vertices.AddRange(bodyMesh.Vertices);

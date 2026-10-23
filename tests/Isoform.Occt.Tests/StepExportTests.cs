@@ -283,10 +283,11 @@ public class StepExportTests(ITestOutputHelper output)
     public void A_sweep_that_touches_itself_is_named()
     {
         // The bend's outer side, 13 round (−5, 15), runs through the start's corner (0, 3, 0): the base face's boundary
-        // touches itself there, a point no face can be bounded at.
+        // touches itself there, a point no face can be bounded at. The F-rep side builds it and says so.
         var settings = new ModelingSettings { CellSize = 0.5 };
         var frep = new FrepModeler(settings).Regenerate(SweepTests.Document("triangle along a loop and a bend"));
-        frep.Diagnostics.Should().BeEmpty();
+        frep.Diagnostics.Should().ContainSingle(d => d.Code == Diagnostic.TangentContact).Which.Message
+            .Should().Match("the solid touches itself at (0, 3, 0): the corner of *pipe/start* lies on the edge between *pipe/l1:base* and pipe/a2:right*");
 
         var build = () => ExactBrep.Build(frep, settings);
 
