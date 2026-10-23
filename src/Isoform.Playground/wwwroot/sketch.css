@@ -67,6 +67,7 @@
 }
 .sketch-svg .dimension.conflict text { fill: var(--error); }
 .sketch-svg .draft { stroke: var(--accent); stroke-width: 1.5; stroke-dasharray: 4 3; fill: none; }
+.sketch-svg .trim { stroke: var(--error); stroke-width: 5; stroke-opacity: 0.6; stroke-linecap: round; fill: none; }
 .sketch-svg .snap { stroke: var(--accent); stroke-width: 1.5; fill: none; }
 .sketch-svg .glyph { fill: var(--accent); font: bold 12px system-ui, sans-serif; }
 
@@ -99,6 +100,10 @@ body.sketching #view > .hint, body.sketching #view > .verdict { display: none; }
 .sketch-panel .sketch-status { align-self: flex-start; }
 .sketch-note:empty { display: none; }
 .sketch-note { color: var(--error); }
+.sketch-edited { font-size: 12px; color: var(--muted); }
+.sketch-edited.warn { color: var(--warn); border-left: 3px solid var(--warn); padding-left: 8px; }
+.sketch-edited.error { color: var(--error); }
+.sketch-edited .dropped { font-family: ui-monospace, Consolas, monospace; }
 .sketch-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; max-height: 26vh; overflow: auto; }
 .sketch-list li { display: flex; align-items: center; gap: 6px; padding: 1px 6px; border-radius: 5px; }
 .sketch-list li:hover { background: var(--code); }
