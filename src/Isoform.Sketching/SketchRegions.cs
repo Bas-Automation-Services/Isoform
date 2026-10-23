@@ -13,7 +13,8 @@ public sealed record SketchRegion(Profile Outer, IReadOnlyList<Profile> Holes)
 /// The regions a solved sketch encloses. Lines and arcs that are not construction geometry join where their ends meet
 /// (within <c>1e-6</c> mm); chains that do not close are left out, a point where three or more meet is a problem.
 /// Circles are loops of their own. Loops must not cross; a loop inside an odd number of others is a hole in the
-/// innermost, inside an even number the outer loop of a region.
+/// innermost, inside an even number the outer loop of a region. <see cref="Chain"/> gives an open or closed chain as a
+/// sweep's path.
 /// </summary>
 public static class SketchRegions
 {
@@ -23,15 +24,7 @@ public static class SketchRegions
     {
         var at = solution.Points;
         var edges = sketch.Entities.Where(e => !e.Construction && e is SketchLine or SketchArc).ToList();
-        (string From, string To) Ends(SketchEntity e) => e is SketchLine l ? (l.From, l.To) : ((SketchArc)e).From is var f ? (f, ((SketchArc)e).To) : default;
-
-        // Nodes: the edges' end points, those within Join of each other one node.
-        var names = edges.SelectMany(e => new[] { Ends(e).From, Ends(e).To }).Distinct().Order(StringComparer.Ordinal).ToList();
-        var node = names.ToDictionary(n => n, n => n);
-        for (var i = 0; i < names.Count; i++)
-        for (var j = 0; j < i; j++)
-            if (Math.Abs(at[names[i]].X - at[names[j]].X) <= Join && Math.Abs(at[names[i]].Y - at[names[j]].Y) <= Join && node[names[i]] == names[i])
-                node[names[i]] = node[names[j]];
+        var node = Nodes(edges, at);
 
         // Prune open chains: an end no other edge meets takes its edge with it, until none is left.
         var live = edges.ToList();
@@ -52,14 +45,14 @@ public static class SketchRegions
         {
             if (!used.Add(first.Id)) continue;
             var (start, cursor) = (node[Ends(first).From], node[Ends(first).To]);
-            var steps = new List<ProfileEdge> { Step(first, forward: true) };
+            var steps = new List<ProfileEdge> { Step(first, forward: true, at) };
             var previous = first;
             while (cursor != start)
             {
                 var next = live.First(e => e != previous && !used.Contains(e.Id) && (node[Ends(e).From] == cursor || node[Ends(e).To] == cursor));
                 used.Add(next.Id);
                 var forward = node[Ends(next).From] == cursor;
-                steps.Add(Step(next, forward));
+                steps.Add(Step(next, forward, at));
                 cursor = forward ? node[Ends(next).To] : node[Ends(next).From];
                 previous = next;
             }
@@ -70,18 +63,6 @@ public static class SketchRegions
         {
             var (centre, r) = (at[c.Center], solution.Radii[c.Id]);
             loops.Add(new Profile([centre.X + r, centre.Y], [new ProfileEdge(c.Id, [centre.X - r, centre.Y], 1), new ProfileEdge(c.Id, [centre.X + r, centre.Y], 1)]));
-        }
-
-        ProfileEdge Step(SketchEntity e, bool forward)
-        {
-            var (from, to) = Ends(e);
-            var end = at[forward ? to : from];
-            if (e is not SketchArc a) return new ProfileEdge(e.Id, [end.X, end.Y]);
-            var (c, f, t) = (at[a.Center], at[a.From], at[a.To]);
-            var sweep = Math.Atan2(t.Y - c.Y, t.X - c.X) - Math.Atan2(f.Y - c.Y, f.X - c.X);
-            if (sweep <= 0) sweep += 2 * Math.PI;
-            var bulge = Math.Tan(sweep / 4);
-            return new ProfileEdge(e.Id, [end.X, end.Y], forward ? bulge : -bulge);
         }
 
         // Crossings, then nesting.
@@ -102,6 +83,91 @@ public static class SketchRegions
             regions.Add(new SketchRegion(loops[i], holes));
         }
         return (regions, null);
+    }
+
+    /// <summary>
+    /// The path a sweep follows: the chain of <paramref name="entities"/> (in any order), or the whole chain through
+    /// <paramref name="from"/> among the lines and arcs that are construction geometry as it is. Ends join as in a
+    /// region. An open chain runs from one free end, a closed one round from its first entity; a circle is a closed path
+    /// on its own, two half arcs from its point at angle 0.
+    /// </summary>
+    public static (Profile? Path, bool Closed, string? Problem) Chain(Sketch sketch, SketchSolution solution, IReadOnlyList<string>? entities, string? from)
+    {
+        var at = solution.Points;
+        var byId = sketch.Entities.ToDictionary(e => e.Id);
+        var named = (entities ?? [from!]).Select(id => byId[id]).ToList();
+        if (named.OfType<SketchCircle>().FirstOrDefault() is { } circle)
+        {
+            if (named.Count > 1) return (null, false, $"circle {circle.Id} is a closed path of its own and joins no other entity");
+            var (centre, r) = (at[circle.Center], solution.Radii[circle.Id]);
+            return (new Profile([centre.X + r, centre.Y], [new ProfileEdge(circle.Id, [centre.X - r, centre.Y], 1), new ProfileEdge(circle.Id, [centre.X + r, centre.Y], 1)]), true, null);
+        }
+        var chain = entities is not null ? named
+            : sketch.Entities.Where(e => e is SketchLine or SketchArc && e.Construction == named[0].Construction).ToList();
+        var node = Nodes(chain, at);
+        var degree = chain.SelectMany(e => new[] { node[Ends(e).From], node[Ends(e).To] }).GroupBy(n => n).ToDictionary(g => g.Key, g => g.Count());
+        if (entities is null)
+        {
+            // Only what is joined to the one entity named.
+            var reached = new List<SketchEntity> { named[0] };
+            for (var grew = true; grew;)
+            {
+                var touched = reached.SelectMany(e => new[] { node[Ends(e).From], node[Ends(e).To] }).ToHashSet();
+                var more = chain.Where(e => !reached.Contains(e) && (touched.Contains(node[Ends(e).From]) || touched.Contains(node[Ends(e).To]))).ToList();
+                reached.AddRange(more);
+                grew = more.Count > 0;
+            }
+            chain = reached;
+        }
+        var ends = chain.SelectMany(e => new[] { node[Ends(e).From], node[Ends(e).To] }).ToHashSet();
+        if (degree.FirstOrDefault(d => d.Value > 2 && ends.Contains(d.Key)) is { Key: { } branch, Value: var count })
+            return (null, false, $"point '{branch}' joins {count} entities; a path does not branch");
+
+        // From a free end, or round from the first entity; at each point on to the other entity there.
+        var free = chain.FirstOrDefault(e => degree[node[Ends(e).From]] == 1 || degree[node[Ends(e).To]] == 1);
+        var first = free ?? chain[0];
+        var forward = free is null || degree[node[Ends(first).From]] == 1;
+        var start = forward ? Ends(first).From : Ends(first).To;
+        var cursor = node[forward ? Ends(first).To : Ends(first).From];
+        var steps = new List<ProfileEdge> { Step(first, forward, at) };
+        var used = new HashSet<SketchEntity> { first };
+        while (chain.FirstOrDefault(e => !used.Contains(e) && (node[Ends(e).From] == cursor || node[Ends(e).To] == cursor)) is { } next)
+        {
+            used.Add(next);
+            forward = node[Ends(next).From] == cursor;
+            steps.Add(Step(next, forward, at));
+            cursor = node[forward ? Ends(next).To : Ends(next).From];
+        }
+        if (used.Count < chain.Count) return (null, false, $"the path entities {string.Join(", ", chain.Select(e => e.Id))} do not form one chain");
+        var p = at[start];
+        return (new Profile([p.X, p.Y], steps), free is null, null);
+    }
+
+    static (string From, string To) Ends(SketchEntity e) => e is SketchLine l ? (l.From, l.To) : (((SketchArc)e).From, ((SketchArc)e).To);
+
+    /// <summary>Nodes: the edges' end points by name, those within Join of each other one node.</summary>
+    static Dictionary<string, string> Nodes(IEnumerable<SketchEntity> edges, IReadOnlyDictionary<string, (double X, double Y)> at)
+    {
+        var names = edges.SelectMany(e => new[] { Ends(e).From, Ends(e).To }).Distinct().Order(StringComparer.Ordinal).ToList();
+        var node = names.ToDictionary(n => n, n => n);
+        for (var i = 0; i < names.Count; i++)
+        for (var j = 0; j < i; j++)
+            if (Math.Abs(at[names[i]].X - at[names[j]].X) <= Join && Math.Abs(at[names[i]].Y - at[names[j]].Y) <= Join && node[names[i]] == names[i])
+                node[names[i]] = node[names[j]];
+        return node;
+    }
+
+    /// <summary>A line or arc as a profile edge to its far end, run forward (from → to) or backward.</summary>
+    static ProfileEdge Step(SketchEntity e, bool forward, IReadOnlyDictionary<string, (double X, double Y)> at)
+    {
+        var (from, to) = Ends(e);
+        var end = at[forward ? to : from];
+        if (e is not SketchArc a) return new ProfileEdge(e.Id, [end.X, end.Y]);
+        var (c, f, t) = (at[a.Center], at[a.From], at[a.To]);
+        var sweep = Math.Atan2(t.Y - c.Y, t.X - c.X) - Math.Atan2(f.Y - c.Y, f.X - c.X);
+        if (sweep <= 0) sweep += 2 * Math.PI;
+        var bulge = Math.Tan(sweep / 4);
+        return new ProfileEdge(e.Id, [end.X, end.Y], forward ? bulge : -bulge);
     }
 
     /// <summary>The regions asked for, each by entity ids of its outer loop; all of them when none are named.</summary>

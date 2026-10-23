@@ -105,6 +105,21 @@ public sealed record Revolve(string Id, BooleanOp Op, SketchPlane? Plane, Profil
     public string? Axis { get; init; }
 }
 
+/// <summary>
+/// The path of a sweep: a chain of lines and arcs (or one circle) of a sketch, joined end to end and running on smoothly
+/// (tangent) from each to the next. Either the <paramref name="Entities"/> of the chain, in any order, or the whole chain
+/// through the entity <paramref name="From"/>. Construction entities count: a path is often construction geometry.
+/// </summary>
+public sealed record SweepPath(string Sketch, string[]? Entities = null, string? From = null);
+
+/// <summary>
+/// The regions of sketch <paramref name="Sketch"/> swept along a flat path of lines and arcs: along a line the profile
+/// is extruded, along an arc revolved round the arc's axis. The profile's plane must cross the path at right angles at
+/// one of its ends (the sweep starts there), or at a vertex of a closed path. Side faces are named after the path
+/// entity and the profile entity, <c>pipe/a1:outer</c>; an open path's ends are <c>pipe/start</c> and <c>pipe/end</c>.
+/// </summary>
+public sealed record Sweep(string Id, BooleanOp Op, string Sketch, IReadOnlyList<string[]>? Regions, SweepPath Path) : Feature(Id);
+
 /// <summary>Where a sketch lies: a plane, or a flat face of the part by name (it then follows the face).</summary>
 public sealed record SketchPlacement(SketchPlane? Plane = null, string? Face = null);
 

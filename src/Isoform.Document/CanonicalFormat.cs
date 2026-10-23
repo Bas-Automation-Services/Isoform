@@ -213,6 +213,16 @@ public static partial class CanonicalFormat
                 Number(w, "angle", r.Angle);
                 Blend(w, r.Blend);
                 break;
+            case Sweep sw:
+                w.WriteString("type", "sweep");
+                w.WriteString("op", sw.Op.ToString().ToLowerInvariant());
+                Swept(w, null, null, sw.Sketch, sw.Regions);
+                w.WriteStartObject("path");
+                w.WriteString("sketch", sw.Path.Sketch);
+                if (sw.Path.From is { } from) w.WriteString("from", from);
+                else Strings(w, "entities", sw.Path.Entities ?? []);
+                w.WriteEndObject();
+                break;
             case Offset o:
                 w.WriteString("type", "offset");
                 Number(w, "distance", o.Distance);
@@ -274,6 +284,7 @@ public static partial class CanonicalFormat
                 { Sketch = (string?)n["sketch"], Regions = ReadRegions(n["regions"]) },
             "revolve" => new Revolve(id, Op(n), ReadPlaneOf(n), ReadProfileOf(n), (double)n["angle"]!, (double?)n["blend"] ?? 0)
                 { Sketch = (string?)n["sketch"], Regions = ReadRegions(n["regions"]), Axis = (string?)n["axis"] },
+            "sweep" => new Sweep(id, Op(n), (string?)n["sketch"] ?? throw new FormatException("A sweep needs the sketch of its profile."), ReadRegions(n["regions"]), ReadPath(n["path"])),
             "sketch" => ReadSketch(id, n),
             "combine" => new CombineBodies(id, (string)n["tool"]!, Op(n), (bool?)n["keep"] ?? false),
             "pattern" => new Pattern(id, n["features"]!.AsArray().Select(f => (string)f!).ToArray(), ReadMotion(n)),
@@ -325,6 +336,11 @@ public static partial class CanonicalFormat
     static SketchPlane? ReadPlaneOf(JsonNode n) => n["sketch"] is null ? ReadPlane(n["plane"] ?? throw new FormatException("An extrude or revolve needs a plane and profile, or a sketch.")) : null;
 
     static Profile? ReadProfileOf(JsonNode n) => n["sketch"] is null ? ReadProfile(n["profile"] ?? throw new FormatException("An extrude or revolve needs a plane and profile, or a sketch.")) : null;
+
+    // A sweep path: a sketch and its entities, or the one entity the chain runs through.
+    static SweepPath ReadPath(JsonNode? n) => n is null
+        ? throw new FormatException("A sweep needs a path: {\"sketch\": …, \"entities\": […]} or {\"sketch\": …, \"from\": …}.")
+        : new SweepPath((string)n["sketch"]!, n["entities"]?.AsArray().Select(e => (string)e!).ToArray(), (string?)n["from"]);
 
     static IReadOnlyList<string[]>? ReadRegions(JsonNode? n) => n?.AsArray().Select(r => r is JsonValue v ? [(string)v!] : r!.AsArray().Select(x => (string)x!).ToArray()).ToList();
 

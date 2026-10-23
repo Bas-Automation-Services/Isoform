@@ -148,6 +148,7 @@ public sealed class Compiler(ModelingSettings settings)
             {
                 Extrude e => (e.Plane, e.Profile, e.Sketch, e.Regions),
                 Revolve r => (r.Plane, r.Profile, r.Sketch, r.Regions),
+                Sweep s => (null, null, s.Sketch, s.Regions),
                 _ => throw new ArgumentException(f.Id),
             };
             if (sketch is null) return new SweptShape(plane!, [new SketchRegion(profile!, [])]);
@@ -162,6 +163,17 @@ public sealed class Compiler(ModelingSettings settings)
             if (problem is null) return shape! with { Regions = regions };
             if (diagnostics.All(d => d.FeatureId != reportAs || d.Code != SketchSolution.Invalid))
                 diagnostics.Add(new Diagnostic(SketchSolution.Invalid, reportAs, $"{reportAs} cannot sweep sketch {sketch}: {problem}"));
+            return null;
+        }
+
+        // The plane and the chain of lines and arcs a sweep follows, or null with a diagnostic.
+        (SketchPlane Plane, Profile Chain, bool Closed)? PathOf(Sweep sw, string reportAs)
+        {
+            var (shape, solution, why) = sketches[sw.Path.Sketch];
+            var (chain, closed, problem) = shape is null || solution is null ? (null, false, $"its path sketch {sw.Path.Sketch} {why}")
+                : SketchRegions.Chain(doc.Features.OfType<Sketch>().First(k => k.Id == sw.Path.Sketch), solution, sw.Path.Entities, sw.Path.From);
+            if (problem is null) return (shape!.Plane, chain!, closed);
+            diagnostics.Add(new Diagnostic(SketchSolution.Invalid, reportAs, $"{reportAs} cannot follow its path: {problem}"));
             return null;
         }
 
@@ -191,6 +203,18 @@ public sealed class Compiler(ModelingSettings settings)
                     var (revolved, revolvedBox) = RevolveField(r, revolveShape, m, Named);
                     if (r.Op != BooleanOp.Cut) Grow(revolvedBox);
                     tree = Combine(Op(r.Op), revolved, r.Blend, Named, r.Id);
+                    break;
+
+                case Sweep sw:
+                    if (Shape(sw, reportAs) is not { } profile || PathOf(sw, reportAs) is not { } path) break;
+                    var (swept, sweptBox, refused) = Sweeps.Of(sw, profile.Plane, profile.Regions, path.Plane, path.Chain, path.Closed, m, Named);
+                    if (swept is null)
+                    {
+                        diagnostics.Add(new Diagnostic(Diagnostic.InvalidParameter, reportAs, $"{reportAs} cannot sweep sketch {sw.Sketch} along {sw.Path.Sketch}: {refused}"));
+                        break;
+                    }
+                    if (sw.Op != BooleanOp.Cut) Grow(sweptBox);
+                    tree = Combine(Op(sw.Op), swept);
                     break;
 
                 case Hole h:
