@@ -1,7 +1,6 @@
 using BasAutomation.Geometry;
-using Isoform.Geometry;
 
-namespace Isoform.Step;
+namespace Isoform.Geometry;
 
 /// <summary>
 /// Exact intersection curves of analytic surfaces, and exact curve–surface points. Two families cover planes,

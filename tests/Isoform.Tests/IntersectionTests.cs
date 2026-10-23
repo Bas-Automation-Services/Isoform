@@ -1,6 +1,5 @@
 using BasAutomation.Geometry;
 using Isoform.Geometry;
-using Isoform.Step;
 
 namespace Isoform.Tests;
 
