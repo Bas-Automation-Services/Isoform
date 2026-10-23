@@ -70,7 +70,19 @@ export function createPanel(host, actions) {
     return li;
   }
 
-  function finishBlock({ editing, finish, lines, picked, regionCount }) {
+  // A sweep's path: an earlier sketch, and an entity of the chain it follows (the whole chain through it).
+  function pathRows(finish, paths) {
+    if (!paths.length) return [el('div', { className: 'muted', textContent: 'No path yet: sketch one first, lines and arcs end to end, square to this face at one end.' })];
+    const sketch = el('select', { title: 'The sketch the path is in' }, ...paths.map(p => el('option', { value: p.id, textContent: p.id, selected: p.id === finish.path })));
+    sketch.onchange = () => actions.finishChanged({ path: sketch.value });
+    const entities = paths.find(p => p.id === finish.path)?.entities ?? [];
+    const from = el('select', { title: 'The path is the chain of lines and arcs through this entity' },
+      ...entities.map(e => el('option', { value: e, textContent: e, selected: e === finish.from })));
+    from.onchange = () => actions.finishChanged({ from: from.value });
+    return [el('label', {}, 'Path ', sketch), el('label', {}, 'Through ', from)];
+  }
+
+  function finishBlock({ editing, finish, lines, paths, picked, regionCount }) {
     if (editing) {
       return el('div', { className: 'sketch-finish' },
         el('div', { className: 'buttons' },
@@ -78,7 +90,7 @@ export function createPanel(host, actions) {
           el('button', { textContent: 'Cancel', onclick: () => actions.cancel() })));
     }
     const op = el('select', { title: 'What the sketch makes' },
-      ...[['extrude', 'Extrude'], ['cut', 'Cut'], ['revolve', 'Revolve'], ['sketch', 'Sketch only']].map(([v, t]) => el('option', { value: v, textContent: t, selected: v === finish.op })));
+      ...[['extrude', 'Extrude'], ['cut', 'Cut'], ['revolve', 'Revolve'], ['sweep', 'Sweep'], ['sweep-cut', 'Sweep cut'], ['sketch', 'Sketch only']].map(([v, t]) => el('option', { value: v, textContent: t, selected: v === finish.op })));
     op.onchange = () => actions.finishChanged({ op: op.value });
     const amount = finish.op === 'revolve' ? 'angle' : 'depth';
     const size = el('input', { className: 'amount', type: 'number', value: finish[amount], min: 0, step: amount === 'angle' ? 15 : 1 });
@@ -86,8 +98,9 @@ export function createPanel(host, actions) {
     const id = el('input', { className: 'feature-id', value: finish.id, spellcheck: false, title: 'The feature id: its faces are <id>/<entity>' });
     id.onchange = () => actions.finishChanged({ id: id.value.trim() });
     const rows = [el('label', {}, 'Make ', op)];
+    if (finish.op.startsWith('sweep')) rows.push(...pathRows(finish, paths), el('label', {}, 'Feature id ', id));
+    else if (finish.op !== 'sketch') rows.push(el('label', {}, amount === 'angle' ? 'Angle ° ' : 'Depth mm ', size), el('label', {}, 'Feature id ', id));
     if (finish.op !== 'sketch') {
-      rows.push(el('label', {}, amount === 'angle' ? 'Angle ° ' : 'Depth mm ', size), el('label', {}, 'Feature id ', id));
       if (finish.op === 'revolve') {
         const axis = el('select', {}, el('option', { value: '', textContent: '(sketch y axis)' }),
           ...lines.map(l => el('option', { value: l, textContent: l, selected: l === finish.axis })));
@@ -110,7 +123,8 @@ export function createPanel(host, actions) {
 
   /**
    * Shows the sketch: s is {sketch, editing, face, reply, conflicts, state (names → free/fixed/conflict),
-   * parameters (names), finish, lines (line ids), picked (count), regionCount, note (the last fillet's or trim's)}.
+   * parameters (names), finish, lines (line ids), paths (the sketches a sweep can follow, sweepPaths), picked (count),
+   * regionCount, note (the last fillet's or trim's)}.
    */
   function render(s) {
     if (typing) return; // after the input is done

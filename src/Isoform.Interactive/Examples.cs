@@ -138,6 +138,16 @@ public static class Examples
             new Pattern("mirror", ["rib"], new MirrorMotion([50, 0, 0], [1, 0, 0])),
             new Offset("grow", 1),
         ])),
+        // A ring of one sketch swept along a line, a quarter turn and a line of another: cylinders and a torus.
+        ("Pipe bend: a sweep along a line, an arc and a line", new(
+        [
+            new Sketch("route", new SketchPlacement(Xy), new Dictionary<string, double[]> { ["a"] = [0, 0], ["b"] = [40, 0], ["c"] = [40, 25], ["d"] = [65, 25], ["e"] = [65, 60] },
+                [new SketchLine("run", "a", "b"), new SketchArc("bend", "c", "b", "d"), new SketchLine("rise", "d", "e")], []),
+            new Sketch("ring", new SketchPlacement(new SketchPlane([0, 0, 0], [0, 1, 0], [1, 0, 0])), new Dictionary<string, double[]> { ["o"] = [0, 0] },
+                [new SketchCircle("outside", "o", 8), new SketchCircle("bore", "o", 5.5)], []),
+            new Sweep("pipe", BooleanOp.New, "ring", null, new SweepPath("route", From: "run")),
+            new Block("flange", BooleanOp.Join, [-6, -20, -20], [6, 40, 40]),
+        ])),
         // Lattices: what an implicit kernel does that a B-rep one cannot. The lattice sits on the world grid.
         ("Bracket with gyroid infill in a closed skin", new(
         [
