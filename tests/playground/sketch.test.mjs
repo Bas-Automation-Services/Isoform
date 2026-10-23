@@ -20,6 +20,7 @@ const at = (u, v) => ({ at: [u, v] });
 const solvedOf = s => ({ sketch: s, points: s.points, radii: {} });
 const close = (a, b, eps = 1e-9) => assert.ok(Math.abs(a - b) < eps, `${a} is not ${b}`);
 const closeAll = (a, b) => a.forEach((x, i) => close(x, b[i]));
+const dist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]);
 
 // A 60 x 40 rectangle with its corners p1 (0,0), p2 (60,0), p3 (60,40), p4 (0,40) and sides e1 bottom, e2 right, e3 top, e4 left.
 const rect = () => addRectangle(blank(), at(0, 0), at(60, 40)).sketch;
@@ -311,8 +312,43 @@ test('a fillet previews its arc tangent to both lines, and none it could not mak
   closeAll(arc.at(-1), [55, 40]);
   closeAll(arc[arc.length >> 1], [55 + 5 * Math.SQRT1_2, 35 + 5 * Math.SQRT1_2]);
   assert.equal(filletArc(r, r.points, 'p3', 45), null, 'the tangent point would run off the 40 long side');
-  const a = addArc(addLine(blank(), at(-10, 0), at(10, 0)).sketch, at(20, 0), at(10, 0), at(20, 10)).sketch;
-  assert.equal(filletArc(a, a.points, 'p2', 2), null, 'a corner with an arc is the kernel\'s to show');
+});
+
+// As SketchFilletTests: half a disc of radius 20 round o, the line a (−20, 0) to b (20, 0) and the arc back over the
+// top; a lens of two arcs of radius 20 round m (0, 0) and n (20, 0), meeting at p and q (10, ±√300).
+const sketchOf = (points, entities) => ({ ...blank(), points, entities });
+const halfDisc = () => sketchOf({ o: [0, 0], a: [-20, 0], b: [20, 0] }, [{ id: 'bottom', line: ['a', 'b'] }, { id: 'cap', arc: { center: 'o', from: 'b', to: 'a' } }]);
+const lens = () => sketchOf({ m: [0, 0], n: [20, 0], p: [10, -Math.sqrt(300)], q: [10, Math.sqrt(300)] },
+  [{ id: 'east', arc: { center: 'm', from: 'p', to: 'q' } }, { id: 'west', arc: { center: 'n', from: 'q', to: 'p' } }]);
+
+test('a fillet at a corner with an arc previews where the kernel puts it: inside the arc, tangent to both', () => {
+  const s = halfDisc(), arc = filletArc(s, s.points, 'b', 5);
+  // The centre 5 above the line and 15 from o: the tangent points below it and on the cap's radius through it.
+  const centre = [Math.sqrt(200), 5];
+  arc.forEach(q => close(dist(q, centre), 5));
+  closeAll(arc[0], [Math.sqrt(200), 0]);
+  closeAll(arc.at(-1), centre.map(x => x * 20 / 15));
+  assert.ok(dist(arc[arc.length >> 1], s.points.b) < dist(centre, s.points.b), 'the short way round, towards the corner');
+  closeAll(filletArc(s, s.points, 'a', 5)[0], [-Math.sqrt(200), 0]);
+
+  const l = lens(), round = filletArc(l, l.points, 'q', 3), middle = [10, Math.sqrt(17 * 17 - 10 * 10)];
+  round.forEach(q => close(dist(q, middle), 3));
+  close(dist(round[0], l.points.m), 20);
+  close(dist(round.at(-1), l.points.n), 20);
+  assert.ok(round[round.length >> 1][1] > middle[1], 'towards q');
+});
+
+test('a fillet at a corner with an arc previews nothing where the kernel refuses it', () => {
+  const s = halfDisc();
+  assert.equal(filletArc(s, s.points, 'b', 25), null, 'too big for the arc');
+  assert.equal(filletArc(s, s.points, 'b', 12), null, 'the offsets do not cross');
+  assert.equal(filletArc(s, s.points, 'b', 0), null);
+  const guide = toggleConstruction(s, ['bottom']);
+  assert.equal(filletArc(guide, guide.points, 'b', 5), null, 'construction is no corner');
+  const smooth = sketchOf({ a: [0, 0], b: [10, 0], o: [10, 10], c: [20, 10] }, [{ id: 'run', line: ['a', 'b'] }, { id: 'bend', arc: { center: 'o', from: 'b', to: 'c' } }]);
+  assert.equal(filletArc(smooth, smooth.points, 'b', 1), null, 'a line running into the arc along its tangent');
+  const l = lens();
+  assert.equal(filletArc(l, l.points, 'q', 15), null, 'too big for the lens');
 });
 
 test('the trim tool lights the piece between crossings nearest the pointer', () => {
