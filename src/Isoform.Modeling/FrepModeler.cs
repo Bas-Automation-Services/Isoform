@@ -263,37 +263,41 @@ public sealed class FrepModeler(ModelingSettings settings, RegionCache? cache = 
             var reach = PieceReach * Settings.CellSize;
             var (block, grow) = (PieceSearch * Settings.CellSize, new Vector3D(1, 1, 1) * (PieceGrow * Settings.CellSize));
             (long X, long Y, long Z) Key(Point3D p) => ((long)Math.Floor(p.X / block), (long)Math.Floor(p.Y / block), (long)Math.Floor(p.Z / block));
-            Box3D Blocks((long X, long Y, long Z) lo, (long X, long Y, long Z) hi) =>
-                new(new Point3D(lo.X * block, lo.Y * block, lo.Z * block) - grow, new Point3D((hi.X + 1) * block, (hi.Y + 1) * block, (hi.Z + 1) * block) + grow);
+            Box3D Blocks((long X, long Y, long Z) lo, (long X, long Y, long Z) hi, double by = 1) =>
+                new(new Point3D(lo.X * block, lo.Y * block, lo.Z * block) - grow * by, new Point3D((hi.X + 1) * block, (hi.Y + 1) * block, (hi.Z + 1) * block) + grow * by);
             var searched = owners.Where(id => part.Surfaces[id].Analytic && !settled.Contains(part.Surfaces[id].Source.Split('/')[0])).ToList();
-            // The surfaces that may bound the part in a box, as the body simplified there sees them: up to enough of them.
-            List<(int Id, LostFaces.Path Path)> Candidates(Field local, Box3D near, int enough = int.MaxValue)
+            var leaves = searched.Select(id => new LeafField(part.Surfaces[id])).ToList();
+            // The surfaces that may bound the part in a box, as the body simplified there sees them, and how many of them
+            // are not coincident with another (one face); up to enough of those.
+            (List<(int Id, LostFaces.Path Path)> All, int Distinct) Candidates(Field local, Box3D near, int enough = int.MaxValue)
             {
-                var candidates = new List<(int Id, LostFaces.Path Path)>();
-                foreach (var id in searched)
+                var (all, distinct) = (new List<(int Id, LostFaces.Path Path)>(), 0);
+                for (var k = 0; k < searched.Count && distinct < enough; k++)
                 {
-                    if (new LeafField(part.Surfaces[id]).Bounds(near) is var b && (b.Lo > 0 || b.Hi < 0)) continue;
-                    if (LostFaces.Find(local, id) is { } p) candidates.Add((id, p));
-                    if (candidates.Count == enough) break;
+                    if (leaves[k].Bounds(near) is var b && (b.Lo > 0 || b.Hi < 0) || LostFaces.Find(local, searched[k]) is not { } p) continue;
+                    if (!all.Any(c => oriented[c.Id].SameGeometry(oriented[searched[k]], Settings.Tolerance))) distinct++;
+                    all.Add((searched[k], p));
                 }
-                return candidates;
+                return (all, distinct);
             }
 
             // The blocks of the grid holding a point of an edge or a vertex.
             var keys = edges.SelectMany(e => e).Select(Key).Distinct().Order().ToList();
             // Then the rest of the body's box, in a descent that drops a box the bounds prove empty or full, or where
-            // fewer than three surfaces may bound the part: a piece the cells lost whole (a sliver body at a clipped
-            // corner) has no edge or vertex of the mesh near it.
+            // fewer than three distinct surfaces may bound the part: a piece the cells lost whole (a sliver body at a
+            // clipped corner) has no edge or vertex of the mesh near it. A lost piece is narrower than a cell, so the
+            // faces round it pass within a cell of each of its points: a block is judged grown by one cell, not two
+            // (the edge of the next block is not this one's). Its blocks keep what the descent found there.
             var seen = keys.ToHashSet();
-            var more = new List<(long X, long Y, long Z)>();
+            var more = new List<((long X, long Y, long Z) Key, List<(int Id, LostFaces.Path Path)> Candidates)>();
             void Descend(Field field, (long X, long Y, long Z) lo, (long X, long Y, long Z) hi)
             {
-                var near = Blocks(lo, hi);
+                var (near, core) = (Blocks(lo, hi), Blocks(lo, hi, 1 / PieceGrow));
                 var local = field.Simplify(near);
-                if (local.Bounds(near) is var v && (v.Lo > 0 || v.Hi < 0) || Candidates(local, near, 3).Count < 3) return;
+                if (local.Bounds(core) is var v && (v.Lo > 0 || v.Hi < 0) || Candidates(local, core, 3).Distinct < 3) return;
                 if (lo == hi)
                 {
-                    if (!seen.Contains(lo)) more.Add(lo);
+                    if (!seen.Contains(lo)) more.Add((lo, Candidates(local, near).All));
                     return;
                 }
                 // Halve the longest side.
@@ -305,7 +309,8 @@ public sealed class FrepModeler(ModelingSettings settings, RegionCache? cache = 
                 Descend(local, b, hi);
             }
             Descend(body.Field, Key(body.Min), Key(body.Max));
-            var blocks = keys.Concat(more.Order()).Select(k => Blocks(k, k));
+            var blocks = keys.Select(k => (Near: Blocks(k, k), Candidates: (List<(int Id, LostFaces.Path Path)>?)null))
+                .Concat(more.OrderBy(m => m.Key).Select(m => (Blocks(m.Key, m.Key), (List<(int Id, LostFaces.Path Path)>?)m.Candidates)));
             var bvhs = new Dictionary<int, TriangleBvh>();
             ILookup<int, Triangle>? byOwner = null;
             TriangleBvh Polygons(int id)
@@ -315,10 +320,10 @@ public sealed class FrepModeler(ModelingSettings settings, RegionCache? cache = 
                 var same = owners.Where(o => oriented[o].SameGeometry(oriented[id], Settings.Tolerance)).Append(id).Distinct();
                 return bvhs[id] = new TriangleBvh(mesh.Vertices, same.SelectMany(o => byOwner[o]).ToList());
             }
-            foreach (var near in blocks)
+            foreach (var (near, found) in blocks)
             {
                 // The body as the block sees it: a surface simplified away cannot bound the part there.
-                var candidates = Candidates(body.Field.Simplify(near), near);
+                var candidates = found ?? Candidates(body.Field.Simplify(near), near).All;
                 // A lost piece lies between at least two other faces, which the cells joined instead.
                 if (candidates.Count < 3) continue;
                 foreach (var (id, p) in candidates)
