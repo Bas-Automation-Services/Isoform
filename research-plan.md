@@ -283,8 +283,7 @@ Sample, bounds enclose, simplification bit-exact) and keeps its face names under
   0.3–2 s per regeneration against ~50–100 ms on the desktop.
 
 Not yet: a spherical or rolled patch where fillets meet at a corner (they mitre, and two flush inside fillets leave
-the corner between them open); fillets on cone, sphere and torus edges; a fillet on the rim of a cut (a face of the
-part against a face of the tool); a single-edge fillet on a swept edge the profile is not behind; offsetting a shell. The OCCT baseline does not run the new features, so
+the corner between them open); fillets on cone, sphere and torus edges. The OCCT baseline does not run the new features, so
 they are checked against analytic answers only; cross-checking them is part of K7.
 
 **K5 — queries (done).** On one body's field, checked against analytic answers (`QueryTests`):
