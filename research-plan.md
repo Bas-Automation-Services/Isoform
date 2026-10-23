@@ -289,9 +289,14 @@ Sample, bounds enclose, simplification bit-exact) and keeps its face names under
 
 Corners (2026-10-23): three plane–plane fillets of one radius at a convex corner meet in a sphere
 (`<id>/corner:a+b+c`), and two inside fillets round a joined boss meet round its square edge in a horn torus
-(`<id>/corner:a+b`), both exact in STEP (a horn's apex, like a sphere's pole, needs the reader's healing). Not yet:
-corners of unequal radii (convex ones keep their mitre, `corner-mitred`; inside ones stay open, `corner-open`), and
-inside corners round a leaning or curved edge; fillets on cone, sphere and torus edges off a common axis (no closed form), chamfers
+(`<id>/corner:a+b`, also where the two faces belong to different joined solids), both exact in STEP (a horn's apex,
+like a sphere's pole, needs the reader's healing). The horn is exact only for two planes at a right angle on a flat
+base: elsewhere each filler's flush end is not where the ball turns the corner. Not yet: corners of unequal radii
+(convex ones keep their mitre, `corner-mitred`), and inside corners at another angle, round a leaning edge, a curved
+face or a curved base: they stay open with `corner-open` naming why. An inside fillet whose filler cannot end where its
+edge does (a side running on smoothly into an arc or a round, a minor arc whose circle would cut it short, coplanar
+start and end faces of a half revolve) is refused, as is rounding or chamfering a boss edge an inside fillet already
+ends against. Fillets on cone, sphere and torus edges off a common axis (no closed form), chamfers
 on them, and fillets next to a hollow torus. The OCCT baseline does not run the new features, so they are checked
 against analytic answers only; cross-checking them is part of K7.
 

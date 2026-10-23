@@ -784,6 +784,8 @@ public sealed class Compiler(ModelingSettings settings)
             });
             if (rebuilt is null)
                 return Fail(invalid, Invariant($"{(fillet ? "radius" : "distance")} {size} does not fit on the profile edges next to the corner"));
+            if (Leaning(tree, la, lb, rebuilt.Leaves.Except(p.Leaves).SelectMany(l => rebuilt.MiddleOf(l, (max - min).Length)), size) is { } inside)
+                return Fail(unsupported, LeaningMessage(inside, edge));
             var next = Replace(tree, p, rebuilt);
             // In a shell, the new face must stay clear of the cavity: probe its middle line on the new outside.
             // Project onto the new outside alone: where the wall is cut through, the shelled field is not zero there.
@@ -818,6 +820,7 @@ public sealed class Compiler(ModelingSettings settings)
         {
             var (rounded, onEdge, code, problem) = Rolling(a, b, size, FilletSurface(feature.Id, size, name0), q => Math.Abs(tree.Value(q)) <= 10 * _tol, register, min, max, name);
             if (rounded is null) return Fail(code, problem!);
+            if (Leaning(tree, a, b, onEdge, size) is { } inside) return Fail(unsupported, LeaningMessage(inside, edge));
             // On a face's own plane the solid field is ≥ 0, and 0 only on the face itself: a contact point with
             // a positive value means the ball does not fit on that face. A fillet on two other faces can have eaten
             // the end of a face near a corner; the rounds then meet in a mitre, as fillets sharing a face do, so the
@@ -845,6 +848,7 @@ public sealed class Compiler(ModelingSettings settings)
             if (onEdge.Count == 0) return Fail(invalid, $"edge {name} does not exist on the part");
             if (onEdge.Select(q => Setback(a, b, q, size)).Any(c => tree.Value(c.OnA) > 10 * _tol || tree.Value(c.OnB) > 10 * _tol))
                 return Fail(invalid, Invariant($"distance {size} does not fit between the faces next to the edge"));
+            if (Leaning(tree, a, b, onEdge, size) is { } inside) return Fail(unsupported, LeaningMessage(inside, edge));
             addition = ChamferLeaf(feature.Id, a, b, onEdge[0], size, s => register(s with { Source = name0 }));
         }
 
@@ -870,19 +874,19 @@ public sealed class Compiler(ModelingSettings settings)
         LeafField Flip(LeafField l) => new(l.Surface, !l.Complement);
 
         // The rounded edge where the edge is there and the ball touches both faces on the part; or why not.
-        (RoundedEdgeField? Rounded, string Code, string? Problem) Round(LeafField a, LeafField b, Func<Point3D, bool> onBoth)
+        (RoundedEdgeField? Rounded, List<Point3D> OnEdge, string Code, string? Problem) Round(LeafField a, LeafField b, Func<Point3D, bool> onBoth)
         {
             var (rounded, onEdge, code, problem) = Rolling(a, b, r, FilletSurface(id, r, face), q => Math.Abs(tree.Value(q)) <= 10 * _tol && onBoth(q), register, min, max, name);
-            if (rounded is null) return (null, code, problem);
+            if (rounded is null) return (null, onEdge, code, problem);
             return onEdge.Select(rounded.Contacts).Any(c => Math.Abs(tree.Value(c.OnA)) > 10 * _tol || Math.Abs(tree.Value(c.OnB)) > 10 * _tol)
-                ? (null, Diagnostic.FilletInvalid, Invariant($"radius {r} does not fit between the faces next to the edge")) : (rounded, "", null);
+                ? (null, onEdge, Diagnostic.FilletInvalid, Invariant($"radius {r} does not fit between the faces next to the edge")) : (rounded, onEdge, "", null);
         }
 
         var unions = Unions(tree).ToList();
         foreach (var union in unions)
         {
             if (FlippedIn(union, edge[0]) is not { } a || FlippedIn(union, edge[1]) is not { } b || a.Flipped == b.Flipped) continue;
-            var (rounded, code, problem) = Round(a.Flipped, b.Flipped, _ => true);
+            var (rounded, _, code, problem) = Round(a.Flipped, b.Flipped, _ => true);
             if (rounded is null) return fail(code, problem!);
             var kept = union.Children.Where(c => c != a.Direct && c != b.Direct).Append(new NegateField(rounded)).ToList();
             return Replace(tree, union, new MinField(kept));
@@ -895,11 +899,14 @@ public sealed class Compiler(ModelingSettings settings)
             if (i == j || HostIn(union.Children[i], edge[0]) is not { } one || HostIn(union.Children[j], edge[1]) is not { } two) continue;
             // The edge is where the two solids touch: on the boundary of both, not just on one face's line.
             var (first, second) = (union.Children[i], union.Children[j]);
-            var (rounded, code, problem) = Round(Flip(one.Leaf), Flip(two.Leaf), q => Math.Abs(first.Value(q)) <= 10 * _tol && Math.Abs(second.Value(q)) <= 10 * _tol);
+            var (rounded, onEdge, code, problem) = Round(Flip(one.Leaf), Flip(two.Leaf), q => Math.Abs(first.Value(q)) <= 10 * _tol && Math.Abs(second.Value(q)) <= 10 * _tol);
             if (rounded is null) return fail(code, problem!);
             // Gap corner minus the rounded gap, kept within the extent of both faces.
             var filler = new MaxField([rounded.A, rounded.B, new NegateField(rounded), .. Clips(one), .. Clips(two)]);
-            return Replace(tree, union, new MinField([.. union.Children, filler, .. Horns(id, rounded, one, two, union, register, diagnostics)]));
+            if (Misfit(filler, rounded, tree, first, second, min, max) is { } at)
+                return fail(Diagnostic.UnsupportedFillet, Invariant(
+                    $"edge {name} has no exact inside fillet: near ({at.X:0.###}, {at.Y:0.###}, {at.Z:0.###}) the face it leans on curves away, runs on smoothly or is not there, so the fillet would not end where the edge does"));
+            return Replace(tree, union, new MinField([.. union.Children, filler, .. Horns(id, rounded, onEdge, one, two, union, register, diagnostics)]));
         }
         return fail(Diagnostic.UnsupportedFillet, $"edge {name} is neither a convex edge of one intersection nor an inside corner of a cut or a join");
     }
@@ -1341,46 +1348,118 @@ public sealed class Compiler(ModelingSettings settings)
 
     /// <summary>
     /// The fillers where the inside fillet just made, round the foot of a joined solid's face, meets another one on the
-    /// same base round a neighbouring face of that solid, at a convex edge of it. Each filler stops flush at the other's
-    /// face, which leaves the corner round the edge open. Where the edge stands square on the base, the ball rolling
-    /// round it on the base sweeps a horn torus: the rounding of the base and the edge taken as a cylinder of radius 0
-    /// (major radius = minor = r), within r of the edge and below its apex, a little past both faces so it overlaps the
-    /// fillers instead of sharing a face with them. Named <c>id/corner:a+b</c> after the two fillets. Unequal radii, or
-    /// an edge that leans, have no exact filler: the corner stays open and a diagnostic says so.
+    /// same base round a neighbouring face (of that solid or another one in the join), at a convex edge. Each filler
+    /// stops flush at the other's face, which leaves the corner round the edge open. Where two planes meet at a right
+    /// angle in an edge square to a flat base, the ball rolling round the edge on the base sweeps a horn torus: the
+    /// rounding of the base and the edge taken as a cylinder of radius 0 (major radius = minor = r), within r of the edge
+    /// and below its apex, a little past both faces so it overlaps the fillers instead of sharing a face with them. Named
+    /// <c>id/corner:a+b</c> after the two fillets. Every other convex corner where two such fillets meet (unequal radii,
+    /// a curved base, a leaning edge, a curved face, another angle, where the flush ends are not where the ball turns)
+    /// has no exact filler: the corner stays open and a diagnostic says why. A reflex edge needs none: the fillers meet
+    /// in a mitre, as fillets sharing a face do.
     /// </summary>
-    IEnumerable<Field> Horns(string id, RoundedEdgeField rounded, (MaxField Host, LeafField Leaf, Field Holder) one, (MaxField Host, LeafField Leaf, Field Holder) two,
+    IEnumerable<Field> Horns(string id, RoundedEdgeField rounded, List<Point3D> onEdge, (MaxField Host, LeafField Leaf, Field Holder) one, (MaxField Host, LeafField Leaf, Field Holder) two,
         MinField union, Func<Surface, Surface> register, List<Diagnostic> diagnostics)
     {
-        var (floor, j) = (rounded.A, rounded.B);
-        if (floor.Surface.Kind != SurfaceKind.Plane || j.Surface.Kind != SurfaceKind.Plane) yield break;
-        var up = -floor.Sample(floor.Surface.Origin).Gradient;
+        var (floor, j, r) = (rounded.A, rounded.B, rounded.Radius);
         var fillets = union.Children.OfType<MaxField>()
-            .Select(m => m.Children.OfType<NegateField>().Select(n => n.Child).OfType<RoundedEdgeField>().FirstOrDefault()).OfType<RoundedEdgeField>();
+            .Select(m => m.Children.OfType<NegateField>().Select(n => n.Child).OfType<RoundedEdgeField>().FirstOrDefault()).OfType<RoundedEdgeField>()
+            .Where(f => !f.Fillet.Source.Contains("/corner:", StringComparison.Ordinal));
         foreach (var other in fillets)
         {
             var k = other.B;
-            if (other.A.Surface.Id != floor.Surface.Id || k.Surface.Kind != SurfaceKind.Plane || k.Surface.Id == j.Surface.Id || Held(two.Host, k.Surface.Source) is null
-                || VertexSphereField.Meet([floor, j, k], 0) is not { } vertex || Math.Abs(one.Host.Value(vertex)) > 10 * _tol || Math.Abs(two.Host.Value(vertex)) > 10 * _tol)
+            if (other.A.Surface.Id != floor.Surface.Id || k.Surface.Id == j.Surface.Id
+                || union.Children.Select(c => HostIn(c, k.Surface.Source)).FirstOrDefault(h => h?.Leaf.Surface.Id == k.Surface.Id) is not { } three)
                 continue;
-            // Outward normals of the two faces; outside either one alone is outside the solid at a convex edge.
-            var (nj, nk) = (-j.Sample(vertex).Gradient, -k.Sample(vertex).Gradient);
-            var r = rounded.Radius;
-            if (two.Host.Value(vertex + (nj - nk + up) * (r / 2)) <= 0 || two.Host.Value(vertex + (nk - nj + up) * (r / 2)) <= 0) continue;
+            // Where the three faces meet on the part: on the base, on both solids and on the edge's end.
+            var vertices = new List<Point3D>();
+            foreach (var q in onEdge.Where(q => Math.Abs(k.Value(q)) <= r))
+                if (Meet([floor, j, k], q) is { } v && vertices.All(u => (u - v).Length > 1e-6)
+                    && new Field[] { union, one.Host, two.Host, three.Host }.All(f => Math.Abs(f.Value(v)) <= 10 * _tol))
+                    vertices.Add(v);
             var names = new[] { FilletName(rounded), FilletName(other) }.Order(StringComparer.Ordinal).ToList();
-            var problem = Math.Abs(other.Radius - r) > 1e-12 ? Invariant($"their radii differ ({FilletName(other)}: {other.Radius}, {FilletName(rounded)}: {r})")
-                : nj.Cross(nk).Normalized().Cross(up).Length > 1e-9 ? $"the edge between {j.Surface.Source} and {k.Surface.Source} is not square to {floor.Surface.Source}" : null;
-            if (problem is not null)
+            foreach (var vertex in vertices)
             {
-                diagnostics.Add(new Diagnostic(Diagnostic.CornerOpen, id, $"fillets {names[0]} and {names[1]} leave the corner between them open: {problem}, so it has no exact filler"));
-                continue;
+                // Outward normals of the two faces; outside either one alone is outside the part at a convex edge.
+                var (up, nj, nk) = (-floor.Sample(vertex).Gradient, -j.Sample(vertex).Gradient, -k.Sample(vertex).Gradient);
+                if (nj.Cross(nk).Length < 1e-9 || union.Value(vertex + (nj - nk + up) * (r / 2)) <= 0 || union.Value(vertex + (nk - nj + up) * (r / 2)) <= 0) continue;
+                var problem = Math.Abs(other.Radius - r) > 1e-12 ? Invariant($"their radii differ ({FilletName(other)}: {other.Radius}, {FilletName(rounded)}: {r})")
+                    : floor.Surface.Kind != SurfaceKind.Plane ? $"{floor.Surface.Source} is not flat"
+                    : nj.Cross(nk).Normalized().Cross(up).Length > 1e-9 ? $"the edge between {j.Surface.Source} and {k.Surface.Source} is not square to {floor.Surface.Source}"
+                    : new[] { j, k }.FirstOrDefault(l => l.Surface.Kind != SurfaceKind.Plane) is { } bent ? $"{bent.Surface.Source} is curved"
+                    // Each filler ends flush at the other face; only at a right angle is that where the ball turns the corner.
+                    : Math.Abs(nj.Dot(nk)) > 1e-9 ? $"{j.Surface.Source} and {k.Surface.Source} do not meet at a right angle"
+                    : null;
+                if (problem is not null)
+                {
+                    var open = new Diagnostic(Diagnostic.CornerOpen, id, $"fillets {names[0]} and {names[1]} leave the corner between them open: {problem}, so it has no exact filler");
+                    if (!diagnostics.Contains(open)) diagnostics.Add(open);
+                    continue;
+                }
+                var edge = new LeafField(register(new Surface(0, $"{id}/bound", SurfaceKind.Cylinder, vertex, up)), complement: true);
+                var horn = new RoundedEdgeField(floor, edge, r, register(FilletSurface(id, r, $"{id}/corner:{names[0]}+{names[1]}")));
+                var apex = new LeafField(register(new Surface(0, $"{id}/bound", SurfaceKind.Plane, vertex + up * r, up)));
+                LeafField Past(LeafField l) => new(register(l.Surface.Offset(0, $"{id}/bound", l.Complement ? -r / 4 : r / 4)), l.Complement);
+                yield return new MaxField([floor, new NegateField(horn), apex, Past(j), Past(k), .. Clips(one)]);
             }
-            var edge = new LeafField(register(new Surface(0, $"{id}/bound", SurfaceKind.Cylinder, vertex, up)), complement: true);
-            var horn = new RoundedEdgeField(floor, edge, r, register(FilletSurface(id, r, $"{id}/corner:{names[0]}+{names[1]}")));
-            var apex = new LeafField(register(new Surface(0, $"{id}/bound", SurfaceKind.Plane, vertex + up * r, up)));
-            LeafField Past(LeafField l) => new(register(l.Surface.Offset(0, $"{id}/bound", l.Complement ? -r / 4 : r / 4)), l.Complement);
-            yield return new MaxField([floor, new NegateField(horn), apex, Past(j), Past(k), .. Clips(one)]);
         }
     }
+
+    /// <summary>Where three faces meet, by Newton's method from a point near it; null where they meet in no single point.</summary>
+    static Point3D? Meet(LeafField[] faces, Point3D from)
+    {
+        var p = from;
+        for (var i = 0; i < 30; i++)
+        {
+            var s = faces.Select(f => f.Sample(p)).ToArray();
+            if (s.All(x => Math.Abs(x.Value) <= 1e-12)) return p;
+            var (g0, g1, g2) = (s[0].Gradient, s[1].Gradient, s[2].Gradient);
+            var det = g0.Dot(g1.Cross(g2));
+            if (Math.Abs(det) < 1e-9) return null;
+            p -= (g1.Cross(g2) * s[0].Value + g2.Cross(g0) * s[1].Value + g0.Cross(g1) * s[2].Value) / det;
+        }
+        return faces.All(f => Math.Abs(f.Value(p)) <= 1e-9) ? p : null;
+    }
+
+    /// <summary>
+    /// A point where a filler at the foot of a joined solid does not fit its edge: it runs on where the edge does not
+    /// (the face it leans on curves away into a round or an arc, or runs on smoothly), stops short where the edge goes
+    /// on (cut by the whole circle of a neighbouring arc), or holds no material at all. Null when it fits all along.
+    /// A filler running on inside the part (past a reflex edge) is buried and fits.
+    /// </summary>
+    Point3D? Misfit(MaxField filler, RoundedEdgeField rounded, Field tree, Field first, Field second, Point3D min, Point3D max)
+    {
+        bool On(Field f, Point3D q) => Math.Abs(f.Value(q)) <= 10 * _tol;
+        var (solid, last) = (false, (Point3D?)null);
+        foreach (var q in EdgeSamples(rounded.A.Surface, rounded.B.Surface, min, max)!)
+        {
+            var edge = On(tree, q) && On(first, q) && On(second, q);
+            var runs = filler.Value(q) <= 10 * _tol;
+            if (edge != runs && (edge || tree.Value(q) >= -10 * _tol)) return q;
+            if (!edge) continue;
+            // Just into the gap from both faces: inside the filler wherever it runs, however wide the gap.
+            var (ga, gb) = (rounded.A.Sample(q).Gradient, rounded.B.Sample(q).Gradient);
+            solid |= filler.Value(q - (ga + gb) * (rounded.Radius / 1000)) < 0;
+            last = q;
+        }
+        return solid ? null : last;
+    }
+
+    /// <summary>
+    /// An inside fillet made earlier at the foot of face a or b whose filler comes within <paramref name="size"/> of the
+    /// edge about to be rounded or cut there: it leans on the face as it was and would stand proud of the new one.
+    /// </summary>
+    static string? Leaning(Field tree, LeafField a, LeafField b, IEnumerable<Point3D> edge, double size)
+    {
+        var points = edge.ToList();
+        return Unions(tree).SelectMany(u => u.Children.OfType<MaxField>())
+            .Select(m => (Filler: m, Round: m.Children.OfType<NegateField>().Select(n => n.Child).OfType<RoundedEdgeField>().FirstOrDefault()))
+            .Where(x => x.Round is { } f && (f.B.Surface.Id == a.Surface.Id || f.B.Surface.Id == b.Surface.Id) && points.Any(q => x.Filler.Value(q) < size))
+            .Select(x => FilletName(x.Round!)).FirstOrDefault();
+    }
+
+    static string LeaningMessage(string inside, string[] edge) =>
+        $"the inside fillet {inside} ends against the edge [{string.Join(", ", edge)}] and would not follow it once rounded or cut, so there is no exact result: make this edge sharp, or leave out {inside}";
 
     static string FilletName(RoundedEdgeField r) => r.Fillet.Source.EndsWith("/face", StringComparison.Ordinal) ? r.Fillet.Source[..^"/face".Length] : r.Fillet.Source;
 

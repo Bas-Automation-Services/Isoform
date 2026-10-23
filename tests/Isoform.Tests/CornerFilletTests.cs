@@ -212,7 +212,116 @@ public class CornerFilletTests(ITestOutputHelper output)
         result.Topology!.Faces.SelectMany(f => f.Sources).Should().NotContain(s => s.Contains("corner", StringComparison.Ordinal));
     }
 
-    public static IEnumerable<object[]> Parts => [["box"], ["slanted"], ["unequal"], ["boss"], ["boss all round"]];
+    // An L of two joined blocks on the plate: the corner at (20, 10) is a convex edge between faces of different solids.
+    static PartDocument Ell(double r) => new(
+    [
+        new Block("plate", BooleanOp.New, [0, 0, 0], [60, 40, 10]),
+        new Block("boss", BooleanOp.Join, [20, 10, 10], [20, 6, 8]),
+        new Block("arm", BooleanOp.Join, [20, 10, 10], [6, 20, 8]),
+        new Fillet("f1", ["plate/z+", "boss/y-"], r),
+        new Fillet("f2", ["plate/z+", "arm/x-"], r),
+    ]);
+
+    [Fact]
+    public void Inside_fillets_round_faces_of_two_joined_solids_meet_in_a_horn_torus()
+    {
+        const double r = 2;
+        var result = Modeler.Regenerate(Ell(r));
+
+        result.Diagnostics.Should().BeEmpty();
+        result.Mesh!.IsWatertight().Should().BeTrue();
+        Deviation(result, "f2/corner:f1+f2", p => Math.Sqrt(Sq(Math.Sqrt(Sq(p.X - 20) + Sq(p.Y - 10)) - r) + Sq(p.Z - 10 - r)) - r).Should().BeLessThan(1e-7);
+        // Plate, the L, a fillet 20 long on each face and the horn's quarter spandrel round the edge.
+        var exact = 60 * 40 * 10 + (20 * 6 + 6 * 20 - 6 * 6) * 8 + r * r * (1 - Math.PI / 4) * 40 + Math.PI / 2 * r * r * r * (5.0 / 6 - Math.PI / 4);
+        MassProperties.Of(result.Part.Field!, result.Mesh!).Volume.Should().BeApproximately(exact, exact * VolumeTolerance);
+    }
+
+    static readonly SketchPlane OnPlate = new([0, 0, 10], [1, 0, 0], [0, 0, 1]);
+
+    static PartDocument Extruded(Profile profile, string a, string b, SketchPlane? plane = null, double start = 0) => new(
+    [
+        new Block("plate", BooleanOp.New, [0, 0, 0], [60, 40, 10]),
+        new Extrude("boss", BooleanOp.Join, plane ?? OnPlate, profile, start, 8),
+        new Fillet("f1", ["plate/z+", $"boss/{a}"], 1.5),
+        new Fillet("f2", ["plate/z+", $"boss/{b}"], 1.5),
+    ]);
+
+    // A boss of a straight edge and a major arc: two convex kinks between a plane and a cylinder.
+    static PartDocument DShape() => Extruded(new Profile([35, 10], [new ProfileEdge("a", [45, 10]), new ProfileEdge("b", [35, 10], 2.5)]), "a", "b");
+
+    // A hexagon (corners of 120°) and an equilateral triangle (60°).
+    static PartDocument Polygon(int sides)
+    {
+        var (side, turn) = (sides == 6 ? 10.0 : 20.0, 2 * Math.PI / sides);
+        var points = Enumerable.Range(1, sides - 1).Select(i => new[] { 25 + side * Enumerable.Range(0, i).Sum(k => Math.Cos(k * turn)), 10 + side * Enumerable.Range(0, i).Sum(k => Math.Sin(k * turn)) })
+            .Append([25, 10]);
+        return Extruded(new Profile([25, 10], points.Select((p, i) => new ProfileEdge(((char)('a' + i)).ToString(), p)).ToList()), "a", "b");
+    }
+
+    [Theory]
+    [InlineData("curved", "boss/b is curved")]
+    [InlineData("hexagon", "boss/b and boss/a do not meet at a right angle")]
+    [InlineData("triangle", "boss/b and boss/a do not meet at a right angle")]
+    [InlineData("leaning", "the edge between boss/y- and boss/x- is not square to cut/face")]
+    public void Inside_fillets_meeting_at_a_corner_with_no_exact_filler_leave_it_open_and_say_so(string name, string why)
+    {
+        var result = Modeler.Regenerate(name switch
+        {
+            "curved" => DShape(),
+            "hexagon" => Polygon(6),
+            "triangle" => Polygon(3),
+            // An upright boss on a sloping top, running off the plate's low end: its edge leans on the top.
+            _ => new PartDocument(
+            [
+                new Block("plate", BooleanOp.New, [0, 0, 0], [60, 40, 10]),
+                new PlaneCut("cut", [0, 0, 10], [0.1, 0, 1]),
+                new Block("boss", BooleanOp.Join, [20, 10, 0], [50, 16, 18]),
+                new Fillet("f1", ["cut/face", "boss/x-"], 1.5),
+                new Fillet("f2", ["cut/face", "boss/y-"], 1.5),
+            ]),
+        });
+
+        var d = result.Diagnostics.Where(d => d.Code != Diagnostic.BelowResolution).Should().ContainSingle().Which;
+        output.WriteLine(d.Message);
+        d.Code.Should().Be(Diagnostic.CornerOpen);
+        d.FeatureId.Should().Be("f2");
+        d.Message.Should().Contain(why);
+        result.Topology!.Faces.SelectMany(f => f.Sources).Should().Contain(["f1/face", "f2/face"]).And.NotContain(s => s.Contains("corner", StringComparison.Ordinal));
+    }
+
+    public static IEnumerable<object[]> Misfits =>
+    [
+        // A rounded rectangle: the straight edges run on smoothly into the arcs at the corners.
+        ["tangent arc", Extruded(new Profile([25, 10], [new ProfileEdge("a", [35, 10]), new ProfileEdge("ab", [40, 15], 0.41421356237309503),
+            new ProfileEdge("b", [40, 25]), new ProfileEdge("bc", [35, 30], 0.41421356237309503), new ProfileEdge("c", [25, 30]),
+            new ProfileEdge("cd", [20, 25], 0.41421356237309503), new ProfileEdge("d", [20, 15]), new ProfileEdge("da", [25, 10], 0.41421356237309503)]), "a", "b"), new[] { "f1", "f2" }],
+        // A minor arc at a kink: its whole circle would cut the straight edge's filler short.
+        ["arc kink", Extruded(new Profile([20, 10], [new ProfileEdge("a", [40, 10]), new ProfileEdge("b", [40, 26], 0.5), new ProfileEdge("c", [20, 26]), new ProfileEdge("d", [20, 10])]), "d", "a"), new[] { "f2" }],
+        // The boss's own edge rounded first: its sides end in the round, short of the sharp edge.
+        ["rounded edge", new PartDocument([.. Boss(1.5).Features.Take(2), new Fillet("v", ["boss/x-", "boss/y-"], 3), .. Boss(1.5).Features.Skip(2)]), new[] { "f1", "f2" }],
+        // The boss's own edge rounded after: the fillers lean on the sharp sides.
+        ["rounded after", new PartDocument([.. Boss(1.5).Features, new Fillet("v", ["boss/x-", "boss/y-"], 3)]), new[] { "v" }],
+        // Half a revolve: its start and end faces are one plane, so the filler on one has nothing to end at.
+        ["half revolve", new PartDocument([new Block("plate", BooleanOp.New, [0, 0, 0], [60, 40, 10]),
+            new Revolve("boss", BooleanOp.Join, new SketchPlane([30, 20, 10], [1, 0, 0], [0, -1, 0]),
+                new Profile([0, 0], [new ProfileEdge("bottom", [8, 0]), new ProfileEdge("side", [8, 8]), new ProfileEdge("top", [0, 8]), new ProfileEdge("axis", [0, 0])]), 180),
+            new Fillet("f1", ["plate/z+", "boss/start"], 1.5)]), new[] { "f1" }],
+    ];
+
+    [Theory]
+    [MemberData(nameof(Misfits))]
+    public void An_inside_fillet_that_cannot_end_where_its_edge_does_is_refused(string name, PartDocument doc, string[] refused)
+    {
+        var result = Modeler.Regenerate(doc);
+
+        output.WriteLine(name);
+        foreach (var d in result.Diagnostics) output.WriteLine($"{d.Code} {d.FeatureId}: {d.Message}");
+        result.Diagnostics.Where(d => d.Code != Diagnostic.BelowResolution).Should().HaveCount(refused.Length)
+            .And.OnlyContain(d => d.Code == Diagnostic.UnsupportedFillet && refused.Contains(d.FeatureId));
+        result.Topology!.Faces.SelectMany(f => f.Sources).Should().NotContain(refused.Select(f => $"{f}/face"));
+    }
+
+    public static IEnumerable<object[]> Parts => [["box"], ["slanted"], ["unequal"], ["boss"], ["boss all round"], ["ell"]];
 
     [Theory]
     [MemberData(nameof(Parts))]
@@ -223,6 +332,7 @@ public class CornerFilletTests(ITestOutputHelper output)
             "slanted" => Slanted(1.5),
             "boss" => Boss(3),
             "boss all round" => Boss(2, all: true),
+            "ell" => Ell(2),
             _ => Box(2, r3: 3),
         }));
 
