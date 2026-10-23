@@ -343,9 +343,16 @@ but about half are features a finer local mesh would build.
   for edges, both faces decide the field round it. The K7 judge no longer blames F-rep for faces OCCT's history
   lost the names of. Result on seeds 150–1149: silent 0 (was 9), both build and agree 30.3%; on 1000 fresh seeds
   (1150–2149) silent 0.1%, against OCCT's 1.8% failures there (a crash, two invalid shapes). The one left: a body
-  0.007 mm thick at a clipped corner, far from every edge the mesh made (`RobustnessReproTests`, skipped). Cost:
-  about 5–9 ms on a 30 ms random part (Release), more on large meshes, mostly the polygon index the piece search
-  queries.
+  0.007 mm thick at a clipped corner, far from every edge the mesh made. Cost: about 5–9 ms on a 30 ms random part
+  (Release), more on large meshes, mostly the polygon index the piece search queries.
+- *The whole box (2026-10-23):* lost pieces are also looked for away from the mesh's edges, in a descent from the
+  body's box to the same blocks that drops a box the bounds prove empty or full, or where fewer than three distinct
+  surfaces may bound the part. The sliver body is reported (a patch 0.01 mm across, too small for refinement), and
+  so is the same sliver at the plate's other corners. Result: silent 0 on both 150–1149 and 1150–2149; no other
+  document changed (both build and agree 30.3% and 31.6%). Cost: about 0.5 ms on a random part, 4–8 ms on the 20-op
+  part at 0.5 to 0.1 mm cells. Still missed (skipped repros): a lost body bounded by two surfaces (a ball's cap cut
+  off flush with another face), and a sliver within 2.5 mm of its own faces' polygons; both need a check in the
+  mesher on cells without a vertex.
 
 **Review.** An independent read of the K4 code found 15 problems (wrong geometry without a diagnostic in several);
 all fixed, each with a regression test (`ReviewFindingTests`).

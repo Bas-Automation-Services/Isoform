@@ -26,6 +26,8 @@ public class RobustnessTests(ITestOutputHelper output)
         var report = Report(results, wall, minimize: Env("ISOFORM_K7_MINIMIZE", 0));
         output.WriteLine(report);
         File.WriteAllText(Path.Combine(AppContext.BaseDirectory, "robustness-report.md"), report);
+        // Every seed's labels, to diff two runs by document.
+        File.WriteAllLines(Path.Combine(AppContext.BaseDirectory, "robustness-labels.txt"), results.Select(r => $"{r.Seed}: {string.Join(" ", r.C.Labels.Order(StringComparer.Ordinal))}"));
 
         // What holds today and must keep holding; the rest is measured, with known failures as skipped repros.
         results.Should().NotContain(r => r.C.Labels.Contains("frep:crash"), "the F-rep core never throws on a valid document");
