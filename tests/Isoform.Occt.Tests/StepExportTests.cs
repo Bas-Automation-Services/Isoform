@@ -1,3 +1,4 @@
+using System.Text.Json.Nodes;
 using Isoform.Document;
 using Isoform.Modeling;
 using Isoform.Step;
@@ -200,11 +201,20 @@ public class StepExportTests(ITestOutputHelper output)
                 new Hole("holes", [], 5) { Sketch = "spots", Points = ["near", "far"], Depth = 3 },
             ]), 50000 - 2 * Math.PI * 6.25 * 3);
 
-        // Sweeps whose joints are lines along the arcs' axes (a profile side parallel to it: a plane meets a cylinder
-        // tangentially), and a circle swept round a circle (one torus). Joints across the axis are not written yet.
-        foreach (var sweep in SweepTests.Parts().Where(s => s.Name is "square bar turning right" or "torus"))
+        // Sweeps: at each joint the two pieces touch along the profile edge in the joint plane, a line (planes and cones)
+        // or a circle (cylinders and tori); a torus round a turn is cut open along a circle round its axis. The triangle
+        // along a loop and a bend touches itself at a point (see below): here its bend is tighter, clear of the loop.
+        foreach (var sweep in SweepTests.Parts().Where(s => s.Name != "triangle along a loop and a bend"))
             yield return new($"sweep: {sweep.Name}", SweepTests.Document(sweep.Name), sweep.Volume);
+        yield return new("sweep: triangle along a loop and a tight bend", TightBend(), 12 * (40 + 1.5 * Math.PI * 15 + 0.5 * Math.PI * 4));
     }
+
+    /// <summary>The triangle along a loop and a bend, its bend of radius 4 round (1, 15) instead of 10 round (−5, 15).</summary>
+    static PartDocument TightBend() => DocumentEdits.Apply(SweepTests.Document("triangle along a loop and a bend"), [
+        JsonNode.Parse("""{ "set": "route.points.k", "value": [1, 15] }""")!,
+        JsonNode.Parse("""{ "set": "route.points.g", "value": [1, 11] }""")!,
+        JsonNode.Parse("""{ "set": "route.points.h", "value": [-19, 11] }""")!,
+    ]);
 
     /// <summary>The plate below z = 10 − (x − 20)·slope, clipped at z = 0.</summary>
     static double Prism(double slope)
@@ -269,20 +279,18 @@ public class StepExportTests(ITestOutputHelper output)
         build.Should().Throw<NotSupportedException>().WithMessage("*boss/blend (Blend)*");
     }
 
-    [Theory]
-    [InlineData("elbow pipe", "pipe/l1:wall and pipe/a1:wall (Cylinder–Torus)")]
-    [InlineData("triangle along a loop and a bend", "(Plane–Cone)")]
-    public void Sweep_joints_across_an_arc_are_named_until_written(string name, string message)
+    [Fact]
+    public void A_sweep_that_touches_itself_is_named()
     {
-        // Where a line piece meets an arc piece the faces touch along the profile edge in the joint plane: a circle
-        // between a cylinder and a torus, a line between a plane and a cone. Not written yet, so named.
+        // The bend's outer side, 13 round (−5, 15), runs through the start's corner (0, 3, 0): the base face's boundary
+        // touches itself there, a point no face can be bounded at.
         var settings = new ModelingSettings { CellSize = 0.5 };
-        var frep = new FrepModeler(settings).Regenerate(SweepTests.Document(name));
+        var frep = new FrepModeler(settings).Regenerate(SweepTests.Document("triangle along a loop and a bend"));
         frep.Diagnostics.Should().BeEmpty();
 
         var build = () => ExactBrep.Build(frep, settings);
 
-        build.Should().Throw<NotSupportedException>().WithMessage($"*{message}*");
+        build.Should().Throw<NotSupportedException>().WithMessage("the solid touches itself at (0, 3, 0), a corner on the edge between *pipe/l1:base* and pipe/a2:right");
     }
 
     [Fact]

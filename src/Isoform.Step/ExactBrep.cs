@@ -17,7 +17,8 @@ public static class ExactBrep
     /// <summary>
     /// Builds the B-rep of every body: one solid per body, a shell's cavity as a void. Throws
     /// <see cref="NotSupportedException"/> naming the faces or edges without a closed form (<see cref="UnsupportedFacesException"/>
-    /// for faces).
+    /// for faces), or what a reader would have to mend: a face not cut open, a solid touching itself, other counts than
+    /// the F-rep topology's.
     /// </summary>
     public static Brep Build(FrepResult result, ModelingSettings settings) => new Builder(result, settings).Run();
 
@@ -39,6 +40,7 @@ public static class ExactBrep
         readonly Dictionary<int, RoundedEdgeField> _rounded = [];
         readonly Dictionary<int, LoopFace> _loops = [];
         readonly HashSet<double> _shells = [];
+        readonly Dictionary<string, Surface> _planes = [];
         Surface[] _surface = [];
         Surface[] _owner = [];
         HashSet<int>[] _meshVertices = [];
@@ -66,6 +68,8 @@ public static class ExactBrep
                         break;
                     }
             }
+
+            foreach (var s in result.Part.Surfaces.Where(s => s.Kind == SurfaceKind.Plane)) _planes.TryAdd(s.Source, s);
 
             // Each face's exact surface, checked against the face's mesh.
             _owner = new Surface[faceCount];
@@ -154,7 +158,72 @@ public static class ExactBrep
             var edges = Enumerable.Range(0, _edges.Count).Select(Finish).ToList();
             var faces = Enumerable.Range(0, faceCount)
                 .Select(f => new BrepFace(f, topology.Faces[f].Sources, _surface[f], outward[f], WithImages(f, loops[f], edges))).ToList();
-            return new Brep(_vertices, edges, Solids(faces, shellOf, isVoid));
+            var brep = new Brep(_vertices, edges, Solids(faces, shellOf, isVoid));
+            Check(brep);
+            return brep;
+        }
+
+        /// <summary>
+        /// Refuses a B-rep a reader would have to mend, each in its own way: an edge not used twice (by two faces, or
+        /// as a seam by one); a corner on another edge of its solid, where the solid touches itself; a loop of a curved
+        /// face that does not close in the face's parameters, where the face is not cut open round its axis or tube (a
+        /// loop through a pole, where the surface is one point, closes there); or other faces, edges and corners than
+        /// the F-rep topology's, but for the edges of no length the mesh can leave where more than three faces meet
+        /// (with a corner too many at each, as the export tests allow).
+        /// </summary>
+        void Check(Brep brep)
+        {
+            var faces = brep.Solids.SelectMany(s => s.Faces).ToList();
+            var facesOfEdge = brep.Edges.Select(_ => new List<int>()).ToArray();
+            foreach (var f in faces)
+            foreach (var c in f.Loops.SelectMany(l => l.Coedges)) facesOfEdge[c.Edge].Add(f.TopologyFace);
+            string Between(int edge) => string.Join(" and ", facesOfEdge[edge].Distinct().Select(Name));
+            if (Enumerable.Range(0, brep.Edges.Count).Where(e => facesOfEdge[e].Count != 2).ToList() is [var stray, ..])
+                throw new NotSupportedException($"an edge of the exact B-rep not used twice, of {Between(stray)}");
+
+            foreach (var solid in brep.Solids)
+            {
+                var edges = solid.Faces.SelectMany(f => f.Loops).SelectMany(l => l.Coedges).Select(c => brep.Edges[c.Edge]).Distinct().ToList();
+                foreach (var e in edges)
+                foreach (var v in edges.SelectMany(x => new[] { x.Start, x.End }).Distinct().Where(v => v != e.Start && v != e.End))
+                {
+                    var p = brep.Vertices[v].Point;
+                    var t = e.Curve.Parameter(p);
+                    if (e.Curve is not Line) t = e.T0 + (t - e.T0 - 2 * Math.PI * Math.Floor((t - e.T0) / (2 * Math.PI)));
+                    if (t >= e.T0 && t <= e.T1 && (e.Curve.At(t) - p).Length <= settings.Tolerance)
+                        throw new NotSupportedException(FormattableString.Invariant($"the solid touches itself at ({p.X:G6}, {p.Y:G6}, {p.Z:G6}), a corner on the edge between {Between(e.Index)}"));
+                }
+            }
+
+            var open = new List<int>();
+            foreach (var f in faces.Where(f => f.Surface.Kind != SurfaceKind.Plane))
+            foreach (var loop in f.Loops)
+            {
+                var (du, dv) = (0.0, 0.0);
+                foreach (var c in loop.Coedges)
+                {
+                    var (a, b) = c.Forward ? (c.Uv!.Start, c.Uv.End) : (c.Uv!.End, c.Uv.Start);
+                    (du, dv) = (du + b.U - a.U, dv + b.V - a.V);
+                }
+                var pole = loop.Coedges.SelectMany(c => new[] { brep.Edges[c.Edge].Start, brep.Edges[c.Edge].End }).Select(v => brep.Vertices[v].Point - f.Surface.Origin)
+                    .Any(w => (w - f.Surface.Axis * f.Surface.Axis.Dot(w)).Length <= settings.Tolerance);
+                if (Math.Abs(dv) > 1e-6 || Math.Abs(du) > 1e-6 && !pole) open.Add(f.TopologyFace);
+            }
+            if (open.Count > 0)
+                throw new NotSupportedException($"faces not cut open where they run round: {string.Join(", ", open.Distinct().Select(f => $"{Name(f)} ({_surface[f].Kind})"))}");
+
+            // Counted as the topology counts them: seams (one face) are not edges, corners are where 3+ faces of a body
+            // meet (two bodies may share a point).
+            var topology = result.Topology!;
+            var facesOfVertex = brep.Vertices.Select(_ => new HashSet<int>()).ToArray();
+            foreach (var e in brep.Edges) facesOfVertex[e.Start].UnionWith(facesOfEdge[e.Index]);
+            foreach (var e in brep.Edges) facesOfVertex[e.End].UnionWith(facesOfEdge[e.Index]);
+            var edgeCount = facesOfEdge.Count(x => x.Distinct().Count() == 2);
+            var vertexCount = facesOfVertex.Sum(x => x.GroupBy(f => topology.Faces[f].Body).Count(g => g.Count() >= 3));
+            var (te, tv) = (topology.Edges.Count, topology.Vertices.Count);
+            if (faces.Count != topology.Faces.Count || edgeCount > te || vertexCount > tv || te - edgeCount > Math.Max(2, tv - vertexCount))
+                throw new NotSupportedException(FormattableString.Invariant(
+                    $"the exact B-rep has {faces.Count} faces, {edgeCount} edges and {vertexCount} corners where the F-rep has {topology.Faces.Count}, {te} and {tv}"));
         }
 
         /// <summary>
@@ -329,6 +398,33 @@ public static class ExactBrep
             return (new Circle(centre, na.Cross(nb).Normalized(), (p - centre).Normalized(), size), p, q);
         }
 
+        Curve? Intersection(int a, int b, Point3D seed) => Joint(a, b, seed) ?? SurfaceIntersection.Curve(_surface[a], _surface[b], seed);
+
+        /// <summary>
+        /// Two pieces of one sweep meet in the plane across the path at their joint (<c>id/p+q</c>), tangent along the
+        /// profile edge that lies in it: the section of either face by that plane, a line or a circle on both. Null for
+        /// faces of anything else.
+        /// </summary>
+        Curve? Joint(int a, int b, Point3D near)
+        {
+            foreach (var sa in result.Topology!.Faces[a].Sources)
+            foreach (var sb in result.Topology.Faces[b].Sources)
+            {
+                if (Piece(sa) is not { } p || Piece(sb) is not { } q || p.Sweep != q.Sweep || p.Edge != q.Edge || p.Piece == q.Piece) continue;
+                if (!_planes.TryGetValue($"{p.Sweep}/{p.Piece}+{q.Piece}", out var plane) && !_planes.TryGetValue($"{p.Sweep}/{q.Piece}+{p.Piece}", out plane)) continue;
+                foreach (var s in new[] { _surface[a], _surface[b] })
+                    if (SurfaceIntersection.Curve(s, plane, near) is { } c && On(c, _surface[a]) && On(c, _surface[b])) return c;
+            }
+            return null;
+
+            bool On(Curve c, Surface s) => Math.Abs(s.Distance(c.At(c.Parameter(near)))) <= 1e-9;
+        }
+
+        /// <summary>A sweep face's source <c>id/piece:edge</c> in its parts.</summary>
+        static (string Sweep, string Piece, string Edge)? Piece(string source) =>
+            source.IndexOf('/') is var slash and > 0 && source.IndexOf(':', slash) is var colon and > 0
+                ? (source[..slash], source[(slash + 1)..colon], source[(colon + 1)..]) : null;
+
         /// <summary>Closed walks through a face's boundary half-edges; at a pinch the walk stays with the same neighbour.</summary>
         static List<List<(int From, int To, int Other)>> Cycles(List<(int From, int To, int Other)> halves)
         {
@@ -408,16 +504,17 @@ public static class ExactBrep
         /// <summary>
         /// Seams for faces whose boundary runs round their surface's axis, so that every loop is closed in the face's
         /// parameters. A band (two loops round the axis) is cut along one generator or meridian from a vertex of one
-        /// loop to a vertex of the other; a sphere cap from its rim to the pole; a whole torus along both circles. A
-        /// loop's corners are where they are, but the vertex of a closed edge can go anywhere on it, so bands with a
-        /// corner go first and pass the angle of their seam on through their closed edges; the rest take angle 0.
-        /// A sphere face within a hemisphere that does not go round its axis (a corner ball) instead gets its poles
-        /// turned away, and needs no seam at all. Faces whose
-        /// loops have no vertices at a common angle are left for the reader to cut.
+        /// loop to a vertex of the other; a band round a torus's tube (a swept arc between two joints) along a circle
+        /// round its axis; a sphere cap from its rim to the pole; a whole torus along both circles. A loop's corners are
+        /// where they are, but the vertex of a closed edge can go anywhere on it, so bands with a corner go first and
+        /// pass the angle of their seam on through their closed edges (round the tube for a tube band); the rest take
+        /// angle 0. A sphere face within a hemisphere that does not go round its axis (a corner ball) instead gets its
+        /// poles turned away, and needs no seam at all. Faces whose loops have no vertices at a common angle stay uncut,
+        /// and <see cref="Check"/> refuses them.
         /// </summary>
         void Seams(List<BrepLoop>[] loops, List<List<Point3D>>[] points, bool[] outward)
         {
-            var work = new List<(int Face, int A, int B)>(); // B = −1: a cap, seamed to the pole
+            var work = new List<(int Face, int A, int B, bool Tube)>(); // B = −1: a cap, seamed to the pole
             for (var f = 0; f < loops.Length; f++)
             {
                 var s = _surface[f];
@@ -436,10 +533,11 @@ public static class ExactBrep
                     continue;
                 }
                 var windings = points[f].Select(p => Winding(s, p)).ToList();
-                if (windings.Any(w => w.V != 0)) continue;
-                var round = Enumerable.Range(0, windings.Count).Where(i => windings[i].U != 0).ToList();
-                if (round.Count == 2) work.Add((f, round[0], round[1]));
-                else if (round.Count == 1 && s.Kind == SurfaceKind.Sphere) work.Add((f, round[0], -1));
+                var tube = s.Kind == SurfaceKind.Torus && windings.All(w => w.U == 0);
+                if (!tube && windings.Any(w => w.V != 0)) continue;
+                var round = Enumerable.Range(0, windings.Count).Where(i => tube ? windings[i].V != 0 : windings[i].U != 0).ToList();
+                if (round.Count == 2) work.Add((f, round[0], round[1], tube));
+                else if (round.Count == 1 && s.Kind == SurfaceKind.Sphere) work.Add((f, round[0], -1, false));
             }
 
             bool Fixed(BrepLoop l) => l.Coedges.All(c => _edges[c.Edge].Start >= 0);
@@ -447,17 +545,18 @@ public static class ExactBrep
             {
                 var item = work.FirstOrDefault(w => Fixed(loops[w.Face][w.A]) || w.B >= 0 && Fixed(loops[w.Face][w.B]), work[0]);
                 work.Remove(item);
-                var (f, a, b) = item;
+                var (f, a, b, tube) = item;
                 var s = _surface[f];
                 var (la, lb) = (loops[f][a], b >= 0 ? loops[f][b] : null);
 
                 // The seam's angle: at a corner of either loop where the other has one too, else free.
                 (int A, int B)? ends = null;
-                var anglesA = Fixed(la) ? Starts(la).Select(v => (v, U(s, v))).ToList() : null;
-                var anglesB = lb is not null && Fixed(lb) ? Starts(lb).Select(v => (v, U(s, v))).ToList() : null;
+                double Round(int v) => tube ? SurfaceParameters.Of(s, _vertices[v].Point).V : U(s, v);
+                var anglesA = Fixed(la) ? Starts(la).Select(v => (v, Round(v))).ToList() : null;
+                var anglesB = lb is not null && Fixed(lb) ? Starts(lb).Select(v => (v, Round(v))).ToList() : null;
                 if (lb is null)
                 {
-                    var va = anglesA?[0].v ?? Place(la, s, 0);
+                    var va = anglesA?[0].v ?? Place(la, s, 0, false);
                     // A cap's seam ends at the pole on the face's side of its rim.
                     var rim = points[f][a];
                     var centre = new Point3D(rim.Average(p => p.X), rim.Average(p => p.Y), rim.Average(p => p.Z));
@@ -475,12 +574,12 @@ public static class ExactBrep
                 else
                 {
                     var u = anglesA?[0].Item2 ?? anglesB?[0].Item2 ?? 0;
-                    var (va, vb) = (anglesA?[0].v ?? Place(la, s, u), anglesB?[0].v ?? Place(lb!, s, u));
+                    var (va, vb) = (anglesA?[0].v ?? Place(la, s, u, tube), anglesB?[0].v ?? Place(lb!, s, u, tube));
                     if (va >= 0 && vb >= 0) ends = (va, vb);
                 }
                 if (ends is not { } e) continue;
 
-                _edges.Add((Seam(f, _vertices[e.A].Point, _vertices[e.B].Point), e.A, e.B));
+                _edges.Add((Seam(f, _vertices[e.A].Point, _vertices[e.B].Point, tube), e.A, e.B));
                 var seam = _edges.Count - 1;
                 List<BrepCoedge> joined = [.. Rotated(la, e.A), new BrepCoedge(seam, true)];
                 if (lb is not null) joined.AddRange(Rotated(lb, e.B));
@@ -506,11 +605,21 @@ public static class ExactBrep
 
         /// <summary>
         /// Puts a loop's closed edge vertex where the curve crosses the half-plane at angle <paramref name="u"/> round
-        /// the surface's axis; −1 if the loop has corners or the curve does not cross there.
+        /// the surface's axis, or for a <paramref name="tube"/> circle of a torus at angle u round the tube; −1 if the
+        /// loop has corners or the curve does not cross there.
         /// </summary>
-        int Place(BrepLoop loop, Surface s, double u)
+        int Place(BrepLoop loop, Surface s, double u, bool tube)
         {
             if (loop.Coedges.Count != 1 || _edges[loop.Coedges[0].Edge] is not { Start: < 0 } edge) return -1;
+            if (tube)
+            {
+                if (edge.Curve is not Circle c) return -1;
+                var at = SurfaceParameters.At(s, SurfaceParameters.Of(s, c.Center).U, u);
+                if ((c.At(c.Parameter(at)) - at).Length > 1e-9) return -1;
+                var w = AddVertex(at);
+                _edges[loop.Coedges[0].Edge] = edge with { Start = w, End = w };
+                return w;
+            }
             var (x, y, z) = SurfaceParameters.Axes(s);
             var radial = x * Math.Cos(u) + y * Math.Sin(u);
             var cut = new Surface(0, "", SurfaceKind.Plane, s.Origin, z.Cross(radial));
@@ -523,14 +632,23 @@ public static class ExactBrep
         }
 
         /// <summary>
-        /// The seam from p to q at their common angle: a generator of a cylinder or cone, or the meridian circle of a
-        /// sphere or torus, turned so that its arc from p to q crosses the face.
+        /// The seam from p to q at their common angle: a generator of a cylinder or cone, the meridian circle of a
+        /// sphere or torus, or across a tube band the circle round the torus's axis, turned so that its arc from p to q
+        /// crosses the face.
         /// </summary>
-        Curve Seam(int face, Point3D p, Point3D q)
+        Curve Seam(int face, Point3D p, Point3D q, bool tube)
         {
             var s = _surface[face];
             if (s.Kind is SurfaceKind.Cylinder or SurfaceKind.Cone) return new Line(p, (q - p).Normalized());
             var (x, y, z) = SurfaceParameters.Axes(s);
+            double Turn(Circle c, Point3D at) => (c.Parameter(at) + 2 * Math.PI) % (2 * Math.PI);
+            if (tube)
+            {
+                var on = s.Origin + z * z.Dot(p - s.Origin);
+                var round = new Circle(on, z, (p - on).Normalized(), (p - on).Length);
+                var inside = SurfaceParameters.At(s, SurfaceParameters.Of(s, _inside[face]).U, SurfaceParameters.Of(s, p).V);
+                return Turn(round, inside) < Turn(round, q) ? round : round with { Normal = -z };
+            }
             var u = SurfaceParameters.Of(s, p).U;
             var radial = x * Math.Cos(u) + y * Math.Sin(u);
             var torus = s.Kind == SurfaceKind.Torus;
@@ -539,7 +657,6 @@ public static class ExactBrep
             var v = _inside[face] - s.Origin;
             var height = z.Dot(v);
             var onMeridian = s.Origin + radial * (v - z * height).Length + z * height;
-            double Turn(Circle c, Point3D at) => (c.Parameter(at) + 2 * Math.PI) % (2 * Math.PI);
             return Turn(circle, onMeridian) < Turn(circle, q) ? circle : circle with { Normal = -circle.Normal };
         }
 
@@ -701,7 +818,7 @@ public static class ExactBrep
         {
             var seed = _points[run.Vertices[run.Vertices.Count / 2]];
             if (Junction(face, run.Other, seed) is { } j) return j.Curve;
-            return SurfaceIntersection.Curve(_surface[face], _surface[run.Other], seed)
+            return Intersection(face, run.Other, seed)
                 ?? throw new NotSupportedException($"no closed-form edge between {Name(face)} and {Name(run.Other)} ({_surface[face].Kind}–{_surface[run.Other].Kind})");
         }
 
@@ -755,7 +872,7 @@ public static class ExactBrep
             for (var i = 0; i < faces.Count; i++)
             for (var j = i + 1; j < faces.Count; j++)
             {
-                if (SurfaceIntersection.Curve(_surface[faces[i]], _surface[faces[j]], seed) is not { } curve) continue;
+                if (Intersection(faces[i], faces[j], seed) is not { } curve) continue;
                 if (curve is Line line) lines.Add(line);
                 if (curve is Circle circle) circles.Add(circle);
                 foreach (var k in faces)

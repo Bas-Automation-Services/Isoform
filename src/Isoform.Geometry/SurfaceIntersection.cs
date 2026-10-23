@@ -11,7 +11,8 @@ namespace Isoform.Geometry;
 /// <item>surfaces swept along one direction (planes, parallel cylinders) meet in lines along it: a 2D problem in the
 /// cross-section, again lines and circles.</item>
 /// </list>
-/// A plane cutting a cylinder obliquely gives an ellipse. Every other pair has no closed form and is unsupported.
+/// A plane cutting a cylinder obliquely gives an ellipse, a plane through the axis of a cone or torus its meridian
+/// lines or circles. Every other pair has no closed form and is unsupported.
 /// </summary>
 public static class SurfaceIntersection
 {
@@ -27,12 +28,30 @@ public static class SurfaceIntersection
     {
         if (CommonAxis(a, b) is { } axis) return Revolved(a, b, axis.Point, axis.Direction, seed);
         if (CommonDirection(a, b) is { } d) return Swept(a, b, d, seed);
+        if ((AxialSection(a, b, seed) ?? AxialSection(b, a, seed)) is { } meridian) return meridian;
         if (a.Kind == SurfaceKind.Cylinder && b.Kind == SurfaceKind.Plane) (a, b) = (b, a);
         if (a.Kind == SurfaceKind.Plane && b.Kind == SurfaceKind.Cylinder) return Oblique(a, b);
         if (a.Kind == SurfaceKind.Cylinder && b.Kind == SurfaceKind.Cylinder) return Mitre(a, b, seed);
         if (a.Kind == SurfaceKind.Torus && b.Kind == SurfaceKind.Cylinder) (a, b) = (b, a);
         if (a.Kind == SurfaceKind.Cylinder && b.Kind == SurfaceKind.Torus) return TubeCircle(a, b);
         return null;
+    }
+
+    /// <summary>
+    /// A plane through the axis of a cone or torus cuts it along its meridian on either side of the axis: a generator
+    /// of the cone, a tube circle of the torus; the one on the seed's side. Null for any other pair.
+    /// </summary>
+    static Curve? AxialSection(Surface plane, Surface s, Point3D seed)
+    {
+        if (plane.Kind != SurfaceKind.Plane || s.Kind is not (SurfaceKind.Cone or SurfaceKind.Torus)
+            || Math.Abs(plane.Axis.Dot(s.Axis)) > Parallel || Math.Abs(plane.Axis.Dot(s.Origin - plane.Origin)) > OnAxis) return null;
+        var w = seed - s.Origin;
+        var h = s.Axis.Dot(w);
+        var radial = w - s.Axis * h;
+        radial = (radial - plane.Axis * plane.Axis.Dot(radial)).Normalized();
+        return s.Kind == SurfaceKind.Cone
+            ? new Line(s.Origin, s.Axis * (Math.Sign(h) * Math.Cos(s.Angle)) + radial * Math.Sin(s.Angle))
+            : new Circle(s.Origin + radial * s.Radius, plane.Axis, radial, s.Minor);
     }
 
     /// <summary>
