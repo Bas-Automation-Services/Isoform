@@ -141,6 +141,10 @@ public class StepExportTests(ITestOutputHelper output)
         var corner = Loop([30, 15], ("s", 65, 15, 0), ("bend", 70, 20, Math.Tan(Math.PI / 8)), ("e", 70, 35, 0), ("n", 30, 35, 0), ("w", 30, 15, 0));
         yield return new("rim edge of a window over its rounded corner", new([Plate, new Extrude("window", BooleanOp.Cut, Xy, corner, -1, 11), new Fillet("round", ["plate/z+", "window/s"], 1)]),
             50000 - (800 - 25 * (1 - Math.PI / 4)) * 10 - 50 * Spandrel(1) - Math.PI / 2 * (5 + Centroid(1)) * Spandrel(1));
+        // The same run on a convex block, whose profile lies wholly behind the side the fillet starts on.
+        var block = Loop([0, 0], ("bottom", 40, 0, 0), ("right", 40, 15, 0), ("arc", 35, 20, Math.Tan(Math.PI / 8)), ("top", 0, 20, 0), ("left", 0, 0, 0));
+        yield return new("block fillet over its rounded corner", new([new Extrude("block", BooleanOp.New, Xy, block, 0, 10), new Fillet("round", ["block/end", "block/right"], 2)]),
+            (800 - 25 * (1 - Math.PI / 4)) * 10 - 50 * Spandrel(2) - Math.PI / 2 * (5 - Centroid(2)) * Spandrel(2));
         // A circle of two arcs: the loop's torus is two faces, whose edges are the tube circles at the arcs' joints.
         yield return new("clamp: one torus in two faces", new(
                 [new Extrude("clamp", BooleanOp.New, Xy, Loop([-12, 0], ("a", 12, 0, 1), ("b", -12, 0, 1)), 0, 14), new Hole("bore", [0, 0], 10), new Fillet("lip", [], 1.5, Loop: "clamp/end")]),

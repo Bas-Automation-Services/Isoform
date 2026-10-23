@@ -268,7 +268,12 @@ Sample, bounds enclose, simplification bit-exact) and keeps its face names under
   patterns name copy k of `hole/wall` as `row/k:hole/wall`. A mirrored part is symmetric to 1e-12.
 - *Edge features:* chamfers (a plane, or a 45° cone on a hole or boss edge); fillets sharing a face meet in a mitre;
   fillets on swept edges where the profile lies behind the edge; a fillet after a shell rounds only the outside and
-  is rejected when it would cut through the wall. Vertices lie on the exact surfaces to 1e-7.
+  is rejected when it would cut through the wall. Vertices lie on the exact surfaces to 1e-7 (1e-6 where four faces
+  meet tangentially at a junction of a tangent run). Where such a side runs on smoothly into an arc (2026-10-23), the
+  fillet or chamfer follows the whole tangent run, as on a side the profile is not behind: a round of the side's own
+  plane ran straight on past the tangent point (1.45 mm³ too much at r = 2 on a block with one R5 corner) and left the
+  arc sharp, unreported. Lines, convex and concave arcs, arc to arc and cut rims match a brute-force rolling ball;
+  a cap leaning across the sweep is refused.
 - *Smooth blend and offset:* join or cut with a blend radius (quadratic smooth min, 1-Lipschitz); offset moves every
   face and rebuilds real offset surfaces, so later features see true geometry; grown corners get faces of their own.
 

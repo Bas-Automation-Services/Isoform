@@ -834,6 +834,10 @@ public sealed class Compiler(ModelingSettings settings)
                     ? ConcaveFillet(feature.Id, edge, size, tree, register, min, max, Fail, diagnostics, faceName)
                     : Fail(unsupported, $"edge {name} is not a convex edge between two faces of one intersection"));
         var (host, shell, a, b) = (found.Host, found.Shell, found.A!, found.B!);
+        // An edge across the sweep on a side of an extruded profile that runs on smoothly into its neighbour: the ball
+        // rolls on round the junction, where a rounded edge of the side's own plane or cylinder would run straight on.
+        if (RunsOn(host, a, b) || RunsOn(host, b, a))
+            return SweptEdge(feature.Id, edge, size, fillet, tree, register, min, max, Fail, name0)!;
 
         Field addition;
         if (fillet)
@@ -1144,6 +1148,16 @@ public sealed class Compiler(ModelingSettings settings)
         }
         return (pieces.Count == 1 ? pieces[0] : new MinField(pieces), [.. run.Select(Part)]);
     }
+
+    /// <summary>
+    /// Whether a leaf is the side of an extruded profile the intersection holds that meets a neighbour tangentially,
+    /// and its edge with <paramref name="other"/> runs along the profile there: the other face is no plane or cylinder
+    /// along the sweep.
+    /// </summary>
+    static bool RunsOn(MaxField host, LeafField leaf, LeafField other) => host.Children.OfType<ProfileField>().Any(p =>
+        !p.Revolved && p.EdgeLeaves.ToList().IndexOf(leaf) is var i and >= 0 && (p.Turn(i) == 0 || p.Turn((i - 1 + p.Edges.Count) % p.Edges.Count) == 0)
+        && !(other.Surface.Kind == SurfaceKind.Plane ? Math.Abs(other.Surface.Axis.Dot(p.Frame.Z)) < 1e-9
+            : other.Surface.Kind == SurfaceKind.Cylinder && other.Surface.Axis.Cross(p.Frame.Z).Length < 1e-9));
 
     /// <summary>The swept profiles an intersection holds: as a child (under loops run round it), or as the tool of a cut.</summary>
     static IEnumerable<(ProfileField P, bool Cut)> SweptIn(MaxField host)
