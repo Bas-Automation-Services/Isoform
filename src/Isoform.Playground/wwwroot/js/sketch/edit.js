@@ -42,16 +42,16 @@ export function cornerAt(sketch, points, at, tol) {
   return best;
 }
 
-// The entities ending at a corner, each with the direction away from it along the entity and its size (a line's
-// length, an arc's radius).
+// The lines and arcs ending at a corner, construction left out as the kernel does (SketchEdits.Fillet's Leg): the
+// corner p, the far end, for an arc its centre c and whether it starts at the corner; size is a line's length or an
+// arc's radius.
 function legs(sketch, points, corner) {
-  const c = points[corner];
-  return sketch.entities.filter(e => e.line?.includes(corner) || e.arc?.from === corner || e.arc?.to === corner).map(e => {
-    if (e.line) {
-      const d = sub(points[e.line[0] === corner ? e.line[1] : e.line[0]], c);
-      return { e, u: scale(d, 1 / len(d)), size: len(d) };
-    }
-    return { e, size: dist(points[e.arc.center], c) };
+  const p = points[corner];
+  return sketch.entities.filter(e => !e.construction && (e.line?.includes(corner) || e.arc?.from === corner || e.arc?.to === corner)).map(e => {
+    const [from, to] = e.line ?? [e.arc.from, e.arc.to], atFrom = from === corner, far = points[atFrom ? to : from];
+    if (e.line) return { e, p, far, size: dist(far, p) };
+    const c = points[e.arc.center];
+    return { e, p, far, c, atFrom, size: dist(points[e.arc.from], c) };
   });
 }
 
@@ -60,23 +60,53 @@ export function filletRadius(sketch, points, corner) {
   return +(Math.min(...legs(sketch, points, corner).map(l => l.size)) / 5).toPrecision(2);
 }
 
+const left = v => [-v[1], v[0]];
+const unit = v => scale(v, 1 / len(v));
+// The angle counter-clockwise from a to b, in (0, 2π].
+const ccw = (a, b) => (t => t <= 0 ? t + TAU : t)(Math.atan2(cross(a, b), dot(a, b)));
+
+// The direction along a leg at q, from the corner's end towards the far end.
+const into = (l, q) => l.c ? scale(left(unit(sub(q, l.c))), l.atFrom ? 1 : -1) : unit(sub(l.far, l.p));
+
+// A leg offset by r towards the other's direction t at the corner, as a curve crossings() takes: a line through two
+// points, or a circle round the arc's centre; null when an arc is too tight for r.
+function offset(l, t, r) {
+  const u = into(l, l.p), n = scale(left(u), Math.sign(cross(u, t)));
+  if (!l.c) return { a: add(l.p, scale(n, r)), b: add(l.p, add(scale(n, r), u)) };
+  const radius = l.size + (dot(n, sub(l.p, l.c)) > 0 ? r : -r);
+  return radius > 1e-9 ? { c: l.c, r: radius } : null;
+}
+
+// The foot of o on a leg's line or circle.
+const foot = (l, o) => l.c ? add(l.c, scale(unit(sub(o, l.c)), l.size)) : add(l.p, scale(into(l, l.p), dot(sub(o, l.p), into(l, l.p))));
+
+// Whether q, on a leg's line or circle, lies inside it, clear of both its ends.
+function within(l, q) {
+  const clear = 1e-6;
+  if (!l.c) return (s => s > clear && s < l.size - clear)(dot(sub(q, l.p), into(l, l.p)));
+  const [from, to] = l.atFrom ? [l.p, l.far] : [l.far, l.p];
+  const sweep = ccw(sub(from, l.c), sub(to, l.c)), at = l.atFrom ? ccw(sub(l.p, l.c), sub(q, l.c)) : ccw(sub(q, l.c), sub(l.p, l.c));
+  return at * l.size > clear && (sweep - at) * l.size > clear;
+}
+
 /**
- * The arc a fillet of radius r would put at a corner of two lines, as a polyline from one tangent point to the other,
- * or null: a corner with an arc (the kernel's answer shows it), a straight or folded corner, or a radius whose tangent
- * points would run off a line.
+ * The arc a fillet of radius r would put at a corner of two lines or arcs, as a polyline from one tangent point to the
+ * other, placed as the kernel places it (SketchEdits.Fillet): each offset by r towards the other, the centre where the
+ * offsets cross nearest the corner with both tangent points inside their entities. Null where the kernel refuses: not
+ * two lines or arcs, a corner they run through smoothly or fold back at, an arc too tight for r, or no such crossing.
  */
 export function filletArc(sketch, points, corner, r) {
   const [a, b, more] = legs(sketch, points, corner);
-  if (!a?.u || !b?.u || more || !(r > 0)) return null;
-  const half = Math.acos(Math.max(-1, Math.min(1, dot(a.u, b.u)))) / 2;
-  if (half < 1e-6 || Math.PI / 2 - half < 1e-6) return null;
-  const back = r / Math.tan(half);
-  if (back > a.size || back > b.size) return null;
-  const c = points[corner], bisector = add(a.u, b.u);
-  const centre = add(c, scale(bisector, r / Math.sin(half) / len(bisector)));
-  const [from, to] = [a, b].map(l => add(c, scale(l.u, back)));
-  const a0 = Math.atan2(from[1] - centre[1], from[0] - centre[0]), a1 = Math.atan2(to[1] - centre[1], to[0] - centre[0]);
-  return sample(centre, r, a0, ((a1 - a0 + 3 * Math.PI) % TAU) - Math.PI);
+  if (!b || more || !(r > 0)) return null;
+  const p = points[corner], ta = into(a, p), tb = into(b, p);
+  if (Math.abs(cross(ta, tb)) < 1e-9) return null;
+  const oa = offset(a, tb, r), ob = offset(b, ta, r);
+  if (!oa || !ob) return null;
+  const centre = crossings(oa, ob).filter(o => within(a, foot(a, o)) && within(b, foot(b, o))).sort((x, y) => dist(x, p) - dist(y, p))[0];
+  if (!centre) return null;
+  // Counter-clockwise from a's tangent point where leaving a turns left round the centre, else clockwise.
+  const fa = sub(foot(a, centre), centre), fb = sub(foot(b, centre), centre);
+  return sample(centre, r, Math.atan2(fa[1], fa[0]), cross(fa, into(a, foot(a, centre))) < 0 ? ccw(fa, fb) : -ccw(fb, fa));
 }
 
 // --- Trim ------------------------------------------------------------------------------------------------------------
