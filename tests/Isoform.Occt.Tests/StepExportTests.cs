@@ -114,6 +114,16 @@ public class StepExportTests(ITestOutputHelper output)
             50000 - 40 * 30 * 6 + 140 * Spandrel(2) - 4 * Mitre(2));
         yield return new("rim of a cut-out with a loop round", new([Plate, new Extrude("slot", BooleanOp.Cut, Xy, Stadium(), -1, 11), new Fillet("round", [], 1, Loop: "plate/z+")]),
             50000 - (20 * 10 + Math.PI * 25) * 10 - (300 * Spandrel(1) - 4 * Mitre(1)) - 40 * Spandrel(1) - 2 * Math.PI * (5 + Centroid(1)) * Spandrel(1));
+        // Single edges the profile is not behind, and rims of cuts: the corner along the edge is taken away, ending on
+        // the faces beside it (the foot's top and the window's walls gain the fillet's ends).
+        yield return new("L bracket with a riser fillet", new([new Extrude("bracket", BooleanOp.New, Xy, Loop([0, 0],
+                ("bottom", 40, 0, 0), ("tip", 40, 5, 0), ("inner", 5, 5, 0), ("riser", 5, 30, 0), ("top", 0, 30, 0), ("back", 0, 0, 0)), 0, 20),
+                new Fillet("round", ["bracket/end", "bracket/riser"], 1)]),
+            (40 * 5 + 5 * 25) * 20 - 25 * Spandrel(1));
+        yield return new("rim edge of a window", new([Plate, new Extrude("window", BooleanOp.Cut, Xy, Rectangle(30, 15, 70, 35), -1, 11), new Fillet("round", ["plate/z+", "window/s"], 1)]),
+            50000 - 40 * 20 * 10 - 40 * Spandrel(1));
+        yield return new("rim edge of a slot, round its tangent rim", new([Plate, new Extrude("slot", BooleanOp.Cut, Xy, Stadium(), -1, 11), new Fillet("round", ["plate/z+", "slot/a"], 1)]),
+            50000 - (20 * 10 + Math.PI * 25) * 10 - 40 * Spandrel(1) - 2 * Math.PI * (5 + Centroid(1)) * Spandrel(1));
         // A circle of two arcs: the loop's torus is two faces, whose edges are the tube circles at the arcs' joints.
         yield return new("clamp: one torus in two faces", new(
                 [new Extrude("clamp", BooleanOp.New, Xy, Loop([-12, 0], ("a", 12, 0, 1), ("b", -12, 0, 1)), 0, 14), new Hole("bore", [0, 0], 10), new Fillet("lip", [], 1.5, Loop: "clamp/end")]),
@@ -125,6 +135,12 @@ public class StepExportTests(ITestOutputHelper output)
             50000 - Math.PI * 25 * 10 - (97 * 47 * 7 - Math.PI * 6.5 * 6.5 * 7));
         yield return new("shelled edit-suite base", new([.. EditSuite.Base.Features, new Shell("shell", 1)]),
             50000 - Math.PI * 25 * 10 - Spandrel(2) * 50 - (98 * 48 * 8 - Math.PI * 36 * 8 - Spandrel(1) * 48));
+        // An offset of a shell: the outside grows by 0.5 and the cavity shrinks by 0.5, a wall of 2.5.
+        yield return new("offset shelled plate with hole", new([Plate, new Hole("hole", [30, 25], 10), new Shell("shell", 1.5), new Offset("grow", 0.5)]),
+            101 * 51 * 11 - Math.PI * 4.5 * 4.5 * 11 - (96 * 46 * 6 - Math.PI * 7 * 7 * 6));
+        // Fillets grow with it, outside (2.5) and in the cavity (2.5 − 2 = 0.5).
+        yield return new("offset shelled edit-suite base", new([.. EditSuite.Base.Features, new Shell("shell", 1), new Offset("grow", 0.5)]),
+            101 * 51 * 11 - Math.PI * 4.5 * 4.5 * 11 - Spandrel(2.5) * 51 - (97 * 47 * 7 - Math.PI * 6.5 * 6.5 * 7 - Spandrel(0.5) * 47));
 
         // Bodies stay solids of their own.
         yield return new("two overlapping bodies", new([Plate, new Block("post", BooleanOp.New, [40, 15, 5], [20, 20, 30])]), 50000 + 12000, Solids: 2);
