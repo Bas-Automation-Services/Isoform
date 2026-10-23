@@ -13,6 +13,7 @@ import { inside, loopPolygon, regionAt, regionKey, shapes } from '../../src/Isof
 import { bounds, fit, fromScreen, frameOfPlane, gridStep, toScreen, toSketch, toWorld, zoom } from '../../src/Isoform.Playground/wwwroot/js/sketch/frame.js';
 import { describeConstraint, states, summary } from '../../src/Isoform.Playground/wwwroot/js/sketch/status.js';
 import { cornerAt, corners, filletArc, filletEdit, filletRadius, runEdit, trimEdit, trimPiece } from '../../src/Isoform.Playground/wwwroot/js/sketch/edit.js';
+import { edgeAt, edgesOf, projectEdit } from '../../src/Isoform.Playground/wwwroot/js/sketch/project.js';
 
 const blank = () => newSketch('s', { face: 'plate/z+' });
 const at = (u, v) => ({ at: [u, v] });
@@ -386,4 +387,58 @@ test('a trim names every constraint it dropped; a refusal keeps the sketch and s
   const failed = await runEdit(kernel(new Error('There is no op sketchEdit.')).call, before, trimEdit('e1', [1, 0]));
   assert.equal(failed.note.level, 'error');
   assert.match(failed.note.text, /^trim e1: There is no op sketchEdit/);
+});
+
+// --- Projected edges (sketch/project.js) --------------------------------------------------------------------------
+
+// A result as the page has it: the x+ and y- edges of the plate's top (x+ in two segments), and the y- edge of its
+// bottom right under the top's.
+const plateResult = () => ({
+  faces: [['plate/z+'], ['plate/x+'], ['plate/y-'], ['plate/z-']],
+  lineFaces: [[0, 1], [0, 2], [2, 3]],
+  mesh: {
+    sharp: new Float32Array([100, 0, 10, 100, 20, 10, 100, 20, 10, 100, 50, 10, 0, 0, 0, 100, 0, 0, 0, 0, 10, 100, 0, 10]),
+    sharpEdges: new Int32Array([0, 0, 2, 1]),
+  },
+});
+const top = frameOfPlane({ origin: [0, 0, 10], x: [1, 0, 0], normal: [0, 0, 1] });
+
+test('the project tool offers the part\'s sharp edges in the plane, one per face pair', () => {
+  const edges = edgesOf(plateResult(), top);
+  assert.deepEqual(edges.map(e => e.faces), [['plate/z+', 'plate/x+'], ['plate/y-', 'plate/z-'], ['plate/z+', 'plate/y-']]);
+  assert.deepEqual(edges[0].segments, [[[100, 0], [100, 20]], [[100, 20], [100, 50]]]);
+  assert.deepEqual(edges[2].world, [[[0, 0, 10], [100, 0, 10]]]);
+  assert.deepEqual(edges[1].heights, [-10], 'the bottom edge lies 10 below the plane');
+});
+
+test('the edge under the pointer is the nearest within reach, the one nearest the viewer of edges that look the same', () => {
+  const edges = edgesOf(plateResult(), top);
+  const hit = edgeAt(edges, [99, 30], 2);
+  assert.deepEqual(hit.edge.faces, ['plate/z+', 'plate/x+']);
+  closeAll(hit.near, [100, 30, 10]);
+  assert.deepEqual(edgeAt(edges, [30, 1], 2).edge.faces, ['plate/z+', 'plate/y-'], 'the top edge, not the bottom one under it');
+  assert.deepEqual(edgeAt(edges.reverse(), [30, 1], 2).edge.faces, ['plate/z+', 'plate/y-'], 'whatever their order');
+  assert.equal(edgeAt(edges, [50, 25], 2), null);
+});
+
+test('a projection asks the kernel for sketchEdit with the edge\'s faces and is one undo step, linked or not', async () => {
+  const s = rect(), projected = { ...s, entities: [...s.entities, { id: 'projected', line: ['p2', 'p3'], project: ['plate/z+', 'plate/x+'], construction: true }] };
+  const { call, calls } = kernel(solved(projected, { added: ['projected'] }));
+  const edit = projectEdit(['plate/z+', 'plate/x+'], [100, 30, 10], true);
+  const r = await runEdit(call, { base, sketch: s, undo: [] }, edit);
+  assert.deepEqual(calls[0].args.edit, { op: 'project', faces: ['plate/z+', 'plate/x+'], near: [100, 30, 10], linked: true });
+  assert.deepEqual(r.undo, [s]);
+  assert.ok(r.sketch.entities.some(e => e.project), 'the kernel\'s sketch, with the link');
+  assert.deepEqual(r.note, { text: 'project plate/z+ | plate/x+ (linked)', level: 'ok', items: [] });
+  const refused = await runEdit(kernel({ error: 'it projects to an ellipse' }).call, { base, sketch: s, undo: [] }, projectEdit(['a/x', 'b/y'], [0, 0, 0], false));
+  assert.deepEqual(refused.note, { text: 'project a/x | b/y: it projects to an ellipse', level: 'error', items: [] });
+});
+
+test('a lost projection shows red and says so in the status line', () => {
+  const s = { ...rect(), entities: [...rect().entities, { id: 'edge', line: ['p1', 'p2'], project: ['plate/z+', 'gone/x+'], construction: true }] };
+  const reply = { free: [], freeDegrees: 0, problems: [{ code: 'sketch-reference-lost', message: 'edge cannot follow its edge', constraints: [], entities: ['edge'] }] };
+  assert.equal(states(s, reply).state.get('edge'), 'conflict');
+  assert.equal(states(s, reply).state.get('e1'), 'fixed');
+  assert.deepEqual(summary(reply), { text: 'a projected edge is lost', level: 'error' });
+  assert.deepEqual(toggleConstruction(s, ['edge']).entities.at(-1), s.entities.at(-1), 'a linked projection stays construction');
 });

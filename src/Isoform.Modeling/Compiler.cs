@@ -94,11 +94,18 @@ public sealed class Compiler(ModelingSettings settings)
 
         // Sketches, solved where they stand in the history: a face sketch takes the face as the part has it there.
         var sketches = new Dictionary<string, (SweptShape? Shape, SketchSolution? Solution, string? Problem)>();
+        // Projected part edges are resolved here, from the surfaces the part has so far; one that is not stays put.
         void Prepare(Sketch s)
         {
-            var solution = SketchSolver.Solve(s);
+            var plane = s.On.Plane ?? SketchPlanes.OfFace(s.On.Face!, surfaces, tree);
+            IReadOnlyDictionary<string, SketchCarrier>? carriers = null;
+            IReadOnlyList<(string Entity, string Problem)> lost = [];
+            if (plane is not null) (carriers, lost) = SketchReferences.Resolve(s, plane, surfaces);
+            var solution = SketchSolver.Solve(s, carriers: carriers);
             foreach (var p in solution.Problems)
                 diagnostics.Add(new Diagnostic(p.Code, s.Id, $"sketch {s.Id}: {p.Message}"));
+            foreach (var (entity, why) in lost)
+                diagnostics.Add(new Diagnostic(Diagnostic.SketchReferenceLost, s.Id, $"sketch {s.Id}: {entity} cannot follow its edge, so it stays where it was: {why}"));
             if (!solution.Solved)
             {
                 sketches[s.Id] = (null, null, "does not solve");
@@ -106,7 +113,6 @@ public sealed class Compiler(ModelingSettings settings)
             }
             var (regions, problem) = SketchRegions.Of(s, solution);
             if (problem is not null) diagnostics.Add(new Diagnostic(SketchSolution.Invalid, s.Id, $"sketch {s.Id}: {problem}"));
-            var plane = s.On.Plane ?? SketchPlanes.OfFace(s.On.Face!, surfaces, tree);
             if (plane is null)
             {
                 diagnostics.Add(new Diagnostic(Diagnostic.SketchPlaneLost, s.Id, $"sketch {s.Id} lies on {s.On.Face}, which is not a flat face of the part here"));

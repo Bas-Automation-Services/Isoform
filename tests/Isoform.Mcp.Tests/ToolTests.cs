@@ -369,7 +369,7 @@ public class ToolTests
         var noPoint = () => IsoformTools.SketchEdit(doc, "outline", "trim", entity: "bore", x: 75);
         var notSketch = () => IsoformTools.SketchEdit(doc, "plate", "fillet", corner: "c", radius: 2);
 
-        unknown.Should().Throw<McpException>().WithMessage("*no sketch edit 'chamfer'*fillet or trim*");
+        unknown.Should().Throw<McpException>().WithMessage("*no sketch edit 'chamfer'*fillet, trim or project*");
         noRadius.Should().Throw<McpException>().WithMessage("*needs a radius*");
         noPoint.Should().Throw<McpException>().WithMessage("*needs y*");
         notSketch.Should().Throw<McpException>().WithMessage("*not a sketch*");
@@ -389,5 +389,23 @@ public class ToolTests
         var sketch = (Sketch)CanonicalFormat.Read(r["settled"]!["text"]!.GetValue<string>())["outline"];
         sketch.Entities.OfType<SketchArc>().Should().ContainSingle();
         r["regions"]!.AsArray().Should().ContainSingle("the rounded outline is still one region round the bore");
+    }
+
+    [Fact]
+    public void Sketch_edit_projects_a_part_edge_linked_or_as_a_copy_and_refuses_an_ellipse()
+    {
+        var doc = Doc(Plate, Outline);
+        var copy = Parse(IsoformTools.SketchEdit(doc, "outline", "project", faces: ["plate/z+", "plate/x+"]));
+        var linked = Parse(IsoformTools.SketchEdit(doc, "outline", "project", faces: ["plate/z+", "plate/x+"], near: [100, 10, 10], linked: true));
+
+        Strings(copy["added"]).Should().Equal("projected", "projected-from", "projected-to");
+        var line = (SketchLine)((Sketch)CanonicalFormat.Read(linked["settled"]!["text"]!.GetValue<string>())["outline"]).Entities.Single(e => e.Id == "projected");
+        line.Project.Should().Equal("plate/z+", "plate/x+");
+        line.Construction.Should().BeTrue();
+        var noFaces = () => IsoformTools.SketchEdit(doc, "outline", "project", faces: ["plate/z+"]);
+        noFaces.Should().Throw<McpException>().WithMessage("*needs the edge's two faces*");
+        var outlineOnSide = Doc(Plate, new Hole("hole", [30, 25], 10), Outline with { On = new SketchPlacement(Face: "plate/x+") });
+        var ellipse = () => IsoformTools.SketchEdit(outlineOnSide, "outline", "project", faces: ["plate/z+", "hole/wall"]);
+        ellipse.Should().Throw<McpException>().WithMessage("*projects to an ellipse*");
     }
 }

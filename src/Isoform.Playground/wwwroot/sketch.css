@@ -46,6 +46,9 @@
 .sketch-svg .entity.fixed { stroke: var(--ink); }
 .sketch-svg .entity.conflict { stroke: var(--error); }
 .sketch-svg .entity.construction { stroke-dasharray: 7 5; stroke-width: 1.5; }
+/* A projection linked to a part edge: violet dots, red when its edge is lost. */
+.sketch-svg .entity.linked { stroke: #8b5cf6; stroke-dasharray: 2 4; }
+.sketch-svg .entity.linked.conflict { stroke: var(--error); }
 .sketch-svg .entity.lit, .sketch-svg .entity.selected { stroke-width: 4; }
 .sketch-svg .entity.selected { stroke: #f59e0b; }
 .sketch-svg .point { fill: var(--panel); stroke-width: 1.5; }
@@ -67,6 +70,8 @@
 }
 .sketch-svg .dimension.conflict text { fill: var(--error); }
 .sketch-svg .draft { stroke: var(--accent); stroke-width: 1.5; stroke-dasharray: 4 3; fill: none; }
+.sketch-svg .edge { stroke: var(--ink); stroke-opacity: 0.25; stroke-width: 1; fill: none; }
+.sketch-svg .edge.lit { stroke: #8b5cf6; stroke-opacity: 0.9; stroke-width: 4; stroke-linecap: round; }
 .sketch-svg .trim { stroke: var(--error); stroke-width: 5; stroke-opacity: 0.6; stroke-linecap: round; fill: none; }
 .sketch-svg .snap { stroke: var(--accent); stroke-width: 1.5; fill: none; }
 .sketch-svg .glyph { fill: var(--accent); font: bold 12px system-ui, sans-serif; }

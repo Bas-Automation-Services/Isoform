@@ -98,6 +98,10 @@ test('sketchEdit answers as the wasm kernel does', async () => {
   const sketched = readFileSync(new URL('./sketched.fixture.json', import.meta.url), 'utf8');
   const edit = { op: 'fillet', corner: 'c' };
   assert.deepEqual(await call('sketchEdit', { document: sketched, id: 'base', edit }), JSON.parse(wasm.SketchEdit(sketched, 'base', JSON.stringify(edit))));
+  const doc = JSON.parse(sketched);
+  const document = JSON.stringify({ ...doc, features: [...doc.features, { id: 'top', type: 'sketch', on: { face: 'plate/end' }, points: {}, entities: [], constraints: [] }] });
+  const project = { op: 'project', faces: ['plate/end', 'plate/right'], near: [60, 10, 5], linked: true };
+  assert.deepEqual(await call('sketchEdit', { document, id: 'top', edit: project }), JSON.parse(wasm.SketchEdit(document, 'top', JSON.stringify(project))));
 });
 
 test('each connection is a session of its own: the previews\' slot is not the main one\'s', async () => {

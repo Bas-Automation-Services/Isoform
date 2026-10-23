@@ -5,7 +5,8 @@ namespace Isoform.Sketching;
 /// <summary>
 /// A sketch as the solver sees it: the unknowns (point coordinates, then circle radii, in name order), and for each
 /// constraint its residuals, each a function of a few unknowns, zero where the constraint holds, in millimetres.
-/// Every arc also keeps its two ends at one radius.
+/// Built-in rows hold every arc's two ends at one radius and every projected entity on its carrier, or, without one,
+/// where it was stored.
 /// </summary>
 sealed class Model
 {
@@ -13,13 +14,13 @@ sealed class Model
 
     readonly Sketch _sketch;
     readonly List<Residual>[] _constraints;
-    readonly List<Residual> _arcs = [];
+    readonly List<Residual> _built = [];
 
     public Dictionary<string, int> PointIndex { get; } = [];
     public Dictionary<string, int> RadiusIndex { get; } = [];
     public int Unknowns { get; }
 
-    public Model(Sketch sketch)
+    public Model(Sketch sketch, IReadOnlyDictionary<string, SketchCarrier>? carriers = null)
     {
         _sketch = sketch;
         var n = 0;
@@ -30,8 +31,9 @@ sealed class Model
         foreach (var a in sketch.Entities.OfType<SketchArc>())
         {
             var (c, f, t) = (PointIndex[a.Center], PointIndex[a.From], PointIndex[a.To]);
-            _arcs.Add(new([c, c + 1, f, f + 1, t, t + 1], x => Dist(x, t, c) - Dist(x, f, c)));
+            _built.Add(new([c, c + 1, f, f + 1, t, t + 1], x => Dist(x, t, c) - Dist(x, f, c)));
         }
+        foreach (var e in sketch.Entities.Where(e => e.Project is not null)) Hold(e, carriers?.GetValueOrDefault(e.Id), start);
         _constraints = sketch.Constraints.Select(c => Build(c, start)).ToArray();
     }
 
@@ -57,7 +59,7 @@ sealed class Model
         return free;
     }
 
-    public int Rows(int[] constraints) => _arcs.Count + constraints.Sum(c => _constraints[c].Count);
+    public int Rows(int[] constraints) => _built.Count + constraints.Sum(c => _constraints[c].Count);
 
     public double[] Residuals(int[] constraints, double[] x) => [.. Selected(constraints).Select(r => r.F(x))];
 
@@ -81,7 +83,7 @@ sealed class Model
         return j;
     }
 
-    IEnumerable<Residual> Selected(int[] constraints) => _arcs.Concat(constraints.SelectMany(c => _constraints[c])).Concat(_pull);
+    IEnumerable<Residual> Selected(int[] constraints) => _built.Concat(constraints.SelectMany(c => _constraints[c])).Concat(_pull);
 
     readonly List<Residual> _pull = [];
 
@@ -96,6 +98,38 @@ sealed class Model
         const double weight = 1e-4;
         _pull.Add(new([p], x => weight * (x[p] - t.X)));
         _pull.Add(new([p + 1], x => weight * (x[p + 1] - t.Y)));
+    }
+
+    /// <summary>
+    /// A projected entity on its carrier: a line's ends on the line, an arc's or circle's centre on the circle's centre
+    /// and its radius the circle's. Without a carrier of its kind (the reference did not resolve) its points and radius
+    /// stay where they were stored.
+    /// </summary>
+    void Hold(SketchEntity e, SketchCarrier? carrier, double[] start)
+    {
+        void Stay(int v) => _built.Add(new([v], x => x[v] - start[v]));
+        switch (e, carrier)
+        {
+            case (SketchLine l, CarrierLine k):
+                foreach (var p in new[] { PointIndex[l.From], PointIndex[l.To] })
+                    _built.Add(new([p, p + 1], x => (x[p + 1] - k.Y) * k.Dx - (x[p] - k.X) * k.Dy));
+                break;
+            case (SketchArc or SketchCircle, CarrierCircle k):
+                var (c, radius, vars) = Round(e.Id);
+                _built.Add(new([c], x => x[c] - k.X));
+                _built.Add(new([c + 1], x => x[c + 1] - k.Y));
+                _built.Add(new([.. vars, .. Of(c)], x => radius(x) - k.Radius));
+                break;
+            default:
+                var points = e switch { SketchLine l => [l.From, l.To], SketchArc a => [a.Center, a.From, a.To], SketchCircle k => new[] { k.Center }, _ => [] };
+                foreach (var p in points.Select(q => PointIndex[q]).Distinct())
+                {
+                    Stay(p);
+                    Stay(p + 1);
+                }
+                if (e is SketchCircle) Stay(RadiusIndex[e.Id]);
+                break;
+        }
     }
 
     // ---- Geometry over the unknowns ----
@@ -348,6 +382,9 @@ sealed class Model
             if (points.FirstOrDefault(p => !s.Points.ContainsKey(p)) is { } missing) return $"entity '{e.Id}' uses '{missing}', which is not a point";
             if (e is SketchLine { From: var f, To: var t } && f == t) return $"line '{e.Id}' starts and ends at the same point";
             if (e is SketchCircle { Radius: <= 0 }) return $"circle '{e.Id}' needs a radius above 0";
+            if (e.Project is { } faces && (faces.Length != 2 || faces.Any(f => f.Length == 0) || faces[0] == faces[1]))
+                return $"entity '{e.Id}' projects an edge, named by its two faces: two different face names";
+            if (e.Project is not null && !e.Construction) return $"entity '{e.Id}' projects an edge, so it is construction geometry";
         }
 
         bool Point(string r) => s.Points.ContainsKey(r) && !entities.ContainsKey(r);
