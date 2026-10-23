@@ -53,7 +53,19 @@ public static class ExactBrep
             var topology = result.Topology!;
             var faceOfQuad = result.FaceOfQuad;
             var faceCount = topology.Faces.Count;
-            if (result.Part.Field is { } field) Collect(field);
+            if (result.Part.Field is { } field)
+            {
+                Collect(field);
+                // The pieces of an open run have a plain leaf for a side: find it in its profile.
+                var profiles = Nodes(field).OfType<ProfileField>().Distinct().ToList();
+                foreach (var (id, l) in _loops.Where(x => x.Value.Profile is null).ToList())
+                foreach (var p in profiles)
+                    if (p.EdgeLeaves.FirstOrDefault(x => x?.Surface.Id == l.Side.Surface.Id) is { } leaf)
+                    {
+                        _loops[id] = l with { Side = leaf, Profile = p };
+                        break;
+                    }
+            }
 
             // Each face's exact surface, checked against the face's mesh.
             _owner = new Surface[faceCount];
@@ -291,15 +303,16 @@ public static class ExactBrep
         }
 
         /// <summary>
-        /// Two faces of one loop whose side faces run into each other tangentially at a profile corner (a line into an
-        /// arc, or one arc split in two) do not meet in a surface intersection: their edge lies in the plane across the
-        /// junction, a quarter circle round the ball centre for a fillet, a straight cut for a chamfer. With its ends
-        /// on the cap and on the side; null for any other pair.
+        /// Two faces of one loop, or two pieces of one open run of a single-edge fillet, whose side faces run into each
+        /// other tangentially at a profile corner (a line into an arc, or one arc split in two) do not meet in a surface
+        /// intersection: their edge lies in the plane across the junction, a quarter circle round the ball centre for
+        /// a fillet, a straight cut for a chamfer. With its ends on the cap and on the side; null for any other pair.
         /// </summary>
         (Curve Curve, Point3D OnCap, Point3D OnSide)? Junction(int a, int b, Point3D near)
         {
             if (!_loops.TryGetValue(_owner[a].Id, out var la) || !_loops.TryGetValue(_owner[b].Id, out var lb)
-                || la.Loop != lb.Loop || la.Profile is null || la.Profile != lb.Profile)
+                || la.Profile is null || la.Profile != lb.Profile
+                || la.Loop != lb.Loop && (la.Loop.Cap != lb.Loop.Cap || la.Loop.Size != lb.Loop.Size || la.Loop.Round != lb.Loop.Round))
                 return null;
             var junctions = la.Profile.TangentJunctions(la.Side, lb.Side).ToList();
             if (junctions.Count == 0) return null;
@@ -619,9 +632,11 @@ public static class ExactBrep
                     var e = edges[c.Edge];
                     if (!images.TryGetValue(c.Edge, out var image)) images[c.Edge] = image = SurfaceParameters.Image(s, e.Curve, e.T0, e.T1);
                     var from = c.Forward ? image.Start : image.End;
-                    if (last is { } to)
-                        image = image.Shifted(SurfaceParameters.PeriodicU(s) ? SurfaceParameters.Turns(to.U - from.U) : 0,
-                            SurfaceParameters.PeriodicV(s) ? SurfaceParameters.Turns(to.V - from.V) : 0);
+                    // The first starts within [0, 2π], the surface's own range: OCCT places the ends of a straight
+                    // image within that range, so a face drawn a turn away would not close.
+                    var to = last ?? (Math.PI, Math.PI);
+                    image = image.Shifted(SurfaceParameters.PeriodicU(s) ? SurfaceParameters.Turns(to.U - from.U) : 0,
+                        SurfaceParameters.PeriodicV(s) ? SurfaceParameters.Turns(to.V - from.V) : 0);
                     coedges.Add(c with { Uv = image });
                     anchor ??= c.Forward ? image.Start : image.End;
                     last = c.Forward ? image.End : image.Start;

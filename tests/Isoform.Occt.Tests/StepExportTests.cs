@@ -124,6 +124,20 @@ public class StepExportTests(ITestOutputHelper output)
             50000 - 40 * 20 * 10 - 40 * Spandrel(1));
         yield return new("rim edge of a slot, round its tangent rim", new([Plate, new Extrude("slot", BooleanOp.Cut, Xy, Stadium(), -1, 11), new Fillet("round", ["plate/z+", "slot/a"], 1)]),
             50000 - (20 * 10 + Math.PI * 25) * 10 - 40 * Spandrel(1) - 2 * Math.PI * (5 + Centroid(1)) * Spandrel(1));
+        // Open tangent runs: a piece per edge, a cylinder along a line and a torus round an arc meeting in the plane
+        // across their junction. The riser runs over an R3 bend into the top (Pappus round the bend); the window's
+        // rim over an R5 corner (the spandrel's centroid outside the wall).
+        var bent = Loop([0, 0], ("bottom", 40, 0, 0), ("tip", 40, 5, 0), ("inner", 5, 5, 0), ("riser", 5, 27, 0), ("bend", 2, 30, Math.Tan(Math.PI / 8)),
+            ("top", 0, 30, 0), ("back", 0, 0, 0));
+        var bentArea = 40 * 5 + 5 * 22 + Math.PI * 9 / 4 + 2 * 3;
+        yield return new("bent riser fillet over its tangent run", new([new Extrude("bracket", BooleanOp.New, Xy, bent, 0, 20), new Fillet("round", ["bracket/end", "bracket/riser"], 1)]),
+            bentArea * 20 - 24 * Spandrel(1) - Math.PI / 2 * (3 - Centroid(1)) * Spandrel(1));
+        // A 45° chamfer of 1 takes ½ along the lines, and round the bend a triangle whose centroid sits ⅓ in from the side.
+        yield return new("bent riser chamfer over its tangent run", new([new Extrude("bracket", BooleanOp.New, Xy, bent, 0, 20), new Chamfer("round", ["bracket/end", "bracket/riser"], 1)]),
+            bentArea * 20 - 24 * 0.5 - Math.PI / 2 * (3 - 1.0 / 3) * 0.5);
+        var corner = Loop([30, 15], ("s", 65, 15, 0), ("bend", 70, 20, Math.Tan(Math.PI / 8)), ("e", 70, 35, 0), ("n", 30, 35, 0), ("w", 30, 15, 0));
+        yield return new("rim edge of a window over its rounded corner", new([Plate, new Extrude("window", BooleanOp.Cut, Xy, corner, -1, 11), new Fillet("round", ["plate/z+", "window/s"], 1)]),
+            50000 - (800 - 25 * (1 - Math.PI / 4)) * 10 - 50 * Spandrel(1) - Math.PI / 2 * (5 + Centroid(1)) * Spandrel(1));
         // A circle of two arcs: the loop's torus is two faces, whose edges are the tube circles at the arcs' joints.
         yield return new("clamp: one torus in two faces", new(
                 [new Extrude("clamp", BooleanOp.New, Xy, Loop([-12, 0], ("a", 12, 0, 1), ("b", -12, 0, 1)), 0, 14), new Hole("bore", [0, 0], 10), new Fillet("lip", [], 1.5, Loop: "clamp/end")]),
