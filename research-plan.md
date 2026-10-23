@@ -290,7 +290,10 @@ Sample, bounds enclose, simplification bit-exact) and keeps its face names under
 Corners (2026-10-23): three plane–plane fillets of one radius at a convex corner meet in a sphere
 (`<id>/corner:a+b+c`), and two inside fillets round a joined boss meet round its square edge in a horn torus
 (`<id>/corner:a+b`, also where the two faces belong to different joined solids), both exact in STEP (a horn's apex,
-like a sphere's pole, needs the reader's healing). The horn is exact only for two planes at a right angle on a flat
+like a sphere's pole, needs the reader's healing). Below its apex a horn is narrower than a cell, so the mesh splits
+the apex in two; corners joined by a chain that are one point of the part (Gauss-Newton on all their surfaces, judged
+by the field) are one vertex, so the topology counts what the exact B-rep does. An offset moves a horn with its boss:
+the edge it rolls round stays a line, its apex stays. The horn is exact only for two planes at a right angle on a flat
 base: elsewhere each filler's flush end is not where the ball turns the corner. Not yet: corners of unequal radii
 (convex ones keep their mitre, `corner-mitred`), and inside corners at another angle, round a leaning edge, a curved
 face or a curved base: they stay open with `corner-open` naming why. An inside fillet whose filler cannot end where its

@@ -515,6 +515,26 @@ public sealed class Compiler(ModelingSettings settings)
         {
             case LeafField l:
                 return Leaf(l, d);
+            case MaxField m when m.Children.OfType<NegateField>().Select(n => n.Child).OfType<RoundedEdgeField>()
+                                     .FirstOrDefault(h => h.B.Surface is { Kind: SurfaceKind.Cylinder, Radius: 0 }) is { } horn:
+            {
+                // A horn filler (Horns): its base rises by d and its radius shrinks by d, so its apex stays; the edge it
+                // rolls round moves out with the solid's two faces and stays a line, and its bounds stay r/4 past them.
+                var edge = horn.B.Surface;
+                var past = m.Children.OfType<LeafField>().Where(l => l.Surface.Source == edge.Source && Math.Abs(l.Surface.Axis.Dot(edge.Axis)) < 1e-9).ToList();
+                var (nj, nk) = (past[0].Surface.Axis, past[1].Surface.Axis);
+                var moved = new LeafField(register(edge with { Origin = edge.Origin + (nj + nk) * (d / (1 + nj.Dot(nk))) }), horn.B.Complement);
+                var (floor, radius) = (Leaf(horn.A, -d), horn.Radius - d);
+                Field rounded = radius > 1e-9 ? horn.With(floor, moved, radius, register(horn.Fillet with { Radius = radius })) : new MaxField([floor, moved]);
+                var grown = m.Children.Select(c => c switch
+                {
+                    NegateField { Child: var h } when h == horn => new NegateField(rounded),
+                    LeafField l when past.Contains(l) => Leaf(l, -1.25 * d),
+                    LeafField l when l.Surface.Source == edge.Source => l,
+                    _ => OffsetOf(c, d, register, done, id, surfaces),
+                }).ToList();
+                return grown.Any(c => c is null) ? null : new MaxField(grown!);
+            }
             case MaxField m:
                 // A corner sphere is set again on its fillets as they moved; it goes when they shrank to nothing.
                 var flat = m.Children.Where(c => c is not VertexSphereField).ToList();

@@ -160,6 +160,8 @@ public class StepExportTests(ITestOutputHelper output)
         // OCCT runs the second fillet on differently past the first, so its own model is another shape.
         yield return new("inside fillets meeting round a boss's corner", CornerFilletTests.Boss(3), CornerFilletTests.BossVolume(3), Healed: true, Baseline: false);
         yield return new("boss rounded all round its foot", CornerFilletTests.Boss(2, all: true), CornerFilletTests.BossVolume(2, all: true), Healed: true, Baseline: false);
+        yield return new("offset boss rounded all round its foot", new([.. CornerFilletTests.Boss(2, all: true).Features, new Offset("grow", 0.5)]),
+            CornerFilletTests.BossVolume(2, all: true, d: 0.5), Healed: true, Baseline: false);
 
         // Profile corners next to arcs rounded in the profile: a tangent cylinder (extrude) or torus (revolve).
         yield return new("D with a corner rounded into its arc", ArcCornerTests.D(3), ArcCornerTests.DVolume(3));
@@ -246,10 +248,8 @@ public class StepExportTests(ITestOutputHelper output)
         shape.IsValid.Should().BeTrue();
         shape.SolidCount.Should().Be(part.Solids);
         counts.Should().Be(Counts(brep));
-        // Where more than three faces meet the mesh can split the corner and leave an edge of no length between
-        // its halves (one vertex too many as well); the exact B-rep has the one corner.
-        counts.Faces.Should().Be(t.Faces.Count);
-        counts.Edges.Should().BeInRange(t.Edges.Count - Math.Max(2, t.Vertices.Count - counts.Vertices), t.Edges.Count);
+        // Where the mesh splits a corner (a horn torus's apex) the topology merges the halves: the same faces, edges and corners.
+        counts.Should().Be((t.Faces.Count, t.Edges.Count, t.Vertices.Count));
 
         // The OCCT baseline models blocks, holes along Z, plane cuts and fillets.
         if (part.Solids == 1 && part.Baseline && part.Doc.Features.All(f => f is Block or Hole { On: null, Sketch: null } or PlaneCut or Fillet { Loop: null }))

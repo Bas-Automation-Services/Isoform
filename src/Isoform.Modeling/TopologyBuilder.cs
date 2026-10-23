@@ -155,16 +155,6 @@ public static class TopologyBuilder
                 var (a, b) = (Plane(faceOwners[segments[root].A]), Plane(faceOwners[segments[root].B]));
                 if (a is not null && b is not null && PointContact(field, a, b, near.Select(v => vertices[v]).ToList(), tolerance)) collapsed[root] = near;
             }
-        // A chain's root is its smallest segment: numbered in that order.
-        var topoEdges = new List<TopoEdge>();
-        var edgePoints = new List<Point3D[]>();
-        for (var i = 0; i < segments.Count; i++)
-            if (chainIndex[i] >= 0 && !collapsed.ContainsKey(i))
-            {
-                topoEdges.Add(new TopoEdge(topoEdges.Count, segments[i].A, segments[i].B));
-                edgePoints.Add([.. chainVertices[i].Select(v => vertices[v])]);
-            }
-
         // Vertices: clusters of mesh vertices where three or more faces meet.
         var corners = new List<(int Vertex, List<int> Faces)>();
         for (var v = 0; v < vertices.Length; v++)
@@ -215,6 +205,34 @@ public static class TopologyBuilder
                         && (tipped.Contains(corners[members[i]].Vertex) || tipped.Contains(corners[members[j]].Vertex))
                         && Along(field, on, surfaces, vertices[corners[members[i]].Vertex], vertices[corners[members[j]].Vertex], tolerance))
                         clusters.Union(members[i], members[j]);
+            }
+
+        // A chain between two corners that are one point of the part has no length: the cells split a corner where a
+        // face runs out in a tip narrower than a cell (a horn torus at its apex) and joined the faces either side
+        // across it. The corners are one vertex and the chain no edge.
+        if (field is not null)
+            foreach (var (root, near) in chainVertices)
+            {
+                if (collapsed.ContainsKey(root)) continue;
+                var atEnds = near.Where(cornerSlot.ContainsKey).Select(v => cornerSlot[v]).ToList();
+                if (atEnds.Select(clusters.Find).Distinct().Count() != 2) continue;
+                var (a, b) = (atEnds.First(), atEnds.First(s => clusters.Find(s) != clusters.Find(atEnds[0])));
+                var owners = atEnds.SelectMany(s => corners[s].Faces).Distinct().Select(f => faceOwners[f].Min()).ToArray();
+                // A blend or a lattice is near zero over a band, not on one surface: it cannot pin a point.
+                if (owners.Any(o => surfaces[o].Kind is SurfaceKind.Blend or SurfaceKind.Lattice)
+                    || !OnePoint(field, owners, vertices[corners[a].Vertex], vertices[corners[b].Vertex], tolerance)) continue;
+                collapsed[root] = near;
+                clusters.Union(a, b);
+            }
+
+        // A chain's root is its smallest segment: numbered in that order.
+        var topoEdges = new List<TopoEdge>();
+        var edgePoints = new List<Point3D[]>();
+        for (var i = 0; i < segments.Count; i++)
+            if (chainIndex[i] >= 0 && !collapsed.ContainsKey(i))
+            {
+                topoEdges.Add(new TopoEdge(topoEdges.Count, segments[i].A, segments[i].B));
+                edgePoints.Add([.. chainVertices[i].Select(v => vertices[v])]);
             }
 
         bool SameCorner((int Vertex, List<int> Faces) x, (int Vertex, List<int> Faces) y) =>
@@ -333,6 +351,25 @@ public static class TopologyBuilder
             (inside, outside) = (inside || v < 0, outside || v > 0);
         }
         return inside && outside;
+    }
+
+    /// <summary>
+    /// Two corners are one point of the part: Gauss-Newton on all their faces' surfaces, sampled from the body field so
+    /// that fillets count, reaches the part from either corner, and the way between the two points stays on every
+    /// surface and on the part. Judged by the field, not by distance: where the faces touch tangentially the points can
+    /// lie a little apart along the common tangent yet be the same within the tolerance.
+    /// </summary>
+    static bool OnePoint(Field field, int[] owners, Point3D a, Point3D b, double tolerance)
+    {
+        bool On(Point3D x) => Math.Abs(field.Value(x)) <= tolerance && owners.All(o => field.SampleSurface(o, x) is { } s && Math.Abs(s.Value) <= tolerance);
+        // Most corners of a chain are apart: their surfaces have no common point, which the first solve shows.
+        FalseEdges.Residual(field, owners, a, out var p);
+        if (!On(p)) return false;
+        FalseEdges.Residual(field, owners, b, out var q);
+        const int Steps = 4;
+        for (var i = 1; i <= Steps; i++)
+            if (!On(p + (q - p) * ((double)i / Steps))) return false;
+        return true;
     }
 
     static (Point3D, Point3D) Closest(List<Point3D> a, List<Point3D> b)
