@@ -2,9 +2,9 @@
 // cut or revolve, or edit a sketch of the document. The view looks straight down the face with an orthographic
 // camera, the part dimmed behind an SVG layer that holds the drawing and takes the pointer. Every change and every
 // drag solves the sketch in the kernel (the `sketch` op, latest wins) and the drawing shows the solved points. The
-// finish commits through applyEdits as one history entry. Fillet and trim are the kernel's (the `sketchEdit` op), each
-// one undo step. The pure parts are model.js, infer.js, dimension.js, regions.js, frame.js, status.js and edit.js; the
-// panel is panel.js.
+// finish commits through applyEdits as one history entry. Fillet, trim and projecting a part edge are the kernel's (the
+// `sketchEdit` op), each one undo step. The pure parts are model.js, infer.js, dimension.js, regions.js, frame.js,
+// status.js, edit.js and project.js; the panel is panel.js.
 //
 //   const sketching = createSketchMode(store, { viewer, view, column, call, latest, applyEdits });
 //     view: the element the 3D view is in; column: the right-hand panel; call/latest: the kernel client's;
@@ -19,11 +19,12 @@ import { bounds, fit, fromScreen, frameOfPlane, gridStep, toScreen, toSketch, to
 import { states, summary } from './status.js';
 import { createPanel } from './panel.js';
 import { cornerAt, filletArc, filletEdit, filletRadius, runEdit, trimEdit, trimPiece } from './edit.js';
+import { edgeAt, edgesOf, projectEdit } from './project.js';
 
 const TOOLS = [
   ['select', 'Select', 'Esc'], ['line', 'Line', 'L'], ['rectangle', 'Rectangle', 'R'], ['circle', 'Circle', 'C'],
   ['arc', 'Arc', 'A'], ['slot', 'Slot', 'S'], ['point', 'Point', 'P'], ['dimension', 'Dimension', 'D'],
-  ['fillet', 'Fillet', 'F'], ['trim', 'Trim', 'T'],
+  ['fillet', 'Fillet', 'F'], ['trim', 'Trim', 'T'], ['project', 'Project', 'E'],
 ];
 // The tools that draw: they place points where inference says.
 const DRAWING = new Set(['line', 'rectangle', 'circle', 'arc', 'slot', 'point']);
@@ -31,6 +32,7 @@ const HINT = 'Click to draw · Shift draws without snapping · Esc stops a tool,
 const HINTS = {
   fillet: 'Click a corner and type its radius, or drag out from it · Esc stops the tool',
   trim: 'Click the piece of a line, arc or circle to delete, up to where others cross it · Esc stops the tool',
+  project: 'Click an edge of the part to project it into the sketch · Linked keeps it following the edge · Esc stops the tool',
 };
 const KEYS = Object.fromEntries(TOOLS.filter(t => t[2].length === 1).map(([id, , key]) => [key.toLowerCase(), id]));
 const GLYPHS = { coincident: '◉', origin: '⌖', midpoint: '½', on: '∈', horizontal: 'H', vertical: 'V', tangent: 'T' };
@@ -137,6 +139,8 @@ export function createSketchMode(store, { viewer, view, column, call, latest, ap
       // fillet: the corner being rounded and its radius ({corner, radius, dragged}); radius: the last fillet's; piece:
       // what a trim would delete; note: what the last fillet or trim did, or why it could not ({text, level, items}).
       fillet: null, radius: null, piece: null, note: null,
+      // project: the part's edges in the plane, the one under the pointer, and whether a projection keeps its link.
+      edges: result.mesh ? edgesOf(result, frame) : [], edge: null, linked: false,
       finish: { op: 'extrude', depth: 10, angle: 360, id: M.freshFeatureId(doc, 'extrude'), axis: null, auto: true },
       parameters: Object.keys(doc.parameters ?? {}),
       outline: on ? outlineOf(result, on, frame) : [],
@@ -228,7 +232,7 @@ export function createSketchMode(store, { viewer, view, column, call, latest, ap
     const mine = s, version = s.version;
     const r = await runEdit(call, s, edit);
     if (s !== mine || version !== s.version) return; // the sketch changed meanwhile: the edit was of an older one
-    Object.assign(s, { sketch: r.sketch, undo: r.undo, note: r.note, fillet: null, piece: null, hover: null });
+    Object.assign(s, { sketch: r.sketch, undo: r.undo, note: r.note, fillet: null, piece: null, hover: null, edge: null });
     if (!r.reply) return refresh();
     if (edit.op === 'fillet') s.radius = edit.radius;
     keepSelection();
@@ -265,6 +269,11 @@ export function createSketchMode(store, { viewer, view, column, call, latest, ap
     const o = S([0, 0]);
     parts.push(`<path class="axes" d="M${f1(o[0])} 0V${v.height}M0 ${f1(o[1])}H${v.width}"/>`);
     parts.push(`<path class="outline" d="${s.outline.map(d).join('')}"/>`);
+    // The project tool shows every edge of the part it can take, the one under the pointer lit.
+    if (s.tool === 'project') {
+      parts.push(`<path class="edge" d="${s.edges.flatMap(e => e.segments).map(d).join('')}"/>`);
+      if (s.edge) parts.push(`<path class="edge lit" d="${s.edge.edge.segments.map(d).join('')}"/>`);
+    }
 
     // Regions: picked ones shaded, the one under the pointer lighter.
     const regions = shownRegions(g);
@@ -279,7 +288,7 @@ export function createSketchMode(store, { viewer, view, column, call, latest, ap
     const lit = new Set([...s.highlight, ...s.dimPicks, ...(s.hover ? [s.hover] : [])]);
     const mark = name => `${state.get(name) ?? 'free'}${s.selection.includes(name) ? ' selected' : ''}${lit.has(name) ? ' lit' : ''}`;
     for (const e of s.sketch.entities)
-      parts.push(`<path class="entity ${mark(e.id)}${e.construction ? ' construction' : ''}" d="${d(polylineOf(e, g.points, g.radii))}"/>`);
+      parts.push(`<path class="entity ${mark(e.id)}${e.construction ? ' construction' : ''}${e.project ? ' linked' : ''}" d="${d(polylineOf(e, g.points, g.radii))}"/>`);
     for (const [name, p] of Object.entries(g.points)) {
       const [x, y] = S(p);
       parts.push(`<circle class="point ${mark(name)}" cx="${f1(x)}" cy="${f1(y)}" r="3"/>`);
@@ -359,6 +368,10 @@ export function createSketchMode(store, { viewer, view, column, call, latest, ap
     const constrain = M.applicable(s.sketch, s.selection);
     bar.replaceChildren(
       ...TOOLS.map(([id, name, key]) => el('button', { className: `tool${s.tool === id ? ' on' : ''}`, textContent: name, title: `${name} (${key})`, onclick: () => setTool(id) })),
+      ...(s.tool === 'project' ? [el('button', {
+        className: `tool${s.linked ? ' on' : ''}`, textContent: 'Linked', title: 'Linked: the projection follows the edge when the part changes (K)',
+        onclick: () => { s.linked = !s.linked; refresh(); },
+      })] : []),
       el('button', { className: `tool${s.construction ? ' on' : ''}`, textContent: 'Construction', title: 'Construction: new entities, or the selected ones (X)', onclick: () => toggleConstruction() }),
       ...constrain.map(a => el('button', {
         className: 'constrain', textContent: SYMBOLS[a.kind], title: `${a.kind} ${a.refs.join(' ')}`,
@@ -399,8 +412,11 @@ export function createSketchMode(store, { viewer, view, column, call, latest, ap
   /** The corner a fillet could round under a screen point, or null. */
   const cornerUnder = px => cornerAt(s.sketch, geo().points, fromScreen(s.view, px), 10 / s.view.scale);
 
-  /** What a press picks in the current tool: a corner to fillet, an entity to trim, else a point or entity. */
-  const pickUnder = px => s.tool === 'fillet' ? cornerUnder(px) : s.tool === 'trim' ? entityUnder(px) : hitAt(px);
+  /** The part edge a projection would take under a screen point ({edge, near}), or null. */
+  const edgeUnder = px => edgeAt(s.edges, fromScreen(s.view, px), 8 / s.view.scale);
+
+  /** What a press picks in the current tool: a corner to fillet, an entity to trim, a part edge, else a point or entity. */
+  const pickUnder = px => s.tool === 'fillet' ? cornerUnder(px) : s.tool === 'trim' ? entityUnder(px) : s.tool === 'project' ? edgeUnder(px) : hitAt(px);
 
   function setTool(tool) {
     s.tool = tool;
@@ -409,6 +425,7 @@ export function createSketchMode(store, { viewer, view, column, call, latest, ap
     s.pick = null;
     s.fillet = null;
     s.piece = null;
+    s.edge = null;
     hint.textContent = HINTS[tool] ?? HINT;
     valueBox.hidden = true;
     refresh();
@@ -465,6 +482,7 @@ export function createSketchMode(store, { viewer, view, column, call, latest, ap
     }
     if (s.tool === 'fillet') return down.hit ? radiusAt(px, down.hit) : undefined;
     if (s.tool === 'trim') return down.hit ? sketchEdit(trimEdit(down.hit, at)) : undefined;
+    if (s.tool === 'project') return down.hit ? sketchEdit(projectEdit(down.hit.edge.faces, down.hit.near, s.linked)) : undefined;
     drawClick();
   }
 
@@ -541,6 +559,7 @@ export function createSketchMode(store, { viewer, view, column, call, latest, ap
       const id = entityUnder(px), g = geo();
       s.piece = id ? trimPiece(s.sketch, g.points, g.radii, id, fromScreen(s.view, px)) : null;
     }
+    if (s.tool === 'project') s.edge = edgeUnder(px);
     if (DRAWING.has(s.tool)) updatePick(e.shiftKey);
     draw();
   }
@@ -589,7 +608,7 @@ export function createSketchMode(store, { viewer, view, column, call, latest, ap
   svg.addEventListener('pointerdown', onDown);
   svg.addEventListener('pointermove', onMove);
   svg.addEventListener('pointerup', onUp);
-  svg.addEventListener('pointerleave', () => { if (s) { s.cursor = null; s.pick = null; s.hover = null; s.piece = null; draw(); } });
+  svg.addEventListener('pointerleave', () => { if (s) { s.cursor = null; s.pick = null; s.hover = null; s.piece = null; s.edge = null; draw(); } });
   svg.addEventListener('contextmenu', e => e.preventDefault());
   svg.addEventListener('dblclick', () => { if (s?.tool === 'line') { s.draft = null; draw(); } });
   svg.addEventListener('wheel', e => {
@@ -738,6 +757,7 @@ export function createSketchMode(store, { viewer, view, column, call, latest, ap
       return change(M.remove(s.sketch, gone));
     }
     if (key === 'x') return toggleConstruction();
+    if (key === 'k' && s.tool === 'project') { s.linked = !s.linked; return refresh(); }
     if (KEYS[key]) setTool(KEYS[key]);
   }, { capture: true });
 
@@ -759,6 +779,9 @@ export function createSketchMode(store, { viewer, view, column, call, latest, ap
       current: s.solvedVersion === s.version,
     },
     finishChanged: patch => actions.finishChanged(patch),
+    /** The part edges the project tool offers: their faces and a sketch point on each, to click at. */
+    edges: () => s.edges.map(e => ({ faces: e.faces, at: e.segments[0].reduce((m, p) => [m[0] + p[0] / 2, m[1] + p[1] / 2], [0, 0]) })),
+    linked: on => { s.linked = on; refresh(); },
     finish: () => finish(),
     cancel: () => leave(),
   };

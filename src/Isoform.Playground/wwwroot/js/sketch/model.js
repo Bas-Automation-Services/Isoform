@@ -188,7 +188,8 @@ export function toggleConstruction(sketch, ids) {
   const on = !chosen.every(e => e.construction);
   return {
     ...sketch, entities: sketch.entities.map(e => {
-      if (!ids.includes(e.id)) return e;
+      // A linked projection stays construction (the format's rule).
+      if (!ids.includes(e.id) || e.project) return e;
       const { construction, ...rest } = e;
       return on ? { ...rest, construction: true } : rest;
     }),

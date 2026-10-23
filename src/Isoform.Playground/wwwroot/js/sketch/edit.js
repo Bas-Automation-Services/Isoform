@@ -150,7 +150,8 @@ export function trimPiece(sketch, points, radii, id, at) {
 
 export const filletEdit = (corner, radius) => ({ op: 'fillet', corner, radius });
 export const trimEdit = (entity, at) => ({ op: 'trim', entity, x: at[0], y: at[1] });
-const named = edit => edit.op === 'fillet' ? `fillet ${edit.corner} R${+edit.radius.toFixed(3)}` : `trim ${edit.entity}`;
+const named = edit => edit.op === 'fillet' ? `fillet ${edit.corner} R${+edit.radius.toFixed(3)}`
+  : edit.op === 'project' ? `project ${edit.faces.join(' | ')}${edit.linked ? ' (linked)' : ''}` : `trim ${edit.entity}`;
 
 /**
  * What an edit's reply does to the sketch mode's state {sketch, undo}: the sketch the kernel settled, with the one it
