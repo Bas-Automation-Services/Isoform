@@ -700,6 +700,11 @@ public static partial class DualContouring
                     Add(p.Placement);
                     Add(p.Child);
                     break;
+                case VertexSphereField v:
+                    Add(13);
+                    foreach (var e in v.Edges) Add(e);
+                    Add(v.Sphere);
+                    break;
                 case LatticeField l:
                     // Every parameter it reads, and what a simplified copy still evaluates.
                     Add(12);

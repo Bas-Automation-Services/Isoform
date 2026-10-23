@@ -30,7 +30,21 @@ public static class SurfaceIntersection
         if (a.Kind == SurfaceKind.Cylinder && b.Kind == SurfaceKind.Plane) (a, b) = (b, a);
         if (a.Kind == SurfaceKind.Plane && b.Kind == SurfaceKind.Cylinder) return Oblique(a, b);
         if (a.Kind == SurfaceKind.Cylinder && b.Kind == SurfaceKind.Cylinder) return Mitre(a, b, seed);
+        if (a.Kind == SurfaceKind.Torus && b.Kind == SurfaceKind.Cylinder) (a, b) = (b, a);
+        if (a.Kind == SurfaceKind.Cylinder && b.Kind == SurfaceKind.Torus) return TubeCircle(a, b);
         return null;
+    }
+
+    /// <summary>
+    /// A cylinder of the torus's tube radius whose axis touches the torus's centre circle (a straight fillet running on
+    /// into a rolled one): they touch along the tube circle there. Null for any other cylinder.
+    /// </summary>
+    static Circle? TubeCircle(Surface cylinder, Surface torus)
+    {
+        var w = cylinder.Origin - torus.Origin;
+        if (Math.Abs(cylinder.Radius - torus.Minor) > OnAxis || Math.Abs(cylinder.Axis.Dot(torus.Axis)) > Parallel || Math.Abs(torus.Axis.Dot(w)) > OnAxis) return null;
+        var foot = cylinder.Origin - cylinder.Axis * cylinder.Axis.Dot(w);
+        return Math.Abs((foot - torus.Origin).Length - torus.Radius) > OnAxis ? null : new Circle(foot, cylinder.Axis, torus.Axis, torus.Minor);
     }
 
     /// <summary>

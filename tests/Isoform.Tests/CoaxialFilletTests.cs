@@ -79,6 +79,16 @@ public class CoaxialFilletTests(ITestOutputHelper output)
         new Fillet("round", ["plate/z+", "dome/cap"], r),
     ]);
 
+    // A hemisphere of radius 8 joined on the plate's top at (30, 20), the inside corner where they meet rounded: the
+    // dome face reaches from the pole to just above the equator.
+    public static PartDocument Hemisphere(double r) => new(
+    [
+        new Block("plate", BooleanOp.New, [0, 0, 0], [60, 40, 10]),
+        new Revolve("dome", BooleanOp.Join, new SketchPlane([30, 20, 10], [1, 0, 0], [0, -1, 0]),
+            Loop([0, 0], ("base", 8, 0, 0), ("cap", 0, 8, Math.Tan(Math.PI / 8)), ("axis", 0, 0, 0))),
+        new Fillet("round", ["plate/z+", "dome/cap"], r),
+    ]);
+
     // A puck 14 in radius and 6 high whose top rim is a quarter torus (tube 6 round ρ = 8), bored 11 in radius: the
     // bore leaves the torus at z = √27.
     public static PartDocument Knob(double r) => new(
@@ -102,6 +112,17 @@ public class CoaxialFilletTests(ITestOutputHelper output)
         Volume(result).Should().BeApproximately(exact, exact * VolumeTolerance);
         result.Topology!.Faces.SelectMany(f => f.Sources).Should().BeEquivalentTo(
             ["plate/x-", "plate/x+", "plate/y-", "plate/y+", "plate/z-", "plate/z+", "dome/cap", "round/face"]);
+    }
+
+    [Fact]
+    public void Fillet_where_a_hemisphere_meets_a_plate_is_a_torus()
+    {
+        var result = Modeler.Regenerate(Hemisphere(1.5));
+
+        result.Diagnostics.Should().BeEmpty();
+        TorusDeviation(result, 30, 20, (Math.Sqrt(Sq(9.5) - Sq(1.5)), 11.5), 1.5).Should().BeLessThan(1e-7);
+        var exact = HemisphereVolume(1.5);
+        Volume(result).Should().BeApproximately(exact, exact * VolumeTolerance);
     }
 
     [Theory]
@@ -235,6 +256,17 @@ public class CoaxialFilletTests(ITestOutputHelper output)
         var filler = Segment((Math.Sqrt(48), 10), (centre.Rho, 10)) + Arc(centre, r, -Math.PI / 2, Math.Atan2(-(4 + r), -centre.Rho))
             + Arc((0, 6), 8, Math.Atan2(4 + r, centre.Rho), Math.PI / 6);
         return 60 * 40 * 10 + 320 * Math.PI / 3 + 2 * Math.PI * Math.Abs(filler);
+    }
+
+    /// <summary>Plate and hemisphere plus the filler the ball leaves in the corner between them.</summary>
+    public static double HemisphereVolume(double r)
+    {
+        // In (ρ, z): the ball sits on the top z = 10 and against the sphere round (0, 10), outside both.
+        var centre = (Rho: Math.Sqrt(Sq(8 + r) - r * r), Z: 10 + r);
+        var onSphere = (Rho: centre.Rho * 8 / (8 + r), Z: 10 + r * 8 / (8 + r));
+        var filler = Segment((8, 10), (centre.Rho, 10)) + Arc(centre, r, -Math.PI / 2, Math.Atan2(-r, -centre.Rho))
+            + Arc((0, 10), 8, Math.Atan2(onSphere.Z - 10, onSphere.Rho), 0);
+        return 60 * 40 * 10 + 2 * Math.PI * 512 / 3 + 2 * Math.PI * Math.Abs(filler);
     }
 
     static (double Rho, double Z) DomeBall(double r) => (Math.Sqrt(Sq(8 + r) - Sq(4 + r)), 10 + r);

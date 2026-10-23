@@ -650,6 +650,9 @@ public static class FieldAlgebra
         {
             var keep = intersection ? bounds[i].Hi >= limit : bounds[i].Lo <= limit;
             var simple = keep ? children[i].Simplify(box) : null;
+            // A child that comes down to the intersection of siblings before it never decides (a corner sphere
+            // outside its sector is its fillets' max): they reach its value first.
+            if (intersection && simple is MaxField sub && sub != children[i] && sub.Children.All(c => Before(children, c, i))) (keep, simple) = (false, null);
             if (kept is null && (!keep || !ReferenceEquals(simple, children[i])))
             {
                 kept = new List<Field>(n);
@@ -664,6 +667,13 @@ public static class FieldAlgebra
             for (var i = kept.Count - 1; i >= 0; i--)
                 if (kept[i] is LeafField l && HeldByRoundedEdge(kept, l)) kept.RemoveAt(i);
         return kept.Count == 1 ? kept[0] : intersection ? new MaxField(kept) : new MinField(kept);
+    }
+
+    static bool Before(IReadOnlyList<Field> children, Field f, int end)
+    {
+        for (var j = 0; j < end; j++)
+            if (ReferenceEquals(children[j], f)) return true;
+        return false;
     }
 
     static bool HeldByRoundedEdge(List<Field> fields, LeafField leaf)
