@@ -96,6 +96,7 @@ public sealed class KernelSocket
         "handles" => HandleJson.Write(Slot(args), _session[Slot(args)]),
         "resolve" => ReferencePins.Json(Arg(args, "refs")!.Value.GetRawText(), _session[Slot(args)]),
         "sketch" => SketchJson.Write(Arg(args, "document")!.Value.GetString()!, Arg(args, "id")!.Value.GetString()!, Arg(args, "drag") is { ValueKind: JsonValueKind.Object } d ? d.GetRawText() : ""),
+        "sketchEdit" => SketchJson.WriteEdit(Arg(args, "document")!.Value.GetString()!, Arg(args, "id")!.Value.GetString()!, Arg(args, "edit")!.Value.GetRawText()),
         "faceFrame" => SketchJson.FaceFrame(_session[Slot(args)], Arg(args, "face")!.Value.GetString()!),
         "step" => ExportJson.Step(_session[Slot(args)], Arg(args, "name")?.GetString() ?? "part"),
         "dxf" => ExportJson.Dxf(_session[Slot(args)], Arg(args, "document")?.GetString() ?? "", Arg(args, "sketch")?.GetString() ?? "", Arg(args, "face")?.GetString() ?? ""),

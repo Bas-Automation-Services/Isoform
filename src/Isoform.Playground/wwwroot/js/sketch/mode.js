@@ -2,8 +2,9 @@
 // cut or revolve, or edit a sketch of the document. The view looks straight down the face with an orthographic
 // camera, the part dimmed behind an SVG layer that holds the drawing and takes the pointer. Every change and every
 // drag solves the sketch in the kernel (the `sketch` op, latest wins) and the drawing shows the solved points. The
-// finish commits through applyEdits as one history entry. The pure parts are model.js, infer.js, dimension.js,
-// regions.js, frame.js and status.js; the panel is panel.js.
+// finish commits through applyEdits as one history entry. Fillet and trim are the kernel's (the `sketchEdit` op), each
+// one undo step. The pure parts are model.js, infer.js, dimension.js, regions.js, frame.js, status.js and edit.js; the
+// panel is panel.js.
 //
 //   const sketching = createSketchMode(store, { viewer, view, column, call, latest, applyEdits });
 //     view: the element the 3D view is in; column: the right-hand panel; call/latest: the kernel client's;
@@ -17,11 +18,20 @@ import { polylineOf, regionAt, regionKey, shapes } from './regions.js';
 import { bounds, fit, fromScreen, frameOfPlane, gridStep, toScreen, toSketch, toWorld, zoom } from './frame.js';
 import { states, summary } from './status.js';
 import { createPanel } from './panel.js';
+import { cornerAt, filletArc, filletEdit, filletRadius, runEdit, trimEdit, trimPiece } from './edit.js';
 
 const TOOLS = [
   ['select', 'Select', 'Esc'], ['line', 'Line', 'L'], ['rectangle', 'Rectangle', 'R'], ['circle', 'Circle', 'C'],
   ['arc', 'Arc', 'A'], ['slot', 'Slot', 'S'], ['point', 'Point', 'P'], ['dimension', 'Dimension', 'D'],
+  ['fillet', 'Fillet', 'F'], ['trim', 'Trim', 'T'],
 ];
+// The tools that draw: they place points where inference says.
+const DRAWING = new Set(['line', 'rectangle', 'circle', 'arc', 'slot', 'point']);
+const HINT = 'Click to draw · Shift draws without snapping · Esc stops a tool, then leaves · drag a point to move it · right-drag to pan · scroll to zoom · click inside a loop to pick it';
+const HINTS = {
+  fillet: 'Click a corner and type its radius, or drag out from it · Esc stops the tool',
+  trim: 'Click the piece of a line, arc or circle to delete, up to where others cross it · Esc stops the tool',
+};
 const KEYS = Object.fromEntries(TOOLS.filter(t => t[2].length === 1).map(([id, , key]) => [key.toLowerCase(), id]));
 const GLYPHS = { coincident: '◉', origin: '⌖', midpoint: '½', on: '∈', horizontal: 'H', vertical: 'V', tangent: 'T' };
 const SYMBOLS = {
@@ -108,7 +118,7 @@ export function createSketchMode(store, { viewer, view, column, call, latest, ap
   svg.classList.add('sketch-svg');
   const bar = el('div', { className: 'sketch-bar' });
   const valueBox = el('div', { className: 'sketch-value', hidden: true });
-  const hint = el('div', { className: 'hint', textContent: 'Click to draw · Shift draws without snapping · Esc stops a tool, then leaves · drag a point to move it · right-drag to pan · scroll to zoom · click inside a loop to pick it' });
+  const hint = el('div', { className: 'hint', textContent: HINT });
   const layer = el('div', { className: 'sketch-layer' }, svg, bar, valueBox, hint);
   new ResizeObserver(() => {
     if (!s) return;
@@ -124,6 +134,9 @@ export function createSketchMode(store, { viewer, view, column, call, latest, ap
       sketch, frame, editing, face: on, base: result.text, reply: null, version: 0,
       tool: 'select', construction: false, selection: [], hover: null, highlight: [], picked: new Set(), undo: [],
       draft: null, dimPicks: [], cursor: null, pick: null, down: null, pan: null, dragging: null,
+      // fillet: the corner being rounded and its radius ({corner, radius, dragged}); radius: the last fillet's; piece:
+      // what a trim would delete; note: what the last fillet or trim did, or why it could not ({text, level, items}).
+      fillet: null, radius: null, piece: null, note: null,
       finish: { op: 'extrude', depth: 10, angle: 360, id: M.freshFeatureId(doc, 'extrude'), axis: null, auto: true },
       parameters: Object.keys(doc.parameters ?? {}),
       outline: on ? outlineOf(result, on, frame) : [],
@@ -131,6 +144,7 @@ export function createSketchMode(store, { viewer, view, column, call, latest, ap
     store.set({ selection: [], feature: null });
     view.querySelector('#tooltip')?.setAttribute('hidden', '');
     view.append(layer);
+    hint.textContent = HINT;
     document.body.classList.add('sketching');
     const around = [...s.outline.flat(), ...Object.values(sketch.points)];
     s.view = fit(around.length ? bounds(around) : [[-50, -50], [50, 50]], layer.clientWidth, layer.clientHeight);
@@ -182,7 +196,11 @@ export function createSketchMode(store, { viewer, view, column, call, latest, ap
     const mine = s, version = ++s.version;
     const reply = await latest('sketch', 'sketch', { document: M.workingDocument(s.base, s.sketch), id: s.sketch.id, ...(drag ? { drag } : {}) });
     if (!reply || s !== mine || version !== s.version) return;
-    const r = reply.result;
+    take(reply.result, version);
+  }
+
+  // A solve's reply (the sketch op's, or a fillet's or trim's) for the sketch of that version.
+  function take(r, version) {
     // A sketch in conflict keeps its points: the attempt is drawn, not stored.
     if (!r.error && !r.problems.some(p => p.code === 'sketch-conflict')) s.sketch = M.adopt(s.sketch, r);
     s.reply = r.error ? r : { ...r, points: r.problems.some(p => p.code === 'sketch-conflict') ? r.points : {}, radii: {} };
@@ -194,16 +212,34 @@ export function createSketchMode(store, { viewer, view, column, call, latest, ap
   function change(sketch) {
     s.undo.push(s.sketch);
     s.sketch = sketch;
-    const names = new Set([...Object.keys(sketch.points), ...sketch.entities.map(e => e.id)]);
-    s.selection = s.selection.filter(n => names.has(n));
+    s.note = null;
+    keepSelection();
     refresh();
     solve();
+  }
+
+  function keepSelection() {
+    const names = new Set([...Object.keys(s.sketch.points), ...s.sketch.entities.map(e => e.id)]);
+    s.selection = s.selection.filter(n => names.has(n));
+  }
+
+  /** A fillet or trim (edit.js): the kernel makes it and solves the result, one step back for undo; or says why not. */
+  async function sketchEdit(edit) {
+    const mine = s, version = s.version;
+    const r = await runEdit(call, s, edit);
+    if (s !== mine || version !== s.version) return; // the sketch changed meanwhile: the edit was of an older one
+    Object.assign(s, { sketch: r.sketch, undo: r.undo, note: r.note, fillet: null, piece: null, hover: null });
+    if (!r.reply) return refresh();
+    if (edit.op === 'fillet') s.radius = edit.radius;
+    keepSelection();
+    take(r.reply, ++s.version);
   }
 
   function undo() {
     if (!s.undo.length) return;
     s.sketch = s.undo.pop();
     s.draft = null;
+    s.note = null;
     refresh();
     solve();
   }
@@ -262,7 +298,14 @@ export function createSketchMode(store, { viewer, view, column, call, latest, ap
 
     // What the tool would add, and the glyph of what inference adds.
     parts.push(...draftShapes(g).map(p => `<path class="draft" d="${d(p)}"/>`));
-    if (s.pick && s.tool !== 'select' && s.tool !== 'dimension') {
+    // A fillet's arc and radius as it would be; the piece a trim would delete.
+    if (s.fillet) {
+      const arc = filletArc(s.sketch, g.points, s.fillet.corner, s.fillet.radius), [x, y] = S(g.points[s.fillet.corner]);
+      if (arc) parts.push(`<path class="draft" d="${d(arc)}"/>`);
+      parts.push(`<text class="glyph" x="${f1(x + 10)}" y="${f1(y - 10)}">R${+s.fillet.radius.toFixed(2)}</text>`);
+    }
+    if (s.piece) parts.push(`<path class="trim" d="${d(s.piece.polyline)}"/>`);
+    if (s.pick && DRAWING.has(s.tool)) {
       const [x, y] = S(s.pick.at);
       parts.push(`<circle class="snap" cx="${f1(x)}" cy="${f1(y)}" r="4"/>`);
       const glyph = s.pick.tangent ? 'tangent' : s.pick.glyph;
@@ -309,7 +352,7 @@ export function createSketchMode(store, { viewer, view, column, call, latest, ap
     const lines = s.sketch.entities.filter(e => e.line).map(e => e.id);
     if (s.finish.axis && !lines.includes(s.finish.axis)) s.finish.axis = null;
     panel.render({
-      sketch: s.sketch, editing: s.editing, face: s.face, reply: s.reply, state, conflicts, parameters: s.parameters,
+      sketch: s.sketch, editing: s.editing, face: s.face, reply: s.reply, state, conflicts, parameters: s.parameters, note: s.note,
       finish: s.finish, lines, picked: [...s.picked].filter(k => s.reply?.regions?.some(r => regionKey(r.outer) === k)).length, regionCount,
     });
     const status = s.reply ? summary(s.reply) : { text: 'solving…', level: 'free' };
@@ -339,8 +382,13 @@ export function createSketchMode(store, { viewer, view, column, call, latest, ap
     const g = geo(), S = p => toScreen(s.view, p);
     let best = null, near = 8;
     for (const [name, p] of Object.entries(g.points)) if (dist(S(p), px) < near) [best, near] = [name, dist(S(p), px)];
-    if (best) return best;
-    near = 6;
+    return best ?? entityUnder(px);
+  }
+
+  /** The entity under a screen point, or null. */
+  function entityUnder(px) {
+    const g = geo(), S = p => toScreen(s.view, p);
+    let best = null, near = 6;
     for (const e of s.sketch.entities) {
       const d = toPolyline(px, polylineOf(e, g.points, g.radii).map(S));
       if (d < near) [best, near] = [e.id, d];
@@ -348,11 +396,20 @@ export function createSketchMode(store, { viewer, view, column, call, latest, ap
     return best;
   }
 
+  /** The corner a fillet could round under a screen point, or null. */
+  const cornerUnder = px => cornerAt(s.sketch, geo().points, fromScreen(s.view, px), 10 / s.view.scale);
+
+  /** What a press picks in the current tool: a corner to fillet, an entity to trim, else a point or entity. */
+  const pickUnder = px => s.tool === 'fillet' ? cornerUnder(px) : s.tool === 'trim' ? entityUnder(px) : hitAt(px);
+
   function setTool(tool) {
     s.tool = tool;
     s.draft = null;
     s.dimPicks = [];
     s.pick = null;
+    s.fillet = null;
+    s.piece = null;
+    hint.textContent = HINTS[tool] ?? HINT;
     valueBox.hidden = true;
     refresh();
   }
@@ -406,6 +463,8 @@ export function createSketchMode(store, { viewer, view, column, call, latest, ap
       else if (s.dimPicks.length) newDimension(px);
       return draw();
     }
+    if (s.tool === 'fillet') return down.hit ? radiusAt(px, down.hit) : undefined;
+    if (s.tool === 'trim') return down.hit ? sketchEdit(trimEdit(down.hit, at)) : undefined;
     drawClick();
   }
 
@@ -455,7 +514,7 @@ export function createSketchMode(store, { viewer, view, column, call, latest, ap
     if (e.button === 1 || e.button === 2) { s.pan = { from: px, center: s.view.center, moved: false }; return; }
     if (e.button !== 0) return;
     const dim = e.target.closest?.('[data-dim]')?.dataset.dim;
-    s.down = { px, hit: dim === undefined ? hitAt(px) : null, dim };
+    s.down = { px, hit: dim === undefined ? pickUnder(px) : null, dim };
   }
 
   function onMove(e) {
@@ -469,9 +528,20 @@ export function createSketchMode(store, { viewer, view, column, call, latest, ap
       return draw();
     }
     if (s.down?.hit && s.tool === 'select' && (s.dragging || dist(px, s.down.px) > 3)) return dragTo(fromScreen(s.view, px));
+    // Dragging out from a corner sizes its fillet: the radius is the pointer's distance from the corner.
+    if (s.down?.hit && s.tool === 'fillet' && (s.fillet?.dragged || dist(px, s.down.px) > 3)) {
+      valueBox.hidden = true;
+      const r = dist(geo().points[s.down.hit], fromScreen(s.view, px));
+      s.fillet = { corner: s.down.hit, radius: Math.max(+r.toPrecision(2), 1e-3), dragged: true };
+      return draw();
+    }
     s.cursor = px;
-    s.hover = s.tool === 'select' || s.tool === 'dimension' ? hitAt(px) : null;
-    if (s.tool !== 'select' && s.tool !== 'dimension') updatePick(e.shiftKey);
+    s.hover = s.tool === 'select' || s.tool === 'dimension' ? hitAt(px) : s.tool === 'fillet' ? cornerUnder(px) : null;
+    if (s.tool === 'trim') {
+      const id = entityUnder(px), g = geo();
+      s.piece = id ? trimPiece(s.sketch, g.points, g.radii, id, fromScreen(s.view, px)) : null;
+    }
+    if (DRAWING.has(s.tool)) updatePick(e.shiftKey);
     draw();
   }
 
@@ -492,6 +562,7 @@ export function createSketchMode(store, { viewer, view, column, call, latest, ap
       s.dragging = null;
       return refresh();
     }
+    if (s.fillet?.dragged) return sketchEdit(filletEdit(s.fillet.corner, s.fillet.radius));
     if (dist(px, down.px) <= 4) click(px, e.shiftKey, down);
   }
 
@@ -518,7 +589,7 @@ export function createSketchMode(store, { viewer, view, column, call, latest, ap
   svg.addEventListener('pointerdown', onDown);
   svg.addEventListener('pointermove', onMove);
   svg.addEventListener('pointerup', onUp);
-  svg.addEventListener('pointerleave', () => { if (s) { s.cursor = null; s.pick = null; s.hover = null; draw(); } });
+  svg.addEventListener('pointerleave', () => { if (s) { s.cursor = null; s.pick = null; s.hover = null; s.piece = null; draw(); } });
   svg.addEventListener('contextmenu', e => e.preventDefault());
   svg.addEventListener('dblclick', () => { if (s?.tool === 'line') { s.draft = null; draw(); } });
   svg.addEventListener('wheel', e => {
@@ -552,11 +623,38 @@ export function createSketchMode(store, { viewer, view, column, call, latest, ap
       s.dimPicks = [];
       change(choices ? M.addConstraint(s.sketch, M.constraint(o.kind, o.refs, v)) : M.setValue(s.sketch, index, v));
     };
-    valueBox.replaceChildren(select, input, hint);
+    showBox(px, input, select, input, hint);
+  }
+
+  function showBox(px, input, ...children) {
+    valueBox.replaceChildren(...children);
     Object.assign(valueBox.style, { left: `${px[0] + 10}px`, top: `${px[1] + 10}px` });
     valueBox.hidden = false;
     input.focus();
     input.select();
+  }
+
+  // The fillet tool's value box at a corner: the radius (the last fillet's, else one to suit the corner), previewed as
+  // it is typed; Enter fillets. A fillet takes a number: the kernel's edit has no expressions.
+  function radiusAt(px, corner) {
+    const start = s.radius ?? filletRadius(s.sketch, geo().points, corner);
+    s.fillet = { corner, radius: start, dragged: false };
+    const input = el('input', { spellcheck: false, value: showValue(start, 'radius') });
+    const number = () => (v => typeof v === 'number' ? v : null)(parseValue(input.value, 'radius'));
+    input.oninput = () => {
+      input.classList.toggle('bad', number() === null);
+      if (number() !== null) { s.fillet.radius = number(); draw(); }
+    };
+    input.onkeydown = e => {
+      e.stopPropagation();
+      if (e.key === 'Escape') { valueBox.hidden = true; s.fillet = null; draw(); return; }
+      if (e.key !== 'Enter') return;
+      if (number() === null) { input.classList.add('bad'); return; }
+      valueBox.hidden = true;
+      sketchEdit(filletEdit(corner, number()));
+    };
+    showBox(px, input, input, el('div', { className: 'muted', textContent: `Fillet radius at ${corner}, mm` }));
+    draw();
   }
 
   function newDimension(px) {
@@ -627,7 +725,7 @@ export function createSketchMode(store, { viewer, view, column, call, latest, ap
     if (mod && key === 'z') { e.preventDefault(); return undo(); }
     if (mod) return;
     if (key === 'escape') {
-      if (!valueBox.hidden) valueBox.hidden = true;
+      if (!valueBox.hidden) { valueBox.hidden = true; s.fillet = null; }
       else if (s.draft || s.dimPicks.length) { s.draft = null; s.dimPicks = []; }
       else if (s.tool !== 'select') return setTool('select');
       else return leave();
@@ -656,7 +754,7 @@ export function createSketchMode(store, { viewer, view, column, call, latest, ap
     state: () => s && {
       tool: s.tool, sketch: structuredClone(s.sketch), editing: s.editing, selection: [...s.selection], picked: [...s.picked],
       solved: s.reply?.solved ?? null, freeDegrees: s.reply?.freeDegrees ?? null, problems: s.reply?.problems ?? [],
-      regions: s.reply?.regions ?? [], finish: { ...s.finish },
+      regions: s.reply?.regions ?? [], finish: { ...s.finish }, note: s.note && structuredClone(s.note), undo: s.undo.length,
       /** The last change is solved: the reply is for what is drawn. */
       current: s.solvedVersion === s.version,
     },

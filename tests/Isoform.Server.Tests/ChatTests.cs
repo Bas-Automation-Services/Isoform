@@ -94,6 +94,35 @@ public class ChatTests(WebApplicationFactory<Program> factory) : IClassFixture<W
     }
 
     [Fact]
+    public void A_sketch_edit_that_cannot_be_made_says_why_and_changes_nothing()
+    {
+        var document = CanonicalFormat.Write(new PartDocument([FormatGuide.Plate, FormatGuide.Examples.Select(e => e.Feature).OfType<Sketch>().First()]));
+        var tools = new ChatTools(document);
+        var before = tools.Text;
+
+        var noRadius = () => tools.Run("sketch_edit", Input("""{"id": "outline", "op": "fillet", "corner": "c"}"""));
+        var noOp = () => tools.Run("sketch_edit", Input("""{"id": "outline"}"""));
+        noRadius.Should().Throw<ArgumentException>().WithMessage("*needs a radius*");
+        noOp.Should().Throw<ToolException>().WithMessage("op is required");
+        tools.Edits.Should().BeEmpty();
+        tools.Text.Should().Be(before);
+        ChatTools.Definitions.Select(d => d.Name).Should().Contain("sketch_edit");
+    }
+
+    [Fact]
+    public void A_sketch_edit_is_stored_as_edits_for_the_page()
+    {
+        var document = CanonicalFormat.Write(new PartDocument([FormatGuide.Plate, FormatGuide.Examples.Select(e => e.Feature).OfType<Sketch>().First()]));
+        var tools = new ChatTools(document);
+
+        var r = JsonNode.Parse(tools.Run("sketch_edit", Input("""{"id": "outline", "op": "fillet", "corner": "c", "radius": 3}""")))!;
+        ((int)r["settled"]!["edits"]!).Should().BePositive();
+        r["added"]!.AsArray().Should().NotBeEmpty();
+        DocumentEdits.Apply(document, tools.Edits).Should().Be(tools.Text);
+        CanonicalFormat.Read(tools.Text).Features.OfType<Sketch>().Single().Entities.OfType<SketchArc>().Should().ContainSingle();
+    }
+
+    [Fact]
     public async Task Without_a_key_the_chat_says_so()
     {
         var server = factory.WithWebHostBuilder(b => b.ConfigureTestServices(s => s.RemoveAll<IChatModel>()));

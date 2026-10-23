@@ -80,6 +80,24 @@ public static class IsoformTools
         [Description("Where to drag it, [u, v] in sketch coordinates.")] double[]? dragTo = null) =>
         Run(() => SketchJson.Solve(AgentTools.Text(document), id, dragPoint, dragTo));
 
+    [McpServerTool(Name = "sketch_edit", ReadOnly = true, Idempotent = true)]
+    [Description("Fillets or trims one sketch of a part; the sketch stays lines and arcs. fillet rounds the corner point where " +
+                 "two lines or arcs meet with a tangent arc of radius (the corner stays as a construction point, so dimensions " +
+                 "to it hold). trim deletes the piece of entity, between its crossings with the other entities, nearest [x, y] " +
+                 "in sketch coordinates; a trimmed circle becomes an arc. Returns what sketch returns for the edited document " +
+                 "(settled.text is the new document: continue from it), plus added (the new point and entity ids) and dropped " +
+                 "(the constraints that went with a deleted piece). An edit that cannot be made is a tool error saying why.")]
+    public static string SketchEdit(
+        [Description(DocumentHelp)] string document,
+        [Description("The sketch's feature id.")] string id,
+        [Description("fillet | trim")] string op,
+        [Description("fillet: the corner point, by name.")] string? corner = null,
+        [Description("fillet: the radius in mm.")] double? radius = null,
+        [Description("trim: the line, arc or circle to trim, by id.")] string? entity = null,
+        [Description("trim: u of a point near the piece to delete, in sketch coordinates.")] double? x = null,
+        [Description("trim: v of that point.")] double? y = null) =>
+        Run(() => SketchJson.Edit(AgentTools.Text(document), id, op, corner, radius, entity, x, y));
+
     [McpServerTool(Name = "validate", ReadOnly = true, Idempotent = true)]
     [Description("Fast check of a part without meshing: parses it, applies the document rules and compiles it. " +
                  "Returns ok, the hash, the bodies and the diagnostics. Parse errors come back as a diagnostic too.")]

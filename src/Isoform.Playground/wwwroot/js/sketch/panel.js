@@ -103,9 +103,14 @@ export function createPanel(host, actions) {
         el('button', { textContent: 'Cancel', onclick: () => actions.cancel() })));
   }
 
+  // What the last fillet or trim did (sketch/edit.js afterEdit): the constraints it dropped, one per line, or why it
+  // could not be made.
+  const editNote = ({ text, level, items }) => el('div', { className: `sketch-edited ${level}` },
+    el('div', { textContent: text }), ...items.map(t => el('div', { className: 'dropped', textContent: t })));
+
   /**
    * Shows the sketch: s is {sketch, editing, face, reply, conflicts, state (names → free/fixed/conflict),
-   * parameters (names), finish, lines (line ids), picked (count), regionCount}.
+   * parameters (names), finish, lines (line ids), picked (count), regionCount, note (the last fillet's or trim's)}.
    */
   function render(s) {
     if (typing) return; // after the input is done
@@ -119,6 +124,7 @@ export function createPanel(host, actions) {
       el('div', { className: 'model-head', textContent: `${s.editing ? 'Editing' : 'New'} sketch ${sketch.id}${s.face ? ` on ${s.face}` : ''}` }),
       el('div', { className: `sketch-status ${status.level}`, textContent: status.text }),
       el('ul', { className: 'diagnostics' }, ...problems),
+      ...(s.note ? [editNote(s.note)] : []),
       el('div', { className: 'sketch-note muted' }),
       el('div', { className: 'model-head', textContent: 'Entities' }),
       el('ul', { className: 'sketch-list entities' }, ...sketch.entities.map(e => nameRow(e.id, shapeOf(e), s.state.get(e.id), e.construction)),

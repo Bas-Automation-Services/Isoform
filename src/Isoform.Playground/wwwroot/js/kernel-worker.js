@@ -69,6 +69,8 @@ const ops = {
   resolve: ({ refs, slot = 'main' }) => JSON.parse(kernel.Resolve(JSON.stringify(refs), slot)),
   // A sketch solved, optionally with a point dragged to [u, v]: {point, to}.
   sketch: ({ document, id, drag }) => JSON.parse(kernel.Sketch(document, id, drag ? JSON.stringify(drag) : '')),
+  // A sketch filleted or trimmed: edit {op: 'fillet', corner, radius} or {op: 'trim', entity, x, y}.
+  sketchEdit: ({ document, id, edit }) => JSON.parse(kernel.SketchEdit(document, id, JSON.stringify(edit))),
   faceFrame: ({ face, slot = 'main' }) => JSON.parse(kernel.FaceFrame(slot, face)),
   // Files out (src/Isoform.Interactive/ExportJson.cs): STEP of a slot's result; DXF of a sketch of the document, or
   // of a flat face of a slot's result.

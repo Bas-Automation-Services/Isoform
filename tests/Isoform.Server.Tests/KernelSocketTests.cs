@@ -71,6 +71,21 @@ public class KernelSocketTests(WebApplicationFactory<Program> factory) : IClassF
     }
 
     [Fact]
+    public async Task A_sketch_edit_replies_as_the_worker_does_and_a_refusal_is_its_result()
+    {
+        var document = CanonicalFormat.Write(new PartDocument([FormatGuide.Plate, FormatGuide.Examples.Select(e => e.Feature).OfType<Sketch>().First()]));
+        using var socket = await Connect();
+        var edit = new { op = "fillet", corner = "c" };
+        var (bytes, _) = await Call(socket, new { id = 5, op = "sketchEdit", args = new { document, id = "outline", edit } });
+
+        using var reply = JsonDocument.Parse(bytes);
+        reply.RootElement.GetProperty("ok").GetBoolean().Should().BeTrue();
+        var result = reply.RootElement.GetProperty("result");
+        result.GetRawText().Should().Be(SketchJson.WriteEdit(document, "outline", JsonSerializer.Serialize(edit)));
+        result.GetProperty("error").GetString().Should().Contain("needs a radius");
+    }
+
+    [Fact]
     public async Task Only_the_servers_own_page_may_open_a_kernel()
     {
         var own = await Connect($"http://{factory.Server.BaseAddress.Authority}");

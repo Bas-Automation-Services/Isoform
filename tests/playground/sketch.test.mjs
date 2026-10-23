@@ -12,6 +12,7 @@ import { label, measure, options, parseValue, showValue } from '../../src/Isofor
 import { inside, loopPolygon, regionAt, regionKey, shapes } from '../../src/Isoform.Playground/wwwroot/js/sketch/regions.js';
 import { bounds, fit, fromScreen, frameOfPlane, gridStep, toScreen, toSketch, toWorld, zoom } from '../../src/Isoform.Playground/wwwroot/js/sketch/frame.js';
 import { describeConstraint, states, summary } from '../../src/Isoform.Playground/wwwroot/js/sketch/status.js';
+import { cornerAt, corners, filletArc, filletEdit, filletRadius, runEdit, trimEdit, trimPiece } from '../../src/Isoform.Playground/wwwroot/js/sketch/edit.js';
 
 const blank = () => newSketch('s', { face: 'plate/z+' });
 const at = (u, v) => ({ at: [u, v] });
@@ -288,4 +289,101 @@ test('the view maps the plane to the screen with x right and y up, and zooms abo
   assert.equal(z.scale, 20);
   assert.equal(gridStep(10), 2);
   assert.equal(gridStep(1), 20);
+});
+
+// --- Fillet and trim (sketch/edit.js): what the tools pick and preview, and the edit through a fake kernel ---------
+
+test('the fillet tool picks corners where two lines or arcs end, the nearest within reach', () => {
+  const s = addArc(rect(), at(60, 20), { at: [60, 0], point: 'p2' }, { at: [60, 40], point: 'p3' }).sketch; // e5 round (60, 20) from p2 to p3, two more ends there
+  assert.deepEqual(corners(rect()), ['p1', 'p2', 'p3', 'p4']);
+  assert.deepEqual(corners(s), ['p1', 'p4'], 'three entities end at p2 and p3; a centre is no corner');
+  const r = rect();
+  assert.equal(cornerAt(r, r.points, [59, 39], 2), 'p3');
+  assert.equal(cornerAt(r, r.points, [30, 20], 2), null);
+  assert.equal(filletRadius(r, r.points, 'p3'), 8, 'a fifth of the shorter side');
+});
+
+test('a fillet previews its arc tangent to both lines, and none it could not make', () => {
+  const r = rect();
+  const arc = filletArc(r, r.points, 'p3', 5); // the corner (60, 40) between e2 (down) and e3 (left)
+  closeAll(arc[0], [60, 35]);
+  closeAll(arc.at(-1), [55, 40]);
+  closeAll(arc[arc.length >> 1], [55 + 5 * Math.SQRT1_2, 35 + 5 * Math.SQRT1_2]);
+  assert.equal(filletArc(r, r.points, 'p3', 45), null, 'the tangent point would run off the 40 long side');
+  const a = addArc(addLine(blank(), at(-10, 0), at(10, 0)).sketch, at(20, 0), at(10, 0), at(20, 10)).sketch;
+  assert.equal(filletArc(a, a.points, 'p2', 2), null, 'a corner with an arc is the kernel\'s to show');
+});
+
+test('the trim tool lights the piece between crossings nearest the pointer', () => {
+  const s = addCircle(rect(), at(60, 20), at(70, 20)).sketch; // e5: radius 10 round (60, 20), across the right side e2
+  const piece = p => trimPiece(s, s.points, {}, 'e2', p).polyline;
+  assert.deepEqual(piece([60, 5]), [[60, 0], [60, 10]]);
+  assert.deepEqual(piece([61, 25]), [[60, 10], [60, 30]]);
+  assert.deepEqual(piece([60, 39]), [[60, 30], [60, 40]]);
+  assert.equal(trimPiece(s, s.points, {}, 'e1', [30, 0]), null, 'a side nothing crosses has nothing to trim to');
+  const drawn = toggleConstruction(s, ['e5']);
+  assert.equal(trimPiece(drawn, drawn.points, {}, 'e2', [61, 25]), null, 'construction does not cut');
+  assert.equal(trimPiece(drawn, drawn.points, {}, 'e5', [70, 20]), null, 'nor is it cut');
+  const round = trimPiece(s, s.points, {}, 'e5', [70, 20]);
+  close(round.to - round.from, Math.PI);
+  closeAll(round.polyline[0], [60, 10]);
+  closeAll(round.polyline.at(-1), [60, 30]);
+  const left = trimPiece(s, s.points, {}, 'e5', [50, 20]);
+  closeAll(left.polyline[0], [60, 30]);
+  closeAll(left.polyline.at(-1), [60, 10]);
+  const once = addLine(addCircle(blank(), at(0, 0), at(5, 0)).sketch, at(0, 0), at(10, 0)).sketch; // from inside, out once
+  assert.equal(trimPiece(once, once.points, {}, 'e1', [5, 0]), null, 'a circle crossed once has no piece');
+  // An arc crossed once: past its sweep, the pointer picks the nearer end's piece.
+  const a = addLine(addArc(blank(), at(0, 0), at(10, 0), at(-10, 0)).sketch, at(0, -5), at(0, 15)).sketch; // upper half, a line up the middle
+  closeAll(trimPiece(a, a.points, {}, 'e1', [9, -3]).polyline[0], [10, 0]);
+  closeAll(trimPiece(a, a.points, {}, 'e1', [9, -3]).polyline.at(-1), [0, 10]);
+  closeAll(trimPiece(a, a.points, {}, 'e1', [-9, -3]).polyline[0], [0, 10]);
+});
+
+// A fake kernel: answers every call with answer (a reply, a function of the args, or an Error to fail with).
+function kernel(answer) {
+  const calls = [];
+  const call = async (op, args) => {
+    calls.push({ op, args });
+    if (answer instanceof Error) throw answer;
+    return { result: typeof answer === 'function' ? answer(args) : answer };
+  };
+  return { call, calls };
+}
+const base = JSON.stringify({ format: 'isoform/0', units: 'mm', features: [{ id: 'plate', type: 'block' }] });
+// The kernel's answer to an edit (SketchJson.Edit): the edited sketch solved and settled in the document.
+const solved = (sketch, more = {}) => ({ solved: true, freeDegrees: 0, free: [], points: sketch.points, radii: {}, problems: [], regions: [],
+  settled: { text: workingDocument(base, sketch), hash: 'h' }, added: [], dropped: [], ...more });
+const filleted = s => ({ ...s, points: { ...s.points, 'p3-fillet-e2': [60, 35] }, entities: [...s.entities, { id: 'p3-fillet', arc: { center: 'c', from: 'p3-fillet-e2', to: 'x' } }] });
+
+test('a fillet asks the kernel for sketchEdit on the working document and is one undo step', async () => {
+  const s = rect(), { call, calls } = kernel(args => solved(filleted(JSON.parse(args.document).features.at(-1)), { added: ['p3-fillet', 'p3-fillet-e2'] }));
+  const r = await runEdit(call, { base, sketch: s, undo: [] }, filletEdit('p3', 5));
+  assert.deepEqual(calls.map(c => c.op), ['sketchEdit']);
+  assert.deepEqual(calls[0].args.edit, { op: 'fillet', corner: 'p3', radius: 5 });
+  assert.equal(calls[0].args.id, 's');
+  assert.deepEqual(JSON.parse(calls[0].args.document).features.map(f => f.id), ['plate', 's']);
+  assert.deepEqual(r.undo, [s], 'the sketch before is the one step back');
+  assert.ok(r.sketch.entities.some(e => e.id === 'p3-fillet'), 'the kernel\'s sketch is the new one');
+  assert.equal(r.reply.solved, true);
+  assert.deepEqual(r.note, { text: 'fillet p3 R5', level: 'ok', items: [] });
+  assert.deepEqual(trimEdit('e2', [61, 25]), { op: 'trim', entity: 'e2', x: 61, y: 25 });
+});
+
+test('a trim names every constraint it dropped; a refusal keeps the sketch and says why', async () => {
+  const s = addConstraint(rect(), constraint('length', ['e2'], 40));
+  const dropped = ['#4 (length e2 = 40)'];
+  const trim = await runEdit(kernel(solved(remove(s, ['e2']), { dropped })).call, { base, sketch: s, undo: [] }, trimEdit('e2', [60, 20]));
+  assert.equal(trim.undo.length, 1);
+  assert.deepEqual(trim.note, { text: 'trim e2 dropped 1 constraint:', level: 'warn', items: dropped });
+
+  const before = { base, sketch: s, undo: [rect()] };
+  const refused = await runEdit(kernel({ error: 'the radius is larger than e3 allows' }).call, before, filletEdit('p3', 50));
+  assert.equal(refused.sketch, s);
+  assert.equal(refused.undo, before.undo, 'no undo step');
+  assert.equal(refused.reply, null);
+  assert.deepEqual(refused.note, { text: 'fillet p3 R50: the radius is larger than e3 allows', level: 'error', items: [] });
+  const failed = await runEdit(kernel(new Error('There is no op sketchEdit.')).call, before, trimEdit('e1', [1, 0]));
+  assert.equal(failed.note.level, 'error');
+  assert.match(failed.note.text, /^trim e1: There is no op sketchEdit/);
 });
