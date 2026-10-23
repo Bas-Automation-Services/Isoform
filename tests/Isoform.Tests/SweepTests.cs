@@ -127,6 +127,9 @@ public class SweepTests(ITestOutputHelper output)
 
     public static IEnumerable<object[]> PartNames => Parts().Select(p => new object[] { p.Name });
 
+    // Its bend's outer side, 13 round (−5, 15), runs through the start's corner (0, 3, 0).
+    const string Touching = "triangle along a loop and a bend";
+
     /// <summary>A part's whole document, by its name.</summary>
     public static PartDocument Document(string name) => Read(Get(name).Features);
 
@@ -139,7 +142,8 @@ public class SweepTests(ITestOutputHelper output)
         var part = Get(name);
         var r = Regenerate(part.Features);
 
-        r.Diagnostics.Should().BeEmpty();
+        // The triangle's bend touches its start in a point: built, with a warning (see below).
+        r.Diagnostics.Where(d => name != Touching || d.Code != Diagnostic.TangentContact).Should().BeEmpty();
         r.Mesh!.IsWatertight().Should().BeTrue();
         Counts(r).Should().Be(part.Topology);
         Volume(r).Should().BeApproximately(part.Volume, part.Volume * 1e-3);
@@ -220,6 +224,37 @@ public class SweepTests(ITestOutputHelper output)
                     "sketch": "route",
                     "entities": [
             """.ReplaceLineEndings("\n"));
+    }
+
+    [Fact]
+    public void A_sweep_that_touches_itself_is_reported()
+    {
+        // Two stretches of the solid meet in a point: a contact of zero thickness no exact face can be bounded at.
+        var r = Regenerate(Document(Touching));
+
+        r.Diagnostics.Should().ContainSingle().Which.Should().Be(new Diagnostic(Diagnostic.TangentContact, "pipe",
+            "the solid touches itself at (0, 3, 0): the corner of pipe/a1:base+pipe/a2:base+pipe/l1:base+pipe/l2:base, pipe/start, pipe/l1:right "
+            + "lies on the edge between pipe/a1:base+pipe/a2:base+pipe/l1:base+pipe/l2:base and pipe/a2:right, a contact of zero thickness"));
+    }
+
+    [Theory]
+    [InlineData(4)] // the bend's outer side clears the start's corner by 5.04 mm
+    [InlineData(8)] // by 1.37 mm
+    [InlineData(9)] // by 0.65 mm
+    [InlineData(11)] // it runs 0.58 mm into the start: the two overlap, and their union touches nowhere in a point
+    public void A_bend_clear_of_the_start_or_into_it_is_not_reported(double radius)
+    {
+        // The bend of the given radius round (5 − radius, 15), on from where the loop ends at (5, 15).
+        var r = Regenerate(DocumentEdits.Apply(Document(Touching), [
+            JsonNode.Parse(FormattableString.Invariant($$"""{ "set": "route.points.k", "value": [{{5 - radius}}, 15] }"""))!,
+            JsonNode.Parse(FormattableString.Invariant($$"""{ "set": "route.points.g", "value": [{{5 - radius}}, {{15 - radius}}] }"""))!,
+            JsonNode.Parse(FormattableString.Invariant($$"""{ "set": "route.points.h", "value": [-25, {{15 - radius}}] }"""))!,
+        ]));
+
+        r.Diagnostics.Should().BeEmpty();
+        if (radius > 10) return;
+        var volume = 12 * (20 + 30 - radius + 1.5 * Math.PI * 15 + 0.5 * Math.PI * radius);
+        Volume(r).Should().BeApproximately(volume, volume * 1e-3);
     }
 
     // In the XY plane, every way a path can fail: a corner, a branch, two pieces, and a loop that closes at an angle.

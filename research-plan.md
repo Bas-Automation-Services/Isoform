@@ -373,6 +373,13 @@ but about half are features a finer local mesh would build.
   newly refused; one refused document now built and agreeing (both build and agree 30.3% and 31.7%). Cost: the
   search is 1–4 ms of the 20-op part's 0.1–0.6 s mesh at 0.5 to 0.1 mm cells and about 0.3 ms on a random part;
   end to end within the noise.
+- *A body that touches itself (2026-10-23):* a corner of a piece on one of its own edges, away from the edge's ends
+  and where the edge's surfaces are not both the corner's, is a point contact of zero thickness and is reported
+  (`SelfContacts`, tangent-contact), as the exact B-rep refuses it. The corner is put onto its surfaces by Newton
+  steps, so only a contact within the tolerance counts. It turned the one silent case known (a sweep's bend running
+  through the corner where it starts) into a report; on 3000 random documents (F-rep only and common, seeds 0–1499)
+  it reports nothing. Cost: about 2 ms on the 20-op part. Still silent: a corner on a face's inside, and two edges
+  that cross in a point.
 
 **Review.** An independent read of the K4 code found 15 problems (wrong geometry without a diagnostic in several);
 all fixed, each with a regression test (`ReviewFindingTests`).
