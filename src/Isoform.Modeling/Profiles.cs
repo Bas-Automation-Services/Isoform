@@ -109,7 +109,8 @@ public static class Profiles
         return (du + t * lu, dv + t * lv);
     }
 
-    static List<(string Id, ProfileEdge2D Edge)> Edges(Profile p)
+    /// <summary>The edges as they run, each from the end of the one before (the first from the start).</summary>
+    public static List<(string Id, ProfileEdge2D Edge)> Edges(Profile p)
     {
         var result = new List<(string, ProfileEdge2D)>();
         var (u, v) = (p.Start[0], p.Start[1]);

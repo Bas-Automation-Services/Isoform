@@ -5,7 +5,7 @@ import { test } from 'node:test';
 import {
   addArc, addCircle, addConstraint, addLine, addPoint, addRectangle, addSlot, adopt, applicable, constraint, constraintsOf,
   finishEdits, finishLabel, freshFeatureId, freshId, kindOf, nameProblem, newSketch, refsOf, remove, rename, settledSketch,
-  toggleConstruction, workingDocument,
+  sweepPaths, toggleConstruction, workingDocument,
 } from '../../src/Isoform.Playground/wwwroot/js/sketch/model.js';
 import { infer, nearestOn, tangentArc, tangentLine } from '../../src/Isoform.Playground/wwwroot/js/sketch/infer.js';
 import { label, measure, options, parseValue, showValue } from '../../src/Isoform.Playground/wwwroot/js/sketch/dimension.js';
@@ -266,6 +266,19 @@ test('finishing inserts the settled sketch and its feature, or sets an edited sk
   assert.deepEqual(finishEdits(s, { editing: true }), [{ set: 's', value: s }]);
   assert.deepEqual(finishEdits(s, {}), [{ insert: s }]);
   assert.equal(finishLabel(s, { feature: { op: 'extrude', id: 'pad' } }), 'sketch s, extrude pad');
+});
+
+test('a sweep follows the chain through an entity of an earlier sketch, joined or cut', () => {
+  const s = rect();
+  const sweep = finishEdits(s, { feature: { op: 'sweep', id: 'pipe', path: 'route', from: 'l1', regions: [] } })[1].insert;
+  assert.deepEqual(sweep, { id: 'pipe', type: 'sweep', op: 'join', sketch: 's', path: { sketch: 'route', from: 'l1' } });
+  const groove = finishEdits(s, { feature: { op: 'sweep-cut', id: 'groove', path: 'route', from: 'a1', regions: [['e1']] } })[1].insert;
+  assert.deepEqual([groove.op, groove.regions], ['cut', [['e1']]]);
+  assert.equal(finishEdits(s, { feature: { op: 'sweep', id: 'pipe', path: 'route', from: 'l1' }, hasBody: false })[1].insert.op, 'new');
+  // The paths: the other sketches with entities, lines and arcs before circles.
+  const doc = { features: [{ id: 'plate', type: 'block' }, { id: 'route', type: 'sketch', entities: [{ id: 'ring', circle: {} }, { id: 'l1', line: [] }] },
+    { id: 'empty', type: 'sketch', entities: [] }, { id: 's', type: 'sketch', entities: [{ id: 'e1', line: [] }] }] };
+  assert.deepEqual(sweepPaths(doc, 's'), [{ id: 'route', entities: ['l1', 'ring'] }]);
 });
 
 test('the working document holds the sketch at its place, or at the end; the settled sketch is read back', () => {

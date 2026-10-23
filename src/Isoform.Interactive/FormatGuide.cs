@@ -37,11 +37,22 @@ public static class FormatGuide
             new("horizontal-distance", ["a", "h"], 15), new("vertical-distance", ["a", "h"], 10), new("diameter", ["bore"], 8),
         ]);
 
+    /// <summary>A handle's path over the plate in the plane y = 25 (sketch [u,v] is world [x,z]): up, half a turn over, down.</summary>
+    static readonly Sketch Rail = new("rail", new SketchPlacement(new SketchPlane([0, 25, 0], [1, 0, 0], [0, -1, 0])),
+        new Dictionary<string, double[]> { ["a"] = [30, 10], ["b"] = [30, 20], ["k"] = [45, 20], ["c"] = [60, 20], ["d"] = [60, 10] },
+        [new SketchLine("up", "a", "b"), new SketchArc("over", "k", "c", "b"), new SketchLine("down", "c", "d")], []);
+
+    /// <summary>The handle's section: a Ø6 circle on the plate's top where the path leaves it.</summary>
+    static readonly Sketch Grip = new("grip", new SketchPlacement(Face: "plate/z+"), new Dictionary<string, double[]> { ["o"] = [30, 25] },
+        [new SketchCircle("grip", "o", 3)], []);
+
+    static readonly Sweep Handle = new("handle", BooleanOp.Join, "grip", null, new SweepPath("rail", From: "up"));
+
     /// <summary>One or more examples per feature type, each regenerating cleanly on the plate.</summary>
     public static IReadOnlyList<Example> Examples { get; } =
     [
         new("Axis-aligned box from origin [x,y,z] with size [W,L,H]. op: new starts a body, join adds, cut removes. " +
-            "Faces <id>/x-, x+, y-, y+, z-, z+. Optional blend (mm, join/cut only) merges it smoothly through a face <id>/blend.",
+            "Optional blend (mm, join/cut only) merges it smoothly through a face <id>/blend.",
             new Block("boss", BooleanOp.Join, [60, 15, 10], [20, 20, 12]), ["boss/x-", "boss/x+", "boss/y-", "boss/y+", "boss/z+"], []),
         new("Through-all hole along Z at center [x,y]. Face <id>/wall.", Bore, ["hole/wall"], []),
         new("Hole into a flat face (on) at center in the face's sketch coordinates, or at points of a sketch (sketch, points; " +
@@ -65,15 +76,17 @@ public static class FormatGuide
             new Revolve("knob", BooleanOp.Join, new SketchPlane([70, 25, 10], [1, 0, 0], [0, -1, 0]), new Profile([0, 0],
                 [new ProfileEdge("base", [8, 0]), new ProfileEdge("side", [8, 6]), new ProfileEdge("top", [0, 6]), new ProfileEdge("axis", [0, 0])])),
             ["knob/side", "knob/top"], []),
-        new("A 2D sketch on a plane or on a flat face by name (it follows the face): named points with their last solved " +
-            "coordinates, lines, arcs and circles between them, and constraints. It makes no solid; extrudes and revolves sweep " +
-            "its regions. See Sketches below.",
+        new("A 2D sketch on a plane or a flat face by name (it follows the face); no solid of its own. See Sketches below.",
             Outline, ["plate/z+"], []),
         new("An extrude (or revolve) of a sketch: sketch names it, regions optionally picks regions, each by entity ids round " +
             "its outside (all when left out). Loops inside a region are holes. Side faces <id>/<entity id>, caps as before. " +
-            "A revolve's axis may name a line of the sketch to turn round (construction or not) instead of the sketch's y axis.",
+            "A revolve's axis may name a line of the sketch to turn round instead of its y axis.",
             new Extrude("pad", BooleanOp.Join, null, null, 0, 5) { Sketch = "outline" },
             ["pad/bottom", "pad/right", "pad/top", "pad/left", "pad/bore", "pad/end"], [Outline]),
+        new("Sketch regions along a path: another sketch's lines and arcs end to end, or a circle (entities, any order; or from: " +
+            "the chain through one), tangent throughout, starting square to the profile's plane, no arc tighter than the profile. " +
+            "Faces <id>/<path entity>:<profile entity>, <id>/start, <id>/end.",
+            Handle, ["handle/up:grip", "handle/over:grip"], [Rail, Grip]),
         new("Moves every face of the part so far along its normal (negative: inward). Faces keep their names; a grown " +
             "convex corner of a swept profile becomes <id>/corner:<face>+<face>.",
             new Offset("grow", 1), ["plate/z+", "rib/a", "grow/corner:rib/a+rib/b"], [Rib]),
@@ -89,12 +102,11 @@ public static class FormatGuide
             "up unless keep is true; its faces keep their names.",
             new CombineBodies("merge", "tab", BooleanOp.Join) { Body = "plate" }, ["tab/z+", "plate/z+"],
             [new Block("tab", BooleanOp.New, [40, 20, 5], [20, 10, 10])]),
-        new("Fills the body with a periodic lattice of period cell (mm) on the world grid: kind gyroid, schwarz-p or diamond " +
-            "(sheets at least thickness thick, face <id>/surface) or bcc, octet or cubic (struts of diameter thickness, face " +
-            "<id>/struts). skin > 0 keeps a closed wall that thick, faces <id>/inner:<face> as a shell's, with the lattice joined " +
-            "inside. Optional region, a box {origin, size} or the id of an earlier block, extrude or revolve, limits it; the body " +
-            "stays solid outside, faces <id>/region:<face>. Fillets, chamfers, shells and offsets go before it; STEP export " +
-            "names the lattice face unsupported. Walls and gaps under 2 × cellSize are below-resolution.",
+        new("Fills the body with a lattice of period cell (mm) on the world grid: gyroid, schwarz-p or diamond sheets " +
+            "at least thickness thick (face <id>/surface), or bcc, octet or cubic struts of diameter thickness (<id>/struts). " +
+            "skin > 0 keeps a closed wall that thick (faces <id>/inner:<face>), the lattice joined inside. region, a box " +
+            "{origin, size} or an earlier block, extrude or revolve id, limits it; solid outside, faces <id>/region:<face>. " +
+            "Fillets, chamfers, shells and offsets go before it; STEP names the lattice face unsupported.",
             new Lattice("infill", "bcc", 10, 2, Region: new LatticeRegion(null, [60, 10, -1], [30, 30, 12])),
             ["infill/struts", "infill/region:x-", "infill/region:y+", "plate/z+"], []),
     ];
@@ -163,10 +175,10 @@ public static class FormatGuide
         s.AppendLine("A part is JSON: " + Compact(CanonicalFormat.Write(new PartDocument([Plate, Bore]))));
         s.AppendLine("Units mm, Z up. Features apply in order; the first after any sketches must start a body (op new). Ids are unique, non-empty, without '/'.");
         s.AppendLine("Ids are stable: never derive them from position. Numbers are plain JSON numbers; points [x,y,z], 2D points [u,v].");
-        s.AppendLine("Tools return the canonical text (fixed key order, optional keys only when used) and its SHA-256 hash.");
+        s.AppendLine("Tools return the canonical text (fixed key order) and its SHA-256 hash.");
         s.AppendLine();
         s.AppendLine("## Feature types");
-        s.AppendLine("Examples sit on the plate above; listed faces are ones the example really produces.");
+        s.AppendLine("Examples sit on the plate above.");
         foreach (var e in Examples)
         {
             var json = FormatGuide.Feature(e.Feature);
@@ -204,8 +216,8 @@ public static class FormatGuide
         s.AppendLine("- block <id>/x- x+ y- y+ z- z+; hole <id>/wall, <id>/floor, <id>/<point>:wall; plane-cut and single-edge fillet/chamfer <id>/face");
         s.AppendLine("- extrude/revolve <id>/<profile edge id> or <id>/<sketch entity id>, <id>/start, <id>/end; blend <id>/blend");
         s.AppendLine("- loop fillet/chamfer <id>/<face across the edge>, e.g. round/rib/a; shell <id>/inner:<outer face>");
-        s.AppendLine("- pattern copy k: <id>/<k>:<source face>, e.g. row/2:hole/wall; offset corners <id>/corner:<face>+<face>");
-        s.AppendLine("- lattice <id>/surface (sheets) or <id>/struts, one face however many pieces; skin <id>/inner:<face>; region <id>/region:<face>");
+        s.AppendLine("- pattern copy k: <id>/<k>:<source face>, e.g. row/2:hole/wall");
+        s.AppendLine("- lattice <id>/surface or <id>/struts, one face however many pieces; sweep <id>/<path entity>:<profile entity>");
         s.AppendLine("- in an assembly: <component id>/<face>, sub-assemblies first, e.g. left/plate/z+");
         s.AppendLine();
         s.AppendLine("## Bodies");

@@ -1,6 +1,6 @@
 // Sketch mode (docs/sketch-plan.md §4, B1–B5): draw a constrained sketch on a flat face and finish it as an extrude,
-// cut or revolve, or edit a sketch of the document. The view looks straight down the face with an orthographic
-// camera, the part dimmed behind an SVG layer that holds the drawing and takes the pointer. Every change and every
+// cut, revolve or sweep along an earlier sketch, or edit a sketch of the document. The view looks straight down the
+// face with an orthographic camera, the part dimmed behind an SVG layer that holds the drawing and takes the pointer. Every change and every
 // drag solves the sketch in the kernel (the `sketch` op, latest wins) and the drawing shows the solved points. The
 // finish commits through applyEdits as one history entry. Fillet, trim and projecting a part edge are the kernel's (the
 // `sketchEdit` op), each one undo step. The pure parts are model.js, infer.js, dimension.js, regions.js, frame.js,
@@ -141,7 +141,9 @@ export function createSketchMode(store, { viewer, view, column, call, latest, ap
       fillet: null, radius: null, piece: null, note: null,
       // project: the part's edges in the plane, the one under the pointer, and whether a projection keeps its link.
       edges: result.mesh ? edgesOf(result, frame) : [], edge: null, linked: false,
-      finish: { op: 'extrude', depth: 10, angle: 360, id: M.freshFeatureId(doc, 'extrude'), axis: null, auto: true },
+      finish: { op: 'extrude', depth: 10, angle: 360, id: M.freshFeatureId(doc, 'extrude'), axis: null, path: null, from: null, auto: true },
+      // The sketches a sweep can follow, each with its entities.
+      paths: M.sweepPaths(doc, sketch.id),
       parameters: Object.keys(doc.parameters ?? {}),
       outline: on ? outlineOf(result, on, frame) : [],
     };
@@ -362,7 +364,7 @@ export function createSketchMode(store, { viewer, view, column, call, latest, ap
     if (s.finish.axis && !lines.includes(s.finish.axis)) s.finish.axis = null;
     panel.render({
       sketch: s.sketch, editing: s.editing, face: s.face, reply: s.reply, state, conflicts, parameters: s.parameters, note: s.note,
-      finish: s.finish, lines, picked: [...s.picked].filter(k => s.reply?.regions?.some(r => regionKey(r.outer) === k)).length, regionCount,
+      finish: s.finish, lines, paths: s.paths, picked: [...s.picked].filter(k => s.reply?.regions?.some(r => regionKey(r.outer) === k)).length, regionCount,
     });
     const status = s.reply ? summary(s.reply) : { text: 'solving…', level: 'free' };
     const constrain = M.applicable(s.sketch, s.selection);
@@ -709,8 +711,12 @@ export function createSketchMode(store, { viewer, view, column, call, latest, ap
     finishChanged(patch) {
       if (patch.id) s.finish.auto = false;
       Object.assign(s.finish, patch);
-      if (patch.op && s.finish.auto && patch.op !== 'sketch') s.finish.id = M.freshFeatureId(JSON.parse(s.base), patch.op);
+      if (patch.op && s.finish.auto && patch.op !== 'sketch') s.finish.id = M.freshFeatureId(JSON.parse(s.base), patch.op.startsWith('sweep') ? 'sweep' : patch.op);
       if (patch.op === 'revolve' && !s.finish.axis) s.finish.axis = s.sketch.entities.find(e => e.line && e.construction)?.id ?? null;
+      // A sweep follows the last sketch drawn before this one, through its first entity, until another is picked.
+      if (patch.op?.startsWith('sweep') && !s.finish.path) s.finish.path = s.paths.at(-1)?.id ?? null;
+      const path = s.paths.find(p => p.id === s.finish.path);
+      if (path && !path.entities.includes(s.finish.from)) s.finish.from = path.entities[0];
       refresh();
     },
     finish: () => finish(),
@@ -726,7 +732,7 @@ export function createSketchMode(store, { viewer, view, column, call, latest, ap
     const regions = r.regions ?? [];
     const picked = regions.filter(x => s.picked.has(regionKey(x.outer))).map(x => x.outer);
     const feature = editing || f.op === 'sketch' ? null
-      : { op: f.op, id: f.id, depth: f.depth, angle: f.angle, axis: f.axis, regions: picked.length === regions.length ? [] : picked };
+      : { op: f.op, id: f.id, depth: f.depth, angle: f.angle, axis: f.axis, path: f.path, from: f.from, regions: picked.length === regions.length ? [] : picked };
     const hasBody = JSON.parse(base).features.some(x => x.type !== 'sketch');
     leave();
     return applyEdits(M.finishEdits(settled, { editing, feature, hasBody }), M.finishLabel(settled, { editing, feature }), 'sketch');
