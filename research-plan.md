@@ -248,10 +248,15 @@ to `CellSize`. Polygons are dual to minimal edges, so the mesh has no cracks.
 | 0.1 mm, chord 0.0013 mm | 18.7 s | 1.76 s | **0.63–0.69 s** | 0.23–0.26 s |
 | Triangles at 0.1 mm | ~3.5 M | ~3.5 M | **785 k** | 5.2 k |
 
-Still open: triangle count. Octree cells are isotropic, so a hole wall at chord 0.0013 mm needs cells of 0.1 mm in
-both directions where OCCT uses one strip along the axis. That gap closes with per-face tessellation from exact
-face boundaries (K6) or a bounded-error decimation pass, not with more octree work. Peak working set at 0.1 mm on
-20-op is ~670 MB.
+Triangle count (2026-10-23): octree cells are isotropic, so a hole wall at chord 0.0013 mm needs cells of 0.1 mm in
+both directions where OCCT uses one strip along the axis. The display mesh is now the octree mesh simplified face by
+face (`FaceSimplifier`; topology, diagnostics and export keep the octree mesh): planar faces triangulated from their
+boundary loops, collinear vertices on plane–plane edges dropped from both faces, curved faces reduced by edge collapse
+within the chord of their own surface; watertight, every triangle on its face, vertices the mesh's own. On 20-op
+59.6 k → 3.7 k triangles at 0.5 mm (0.08 s), 172 k → 10.8 k at 0.25 mm (0.26 s), 785 k → 15.9 k at 0.1 mm (1.3 s;
+OCCT 5.2 k); smooth blends and a shell 138 k → 14 k, gyroid in a skin 119 k → 69 k. Still open: boundary vertices stay
+where the finest cells put them (the rest of the gap to OCCT), and strut lattices at 0.5 mm are meshed coarser than
+the chord, so nothing there collapses (93 k → 92 k). Peak working set at 0.1 mm on 20-op is ~670 MB.
 
 **K4 — breadth (done).** Every operation passes the K1 property tests (`FieldProperties`: 1-Lipschitz, Value =
 Sample, bounds enclose, simplification bit-exact) and keeps its face names under parameter edits.

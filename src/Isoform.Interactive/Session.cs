@@ -72,7 +72,8 @@ public sealed class Session
             Buffers = MeshBuffers.Empty;
             return new Regeneration(slot, null, null, null, error, edited.FailedEdit, null, MeshBuffers.Empty, new Timing(editMs, regenerateMs, 0), 0, 0, settings.Refinement);
         }
-        Buffers = MeshBuffers.Of(view.Mesh, view.FaceOfQuad);
+        // A drag preview has a time budget: it shows the octree mesh as it is.
+        Buffers = slot == Preview ? MeshBuffers.Of(view.Mesh, view.FaceOfQuad) : MeshBuffers.Display(view, settings.ChordTolerance);
         var timing = new Timing(editMs, regenerateMs, clock.Elapsed.TotalMilliseconds - editMs - regenerateMs);
         return _slots[slot] = new Regeneration(slot, format, edited.Text, edited.Hash, null, null, view, Buffers, timing, reused, meshed, settings.Refinement) { Settings = settings };
     }
@@ -129,7 +130,7 @@ public sealed record Regeneration(string Slot, string? Format, string? Text, str
 }
 
 /// <param name="Edits">Applying the edits and making the text canonical.</param>
-/// <param name="Buffers">Flattening the mesh into <see cref="MeshBuffers"/>.</param>
+/// <param name="Buffers">Simplifying the mesh for display (not for a preview) and flattening it into <see cref="MeshBuffers"/>.</param>
 public sealed record Timing(double Edits, double Regenerate, double Buffers);
 
 /// <summary>A thin spot: where two faces come closer than the cells resolve, by their source names.</summary>

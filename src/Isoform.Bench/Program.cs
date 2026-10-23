@@ -2,11 +2,12 @@ using System.Diagnostics;
 using BasAutomation.Geometry;
 using Isoform.Document;
 using Isoform.Geometry;
+using Isoform.Interactive;
 using Isoform.Meshing;
 using Isoform.Modeling;
 using Isoform.Occt;
 
-// Measurements for K2/K3. Run with: dotnet run -c Release --project src/Isoform.Bench
+// Measurements for K2/K3. Run with: dotnet run -c Release --project src/Isoform.Bench [-- display]
 var settings = new ModelingSettings();
 Console.WriteLine($"Isoform bench — {Environment.ProcessorCount} logical cores, .NET {Environment.Version}");
 
@@ -34,6 +35,13 @@ var parts = new (string Name, PartDocument Doc)[]
         new Block("cut3", BooleanOp.Cut, [70, 20, 8], [8, 10, 5]),
     ])),
 };
+
+// "display": only the display mesh.
+if (args is ["display"])
+{
+    Display();
+    return;
+}
 
 foreach (var (name, doc) in parts)
 {
@@ -107,6 +115,8 @@ foreach (var (name, doc) in parts)
     }
 }
 
+Display();
+
 // Incremental regeneration of the 20-op part: a region cache keeps every region an edit leaves alone. Best of 5,
 // against regenerating the edited part without a cache.
 Console.WriteLine("\n== 20 operations, regenerate after a small edit (mesh + topology, region cache)");
@@ -166,6 +176,31 @@ if (OcctModeler.IsAvailable)
             }
             Console.WriteLine($"  {name}, deflection {deflection} mm: regenerate {regen:N0} ms + tessellate {mesh:N0} ms, {triangles:N0} triangles");
         }
+    }
+}
+
+// The display mesh: the octree mesh simplified face by face (FaceSimplifier). Best of 3 for the pass alone.
+void Display()
+{
+    Console.WriteLine("\n== Display mesh: face simplification of the regenerated mesh");
+    var shown = new (string Name, PartDocument Doc, double Cell, double Chord)[]
+    {
+        ("20 operations", parts[2].Doc, 0.5, 0.02), ("20 operations", parts[2].Doc, 0.25, 0.0054), ("20 operations", parts[2].Doc, 0.1, 0.0013),
+        ("smooth blends and a shell", Examples.All.Single(e => e.Name.StartsWith("Smooth blends")).Doc, 0.5, 0.01),
+        ("gyroid infill in a closed skin", Examples.All.Single(e => e.Name.StartsWith("Bracket with gyroid")).Doc, 0.5, 0.01),
+        ("strut lattice cube", Examples.All.Single(e => e.Name.StartsWith("Strut lattice")).Doc, 0.5, 0.01),
+    };
+    foreach (var (name, doc, h, chord) in shown)
+    {
+        var r = new FrepModeler(new ModelingSettings { CellSize = h, ChordTolerance = chord }).Regenerate(doc);
+        var (best, triangles) = (double.MaxValue, 0);
+        for (var run = 0; run < 3; run++)
+        {
+            var sw = Stopwatch.StartNew();
+            var (simplified, _) = FaceSimplifier.Simplify(r.Mesh!, r.FaceOfQuad, r.Part.Surfaces, r.Part.Field!, chord);
+            (best, triangles) = (Math.Min(best, sw.Elapsed.TotalMilliseconds), simplified.Quads.Count);
+        }
+        Console.WriteLine($"  {name}, h={h} chord={chord}: {r.Mesh!.Triangles().Count():N0} -> {triangles:N0} triangles in {best:N0} ms");
     }
 }
 
