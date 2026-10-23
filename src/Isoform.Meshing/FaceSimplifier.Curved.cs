@@ -7,7 +7,9 @@ public static partial class FaceSimplifier
 {
     // A new triangle turns at most 60° from its surface's normal, so none flips.
     const double MinCos = 0.5;
-    const double Sampled = 0.9;
+
+    // Samples stay within this share of the chord, so the triangle between them stays within all of it.
+    const double Sampled = 0.85;
 
     sealed partial class Work
     {
