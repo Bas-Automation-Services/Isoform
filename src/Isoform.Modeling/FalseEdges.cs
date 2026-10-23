@@ -48,9 +48,10 @@ static class FalseEdges
     /// collapsed into one vertex (two fillets that just touch at a corner, a boss overlapping a face by a sliver, a
     /// corner of a face that a cut leaves as a small triangle). A real vertex has a point on all its faces' surfaces
     /// that is on the part too. Gauss-Newton on the surfaces, each sampled from the body field so that fillets count,
-    /// from the vertex's mesh points: a residual above the tolerance, or a point off the part, is a false vertex.
+    /// from the vertex's mesh points: a residual above the tolerance, a point off the part, or one where a face's
+    /// surfaces no longer decide the field, is a false vertex.
     /// </summary>
-    public static List<Corner> Corners(Field body, TopologyBuilder.Result built, double tolerance)
+    public static List<Corner> Corners(Field body, IReadOnlyList<Surface> surfaces, TopologyBuilder.Result built, double tolerance)
     {
         var found = new List<Corner>();
         var topology = built.Topology;
@@ -61,9 +62,30 @@ static class FalseEdges
             var extent = Region(points, 0);
             var r = Residual(body, owners, extent.Center, out var at);
             // Faces a step of 2·tolerance apart leave a residual of a tolerance: anything above is a vertex the part lacks.
-            if (r > tolerance || Math.Abs(body.Value(at)) > tolerance) found.Add(new(owners, at, extent));
+            if (r > tolerance || Math.Abs(body.Value(at)) > tolerance || Absent(body, surfaces, owners, topology.Vertices[v].Faces.Select(f => built.FaceOwners[f]), at, tolerance))
+                found.Add(new(owners, at, extent));
         }
         return found;
+    }
+
+    /// <summary>
+    /// A face none of whose surfaces is left in the field simplified round the point: there its surfaces pass but it
+    /// bounds nothing. A face pinched to a neck narrower than a cell gets a vertex where a side wall's plane, running on
+    /// past its corner, crosses the far edge of the neck: on every surface and on the part, but not on the wall.
+    /// Simplifying keeps the value, not every surface that ties for it, so only plain analytic faces are judged: not a
+    /// shell's inner surfaces, which tie where they meet, nor fillets, blends and lattices. Nor faces that meet at a small
+    /// angle: they place the point only to within the tolerance over the angle's sine, beyond the box below about 6°.
+    /// </summary>
+    static bool Absent(Field body, IReadOnlyList<Surface> surfaces, int[] owners, IEnumerable<int[]> faces, Point3D p, double tolerance)
+    {
+        if (faces.Any(f => f.Any(o => !surfaces[o].Analytic || surfaces[o].Source.Contains("/inner:", StringComparison.Ordinal)))) return false;
+        var normals = owners.Distinct().Select(o => body.SampleSurface(o, p)).OfType<FieldSample>().Select(s => s.Gradient.Normalized()).ToList();
+        for (var i = 0; i < normals.Count; i++)
+            for (var j = i + 1; j < normals.Count; j++)
+                if (normals[i].Cross(normals[j]).Length < 0.1) return false;
+        var round = new Vector3D(10, 10, 10) * tolerance;
+        var local = body.Simplify(new Box3D(p - round, p + round));
+        return faces.Any(f => f.All(o => body.SampleSurface(o, p) is not null && local.SampleSurface(o, p) is null));
     }
 
     /// <summary>The largest distance to one of the surfaces at the point Gauss-Newton reaches from <paramref name="p"/>.</summary>

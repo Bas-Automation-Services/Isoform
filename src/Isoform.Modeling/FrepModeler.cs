@@ -148,7 +148,7 @@ public sealed class FrepModeler(ModelingSettings settings, RegionCache? cache = 
             carried.Add(new Carried(bodyMesh.Quads.Select(q => q.Owner).ToHashSet(), oriented, bodyMesh, [.. built.EdgePoints, .. built.VertexPoints]));
             pinched.AddRange(built.Pinches);
             falseEdges.AddRange(FalseEdges.Find(body.Field, oriented, built, Settings.Tolerance, Settings.CellSize));
-            falseCorners.AddRange(FalseEdges.Corners(body.Field, built, Settings.Tolerance));
+            falseCorners.AddRange(FalseEdges.Corners(body.Field, oriented, built, Settings.Tolerance));
             foreach (var p in LostPockets(bodyMesh))
             {
                 // A lattice alone is judged by its own sizes (LatticeResolution); a sliver its sheets cut off against
