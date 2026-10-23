@@ -195,7 +195,128 @@ public class SweptEdgeTests(ITestOutputHelper output)
         result.Diagnostics.Should().ContainSingle().Which.Code.Should().Be(Diagnostic.UnsupportedFillet);
     }
 
-    public static IEnumerable<object[]> Parts => [["riser"], ["riser chamfer"], ["bent riser"], ["slot rim"], ["window rim"]];
+    // A 40 × 20 × 10 block with its top-right corner rounded R5 in the profile: the right side runs on over the arc into
+    // the top. The profile lies wholly behind the right side, which once made the fillet a plain round of the side's
+    // plane: it ran straight on past the tangent point into the arc's material (1.45 mm³ too much at r = 2, against
+    // the ball rolling along the side alone) and left the arc and the top sharp, with nothing reported.
+    static readonly Profile OneRound = Loop([0, 0], ("bottom", 40, 0, 0), ("right", 40, 15, 0), ("arc", 35, 20, Math.Tan(Math.PI / 8)), ("top", 0, 20, 0), ("left", 0, 0, 0));
+
+    static PartDocument RoundCorner(Feature edgeFeature, params Feature[] before) => new([new Extrude("block", BooleanOp.New, Xy, OneRound, 0, 10), .. before, edgeFeature]);
+
+    [Theory]
+    [InlineData(1)]
+    [InlineData(2)]
+    [InlineData(4)]
+    public void A_side_the_profile_is_behind_runs_on_over_its_tangent_arc(double r)
+    {
+        var result = Modeler.Regenerate(RoundCorner(new Fillet("round", ["block/end", "block/right"], r)));
+
+        result.Diagnostics.Should().BeEmpty();
+        result.Mesh!.IsWatertight().Should().BeTrue();
+        // Straight along the right side (15) and the top (35), a quarter torus round the R5 corner (Pappus); both ends
+        // at convex corners, flush with the faces there.
+        var exact = Area(OneRound) * 10 - Spandrel(r) * 50 - Math.PI / 2 * (5 - Centroid(r)) * Spandrel(r);
+        var volume = SignedVolume(result.Mesh);
+        output.WriteLine($"volume {volume:F4} vs {exact:F4}");
+        volume.Should().BeApproximately(exact, exact * VolumeTolerance);
+        Deviation(result, "round/face", p => Math.Sqrt(Sq(p.X - (40 - r)) + Sq(p.Z - (10 - r))) - r).Should().BeLessThan(1e-7);
+        Deviation(result, "round/block/arc", p => Math.Sqrt(Sq(Math.Sqrt(Sq(p.X - 35) + Sq(p.Y - 15)) - (5 - r)) + Sq(p.Z - (10 - r))) - r).Should().BeLessThan(1e-7);
+        Deviation(result, "round/block/top", p => Math.Sqrt(Sq(p.Y - (20 - r)) + Sq(p.Z - (10 - r))) - r).Should().BeLessThan(1e-7);
+        // The ends of the contact lines at a junction, where four faces meet tangentially, land within 1e-6.
+        MaxVertexError(result).Should().BeLessThan(1e-6);
+    }
+
+    public static IEnumerable<object[]> TangentRuns =>
+        [["chamfer"], ["arc picked"], ["start cap"], ["arc then arc"], ["convex then concave"], ["concave bend"], ["notch rim"]];
+
+    /// <summary>
+    /// Every way into a tangent run gives the rolling ball (or setback) along the whole run, measured by brute force
+    /// against the corner left where d, h &lt; r and (r − h)² + (r − d)² ≥ r², d and h the distances to the run and the cap.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(TangentRuns))]
+    public void Tangent_runs_are_exact(string name)
+    {
+        var (s, c) = (Spandrel(2), Centroid(2));
+        // R10 round (30, 10), then R5 round (30 + 5/√2, 10 + 5/√2) on the same radius.
+        var (big, small) = ((30 + 10 * Math.Sqrt(0.5), 10 + 10 * Math.Sqrt(0.5)), (30 + 5 * Math.Sqrt(0.5), 15 + 5 * Math.Sqrt(0.5)));
+        var twoArcs = Loop([0, 0], ("bottom", 40, 0, 0), ("right", 40, 10, 0), ("big", big.Item1, big.Item2, Math.Tan(Math.PI / 16)),
+            ("small", small.Item1, small.Item2, Math.Tan(Math.PI / 16)), ("top", 0, small.Item2, 0), ("left", 0, 0, 0));
+        var s2 = Loop([0, 0], ("bottom", 40, 0, 0), ("right", 40, 10, 0), ("out", 35, 15, Math.Tan(Math.PI / 8)), ("in", 30, 20, -Math.Tan(Math.PI / 8)),
+            ("neck", 30, 30, 0), ("top", 0, 30, 0), ("left", 0, 0, 0));
+        var bend = Loop([0, 0], ("bottom", 40, 0, 0), ("tip", 40, 5, 0), ("inner", 10, 5, 0), ("bend", 5, 10, -Math.Tan(Math.PI / 8)), ("riser", 5, 30, 0),
+            ("top", 0, 30, 0), ("back", 0, 0, 0));
+        var notch = Loop([30, 15], ("s", 70, 15, 0), ("e", 70, 35, 0), ("n", 50, 35, 0), ("down", 50, 33, 0), ("bend", 45, 28, -Math.Tan(Math.PI / 8)),
+            ("in", 30, 28, 0), ("w", 30, 15, 0));
+        var (doc, exact) = name switch
+        {
+            // A 45° chamfer of 2 takes 2 mm² along the lines, and round the corner a triangle whose centroid is ⅔ in.
+            "chamfer" => (RoundCorner(new Chamfer("round", ["block/end", "block/right"], 2)), Area(OneRound) * 10 - 2 * 50 - Math.PI / 2 * (5 - 2.0 / 3) * 2),
+            "arc picked" => (RoundCorner(new Fillet("round", ["block/end", "block/arc"], 2)), Area(OneRound) * 10 - s * 50 - Math.PI / 2 * (5 - c) * s),
+            "start cap" => (RoundCorner(new Fillet("round", ["block/start", "block/top"], 2)), Area(OneRound) * 10 - s * 50 - Math.PI / 2 * (5 - c) * s),
+            // R10 then R5, an eighth turn each, between the right side (10) and the top.
+            "arc then arc" => (new PartDocument([new Extrude("block", BooleanOp.New, Xy, twoArcs, 0, 10), new Fillet("round", ["block/end", "block/big"], 2)]),
+                Area(twoArcs) * 10 - s * (10 + small.Item1) - Math.PI / 4 * (10 - c) * s - Math.PI / 4 * (5 - c) * s),
+            // Out round R5, back in round R5 (the spandrel outside that circle), then a neck of 10 up to the top.
+            "convex then concave" => (new PartDocument([new Extrude("block", BooleanOp.New, Xy, s2, 0, 10), new Fillet("round", ["block/end", "block/right"], 2)]),
+                Area(s2) * 10 - s * 20 - Math.PI / 2 * (5 - c) * s - Math.PI / 2 * (5 + c) * s),
+            "concave bend" => (new PartDocument([new Extrude("block", BooleanOp.New, Xy, bend, 0, 10), new Fillet("round", ["block/end", "block/inner"], 2)]),
+                Area(bend) * 10 - s * 50 - Math.PI / 2 * (5 + c) * s),
+            // A window whose tool has a reflex corner rounded R5: the part's wall there is convex. Both ends of the run
+            // are reflex corners of the part, where the walls beside it gain the fillet's ends.
+            _ => (new PartDocument([Plate, new Extrude("window", BooleanOp.Cut, Xy, notch, -1, 11), new Fillet("round", ["plate/z+", "window/in"], 2)]),
+                50000 - Area(notch) * 10 - s * 17 - Math.PI / 2 * (5 - c) * s),
+        };
+        var result = Modeler.Regenerate(doc);
+
+        result.Diagnostics.Should().BeEmpty();
+        result.Mesh!.IsWatertight().Should().BeTrue();
+        var volume = SignedVolume(result.Mesh);
+        output.WriteLine($"volume {volume:F4} vs {exact:F4}");
+        volume.Should().BeApproximately(exact, exact * VolumeTolerance);
+        MaxVertexError(result).Should().BeLessThan(1e-6);
+    }
+
+    [Fact]
+    public void An_edge_along_the_sweep_beside_a_tangent_side_stays_a_plain_round()
+    {
+        // The cut at y = 10 takes the arc away; its edge with the right side runs up the sweep.
+        var result = Modeler.Regenerate(RoundCorner(new Fillet("round", ["cut/face", "block/right"], 2), new PlaneCut("cut", [0, 10, 0], [0, 1, 0])));
+
+        result.Diagnostics.Should().BeEmpty();
+        SignedVolume(result.Mesh!).Should().BeApproximately(40 * 10 * 10 - Spandrel(2) * 10, 4000 * VolumeTolerance);
+        Deviation(result, "round/face", p => Math.Sqrt(Sq(p.X - 38) + Sq(p.Y - 8)) - 2).Should().BeLessThan(1e-7);
+    }
+
+    [Fact]
+    public void A_slanted_cap_on_a_tangent_side_is_refused()
+    {
+        // The cap leans across the right side: the ball would roll on round the arc against a tilted face.
+        var result = Modeler.Regenerate(RoundCorner(new Fillet("round", ["slant/face", "block/right"], 1), new PlaneCut("slant", [40, 0, 8], [0.1, 0, 1])));
+
+        result.Diagnostics.Should().ContainSingle().Which.Code.Should().Be(Diagnostic.UnsupportedFillet);
+    }
+
+    /// <summary>The area of a closed profile: its chords, plus each arc's segment outside a chord (inside, turning clockwise).</summary>
+    static double Area(Profile p)
+    {
+        var (area, u, v) = (0.0, p.Start[0], p.Start[1]);
+        foreach (var e in p.Edges)
+        {
+            var (u1, v1) = (e.To[0], e.To[1]);
+            area += (u * v1 - u1 * v) / 2;
+            if (e.Bulge != 0)
+            {
+                var sweep = 4 * Math.Atan(Math.Abs(e.Bulge));
+                var radius = Math.Sqrt(Sq(u1 - u) + Sq(v1 - v)) / (2 * Math.Sin(sweep / 2));
+                area += Math.Sign(e.Bulge) * radius * radius * (sweep - Math.Sin(sweep)) / 2;
+            }
+            (u, v) = (u1, v1);
+        }
+        return area;
+    }
+
+    public static IEnumerable<object[]> Parts => [["riser"], ["riser chamfer"], ["bent riser"], ["slot rim"], ["window rim"], ["round corner"]];
 
     static PartDocument Part(string name) => name switch
     {
@@ -203,6 +324,7 @@ public class SweptEdgeTests(ITestOutputHelper output)
         "riser chamfer" => Riser(0, new Chamfer("round", ["bracket/end", "bracket/riser"], 2)),
         "bent riser" => BentRiser(1),
         "slot rim" => SlotRim(1),
+        "round corner" => RoundCorner(new Fillet("round", ["block/end", "block/right"], 1)),
         _ => WindowRim(1),
     };
 
