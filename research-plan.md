@@ -380,6 +380,15 @@ but about half are features a finer local mesh would build.
   through the corner where it starts) into a report; on 3000 random documents (F-rep only and common, seeds 0–1499)
   it reports nothing. Cost: about 2 ms on the 20-op part. Still silent: a corner on a face's inside, and two edges
   that cross in a point.
+- *Seeds 0–2149, both sets, F-rep side (2026-10-24):* three crashes. Two (F-rep only 1495, 1867) were a surface
+  component the cells flattened to nothing: its enclosed volume, −1.5e-15, made it a void, no body's box held it,
+  and it got a body number past the last (`PieceContacts` indexed by it). A surface no body holds is now a body of its
+  own. The third (1771) is the mesher's Newton projection dividing by a zero gradient where a blend's two gradients
+  cancel, open. And a false vertex passed as real where a face's surface runs on past the face: a side wall's plane
+  past its corner crossing a knob's edge, where an overhang narrows to 0.12 mm (1259, at 0.25 mm cells), or a block's
+  side past its end on a cone it stands 0.007 mm proud of (1673). A vertex is now also false where a face's surfaces
+  are gone from the field simplified round it (plain analytic faces meeting at more than 6°). Of the 4300 documents
+  this changed one result, 1673, from silent to reported.
 
 **Review.** An independent read of the K4 code found 15 problems (wrong geometry without a diagnostic in several);
 all fixed, each with a regression test (`ReviewFindingTests`).

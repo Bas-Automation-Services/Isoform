@@ -581,4 +581,77 @@ public class RobustnessReproTests
         DualContouring.Build(body.Field, body.Min, body.Max, Settings.CellSize, Settings.ChordTolerance).Pockets.Should().NotBeEmpty();
         new FrepModeler(Settings).Regenerate(doc).Diagnostics.Should().BeEmpty();
     }
+
+    /// <summary>
+    /// F-rep only, seed 1495: a plane cut leaving a wedge of a revolve's base threw from PieceContacts (the knob, which
+    /// misses the part, only places the cells). In the first, unrefined pass the cells cut the wedge into three pieces,
+    /// one of them flattened to nothing: its enclosed volume was −1.5e-15, so it counted as a void, and no body's box
+    /// held it (they missed by 2e-15 mm). Such a surface got the body number one past the last. A surface no body holds
+    /// is now a body of its own; refined, the wedge is one body.
+    /// </summary>
+    [Fact]
+    public void Wedge_of_a_revolve_falling_apart_in_the_cells_does_not_crash()
+    {
+        var r = Regenerate("""
+            [
+              {"id":"body","type":"revolve","op":"new","plane":{"origin":[0,0,0],"x":[1,0,0],"normal":[0,-1,0]},"profile":{"start":[0,0],"edges":[{"id":"base","to":[12.061,0]},{"id":"side0","to":[12.061,4.5]},{"id":"step0","to":[7.664,4.5]},{"id":"side1","to":[7.664,15.653]},{"id":"step1","to":[3.5,18.153]},{"id":"top","to":[0,18.153]},{"id":"axis","to":[0,0]}]},"angle":360},
+              {"id":"knob2","type":"extrude","op":"join","plane":{"origin":[0,0,18.153],"x":[1,0,0],"normal":[0,0,1]},"profile":{"start":[-16.018,-10],"edges":[{"id":"a","to":[-7.982,-10],"bulge":1},{"id":"b","to":[-16.018,-10],"bulge":1}]},"start":0,"end":3.5},
+              {"id":"slice3","type":"plane-cut","point":[12.061,0,0],"normal":[-0.75,-0.297,0.936]}
+            ]
+            """);
+
+        r.Topology!.Faces.Should().OnlyContain(f => f.Body < r.Topology.BodyCount);
+        r.Topology.BodyCount.Should().Be(1);
+        (Reported(r) || r.Mesh!.IsWatertight()).Should().BeTrue();
+    }
+
+    /// <summary>
+    /// F-rep only, seed 1259: a knob joined on top of an extrusion overhangs its side, and the overhang's underside
+    /// (knob3/start) runs past the extrusion's corner through a neck 0.117 mm wide (the block combined in, apart from
+    /// it, only places the cells). At 0.25 mm cells the neck closed to a vertex and the face came out as two, with
+    /// nothing reported. That vertex lies where the side wall's plane, run on
+    /// past the corner, crosses the knob's edge: on all its surfaces and on the part, so it passed as real, though the
+    /// wall is not there. A vertex where a face's surfaces no longer decide the field is now a false one. At 0.5 and
+    /// 0.125 mm the underside is one face, as the field has it; the top face is one at every size.
+    /// </summary>
+    [Theory]
+    [InlineData(0.25)]
+    [InlineData(0.5)]
+    [InlineData(0.125)]
+    public void Overhang_through_a_neck_is_one_face_or_reported(double cell)
+    {
+        var r = new FrepModeler(new ModelingSettings { CellSize = cell }).Regenerate(RobustnessDocuments.Parse("""
+            [
+              {"id":"body","type":"extrude","op":"new","plane":{"origin":[0,0,0],"x":[1,0,0],"normal":[0,0,1]},"profile":{"start":[9.747,-2.337],"edges":[{"id":"e0","to":[7.282,5.022]},{"id":"e1","to":[-3.664,10.863]},{"id":"e2","to":[-10.727,3.433],"bulge":0.582},{"id":"e3","to":[-9.222,-6.845],"bulge":0.171},{"id":"e4","to":[-3.402,-7.812]},{"id":"e5","to":[4.21,-8.553]},{"id":"e6","to":[9.747,-2.337]}]},"start":0,"end":5.776},
+              {"id":"part1","type":"block","op":"new","origin":[-14.5,12.708,-1],"size":[10.5,14.5,4.89]},
+              {"id":"combine2","type":"combine","tool":"part1","op":"join","body":"body"},
+              {"id":"knob3","type":"extrude","op":"join","plane":{"origin":[0,0,5.776],"x":[1,0,0],"normal":[0,0,1]},"profile":{"start":[10.077,1.032],"edges":[{"id":"e0","to":[9.449,3.888]},{"id":"e1","to":[6.508,5.611]},{"id":"e2","to":[3.665,3.819]},{"id":"e3","to":[2.841,0.733]},{"id":"e4","to":[4.385,-1.737],"bulge":0.544},{"id":"e5","to":[6.259,-3.681]},{"id":"e6","to":[8.56,-2.32],"bulge":0.568},{"id":"e7","to":[10.077,1.032],"bulge":-0.157}]},"start":0,"end":8.5}
+            ]
+            """));
+        int Faces(string source) => r.Topology!.Faces.Count(f => f.Sources.SequenceEqual([source]));
+
+        Faces("body/end").Should().Be(1);
+        (Reported(r) || Faces("knob3/start") == 1).Should().BeTrue($"{Faces("knob3/start")} undersides");
+    }
+
+    /// <summary>
+    /// F-rep only, seed 1673, the one other document of 4300 the same check changed: a block joined on a shelled revolve
+    /// whose corner (8, −4.5, 25.803) stands 0.007 mm proud of the cone there. Its side boss2/y+ keeps a sliver outside,
+    /// 0.009 mm high; the cells lost it and made a vertex of boss2/x+, boss2/z− and the cone at y = −4.486, past the
+    /// block's end, with nothing reported. Now it is reported.
+    /// </summary>
+    [Fact]
+    public void Block_corner_just_proud_of_a_cone_is_built_or_reported()
+    {
+        var r = Regenerate("""
+            [
+              {"id":"body","type":"revolve","op":"new","plane":{"origin":[0,0,0],"x":[1,0,0],"normal":[0,-1,0]},"profile":{"start":[0,0],"edges":[{"id":"base","to":[5.099,0]},{"id":"side0","to":[5.099,9]},{"id":"step0","to":[7.037,11.605]},{"id":"side1","to":[7.037,23.203000000000003],"bulge":0.2},{"id":"step1","to":[9.5,26.203000000000003]},{"id":"side2","to":[9.5,29.703000000000003]},{"id":"step2","to":[6.848,29.703000000000003]},{"id":"top","to":[0,29.703000000000003]},{"id":"axis","to":[0,0]}]},"angle":360},
+              {"id":"shell1","type":"shell","thickness":0.3},
+              {"id":"boss2","type":"block","op":"join","origin":[0.6820000000000004,-6.5,25.803000000000004],"size":[7.318,2,4]}
+            ]
+            """);
+        var t = r.Topology!;
+
+        (Reported(r) || t.Faces.Any(f => f.Sources.Contains("boss2/y+") && t.Signature(f.Index).Contains("body/step1"))).Should().BeTrue();
+    }
 }

@@ -491,7 +491,8 @@ public static class TopologyBuilder
 
     /// <summary>
     /// Surface components with positive enclosed volume are bodies; negative ones are voids (a shell's cavity)
-    /// and belong to the smallest body whose bounds contain them.
+    /// and belong to the smallest body whose bounds contain them. One that no body contains is no void but a body of its
+    /// own: a piece the cells flattened to nothing encloses no volume, and its sign is noise.
     /// </summary>
     static (int[] Index, int Count) Bodies(Point3D[] v, Quad[] quads, UnionFind components)
     {
@@ -525,7 +526,7 @@ public static class TopologyBuilder
                 .OrderBy(b => volume[b])
                 .Cast<int?>()
                 .FirstOrDefault();
-            body[c] = host is { } h ? body[h] : count; // an unenclosed inward surface would be an error upstream
+            body[c] = host is { } h ? body[h] : count++;
         }
         return (component.Select(c => body[c]).ToArray(), count);
     }
