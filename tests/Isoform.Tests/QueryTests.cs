@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using BasAutomation.Geometry;
 using Isoform.Document;
+using Isoform.Geometry;
 using Isoform.Meshing;
 using Isoform.Modeling;
 using Xunit.Abstractions;
@@ -79,15 +80,15 @@ public class QueryTests(ITestOutputHelper output)
         var part = Compile(Plate, new PlaneCut("cut", [60, 0, 0], [1, 1, 0]));
         var (n, along) = (new Vector3D(1, 1, 0).Normalized(), new Vector3D(-1, 1, 0));
 
-        var sw = Stopwatch.StartNew();
-        var inside = Queries.Raycast(part.Field!, P(40, 20, 5) - n * 1e-6, along, 200)!.Value;
-        var outside = Queries.Raycast(part.Field!, P(40, 20, 5) + n * 1e-6, along, 200);
+        var field = new CountingField(part.Field!);
+        var inside = Queries.Raycast(field, P(40, 20, 5) - n * 1e-6, along, 200)!.Value;
+        var outside = Queries.Raycast(field, P(40, 20, 5) + n * 1e-6, along, 200);
 
-        output.WriteLine($"{sw.Elapsed.TotalMilliseconds:F1} ms");
+        output.WriteLine($"{field.Evaluations} evaluations");
         Face(part, inside).Should().Be("plate/y+");
         inside.Distance.Should().BeApproximately((30 + 1e-6 / Math.Sqrt(2)) * Math.Sqrt(2), 1e-12);
         outside.Should().BeNull();
-        sw.Elapsed.TotalSeconds.Should().BeLessThan(1);
+        field.Evaluations.Should().BeLessThan(1000);
     }
 
     // ---- Distance ----
@@ -233,12 +234,13 @@ public class QueryTests(ITestOutputHelper output)
         var part = Compile(features);
         var mesh = MeshOf(part, 0.5);
 
-        var sw = Stopwatch.StartNew();
-        var wall = Queries.MinimumWall(part.Field!, mesh)!.Value;
+        var field = new CountingField(part.Field!);
+        var wall = Queries.MinimumWall(field, mesh)!.Value;
 
-        output.WriteLine($"{wall.Thickness:F12} from {part.Surfaces[wall.FromOwner].Source} to {part.Surfaces[wall.ToOwner].Source}, {sw.Elapsed.TotalSeconds:F2} s");
+        output.WriteLine($"{wall.Thickness:F12} from {part.Surfaces[wall.FromOwner].Source} to {part.Surfaces[wall.ToOwner].Source}, {field.Evaluations} evaluations");
         wall.Thickness.Should().BeApproximately(10, 1e-9);
-        sw.Elapsed.TotalSeconds.Should().BeLessThan(10);
+        // About 3e6 today; a ray crawling in 1e-5 steps up a face costs ~1e6 alone, and the old hang took minutes.
+        field.Evaluations.Should().BeLessThan(10_000_000);
     }
 
     [Fact]
@@ -342,5 +344,18 @@ public class QueryTests(ITestOutputHelper output)
         actual.Xy.Should().BeApproximately(expected.Xy, scale);
         actual.Yz.Should().BeApproximately(expected.Yz, scale);
         actual.Zx.Should().BeApproximately(expected.Zx, scale);
+    }
+
+    /// <summary>A field that counts its evaluations: the work a query does, which a busy machine leaves alone.</summary>
+    sealed class CountingField(Field inner) : Field
+    {
+        long _evaluations;
+        public long Evaluations => Interlocked.Read(ref _evaluations);
+        public override FieldSample Sample(Point3D p) { Interlocked.Increment(ref _evaluations); return inner.Sample(p); }
+        public override double Value(Point3D p) { Interlocked.Increment(ref _evaluations); return inner.Value(p); }
+        public override FieldSample? SampleSurface(int owner, Point3D p) { Interlocked.Increment(ref _evaluations); return inner.SampleSurface(owner, p); }
+        public override Field Simplify(Box3D box) => inner.Simplify(box);
+        public override Interval Bounds(Box3D box) => inner.Bounds(box);
+        public override double? SinglePatch(Box3D box) => inner.SinglePatch(box);
     }
 }

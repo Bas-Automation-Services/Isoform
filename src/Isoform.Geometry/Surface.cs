@@ -96,8 +96,14 @@ public sealed record Surface(int Id, string Source, SurfaceKind Kind, Point3D Or
 
     static double Hypot(double a, double b) => Math.Sqrt(a * a + b * b);
 
-    static Vector3D AnyPerpendicular(Vector3D v) =>
-        (Math.Abs(v.X) < 0.9 ? new Vector3D(1, 0, 0) : new Vector3D(0, 1, 0)).Cross(v).Normalized();
+    // The same for either sign of the axis, so coaxial surfaces agree on the axis (a rounded edge between them needs
+    // their gradients' dot product there as everywhere else).
+    static Vector3D AnyPerpendicular(Vector3D v)
+    {
+        var big = Math.Abs(v.X) >= Math.Abs(v.Y) && Math.Abs(v.X) >= Math.Abs(v.Z) ? v.X : Math.Abs(v.Y) >= Math.Abs(v.Z) ? v.Y : v.Z;
+        if (big < 0) v = -v;
+        return (Math.Abs(v.X) < 0.9 ? new Vector3D(1, 0, 0) : new Vector3D(0, 1, 0)).Cross(v).Normalized();
+    }
 }
 
 /// <summary>An orthonormal frame; a mirrored (left-handed) one is allowed.</summary>
