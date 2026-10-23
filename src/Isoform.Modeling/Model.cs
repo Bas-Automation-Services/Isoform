@@ -43,7 +43,7 @@ public sealed record Diagnostic(string Code, string? FeatureId, string Message)
     public const string UnsupportedChamfer = "unsupported-chamfer";
     /// <summary>Three fillets of unequal radii meet at a corner: no exact corner patch, so they meet in a mitre (a warning).</summary>
     public const string CornerMitred = "corner-mitred";
-    /// <summary>Two inside fillets meet round an edge with no exact filler (unequal radii, a leaning edge): the corner stays open (a warning).</summary>
+    /// <summary>Two inside fillets meet round a convex edge with no exact filler (unequal radii, a leaning edge, a curved face or base, not a right angle): the corner stays open (a warning).</summary>
     public const string CornerOpen = "corner-open";
     public const string BelowResolution = "below-resolution";
     public const string BackendFailed = "backend-failed";
