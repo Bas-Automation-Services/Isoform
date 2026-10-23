@@ -98,7 +98,7 @@ public static partial class DualContouring
         var reach = neighbours.Count == 0 ? 0 : neighbours.Max(n => n.Size);
 
         var f = new Fingerprint();
-        f.Add(2); // format version
+        f.Add(3); // format version
         f.Add(g.H);
         f.Add(ctx.ChordTolerance);
         f.Add(g.Origin);
@@ -289,10 +289,12 @@ public static partial class DualContouring
         for (var k = 0; k < keys.Length; k++) (keys[k], order[k]) = (VertexKey(cells[4 * k] - oi, cells[4 * k + 1] - oj, cells[4 * k + 2] - ok, cells[4 * k + 3]), k);
         Array.Sort(keys, order);
 
-        var multi = new List<Node>();
-        Multi(own!, multi);
-        foreach (var leaf in multi) FindThin(leaf, grid, spots);
+        var surface = new List<Node>();
+        Surfaced(own!, surface);
+        foreach (var leaf in surface.Where(l => l.Multi)) FindThin(leaf, grid, spots);
         var thin = spots.ToList();
+        // Leaves round no crossing have no vertex: the field may still take the other sign inside them.
+        var pockets = surface.Where(l => !ids.ContainsKey(l)).Select(l => FindPocket(l, grid)).OfType<Pocket>().ToList();
         return new RegionMesh
         {
             Cells = [.. order.SelectMany(k => new[] { cells[4 * k], cells[4 * k + 1], cells[4 * k + 2], cells[4 * k + 3] })],
@@ -300,6 +302,7 @@ public static partial class DualContouring
             Polygons = [.. polygons],
             ThinOwners = [.. thin.SelectMany(s => new[] { region.Local[s.OwnerA], region.Local[s.OwnerB] })],
             Thin = [.. thin.SelectMany(s => new[] { s.Location.X, s.Location.Y, s.Location.Z, s.Thickness })],
+            Pockets = [.. pockets.SelectMany(p => new[] { p.Location.X, p.Location.Y, p.Location.Z, p.Value, p.Corner })],
             Cacheable = cacheable,
         };
     }
@@ -328,11 +331,12 @@ public static partial class DualContouring
         return view;
     }
 
-    static void Multi(Node n, List<Node> into)
+    /// <summary>The leaves holding surface.</summary>
+    static void Surfaced(Node n, List<Node> into)
     {
         if (n.Children is { } ch)
-            foreach (var c in ch) Multi(c, into);
-        else if (n.Multi) into.Add(n);
+            foreach (var c in ch) Surfaced(c, into);
+        else if (n.Field is not null) into.Add(n);
     }
 
     internal static Mesh Assemble(MeshPlan plan, IReadOnlyList<RegionMesh> results)
@@ -389,7 +393,9 @@ public static partial class DualContouring
                 spots.Add(new ThinSpot(Math.Min(a, b), Math.Max(a, b), new Point3D(r.Thin[4 * s], r.Thin[4 * s + 1], r.Thin[4 * s + 2]), r.Thin[4 * s + 3]));
             }
         }
-        return new Mesh(positions, quads, Sorted(spots));
+        var pockets = results.SelectMany(r => Enumerable.Range(0, r.Pockets.Length / 5)
+            .Select(s => new Pocket(new Point3D(r.Pockets[5 * s], r.Pockets[5 * s + 1], r.Pockets[5 * s + 2]), r.Pockets[5 * s + 3], r.Pockets[5 * s + 4])));
+        return new Mesh(positions, quads, Sorted(spots), Sorted(pockets));
     }
 
     /// <summary>A vertex by its leaf's corner in Morton order (2²⁰ cells a side), then its piece (a cube holds at most four).</summary>

@@ -349,9 +349,21 @@ but about half are features a finer local mesh would build.
   surfaces may bound the part. The sliver body is reported (a patch 0.01 mm across, too small for refinement), and
   so is the same sliver at the plate's other corners. Result: silent 0 on both 150–1149 and 1150–2149; no other
   document changed (both build and agree 30.3% and 31.6%). Cost: about 0.5 ms on a random part, 4–8 ms on the 20-op
-  part at 0.5 to 0.1 mm cells. Still missed (skipped repros): a lost body bounded by two surfaces (a ball's cap cut
-  off flush with another face), and a sliver within 2.5 mm of its own faces' polygons; both need a check in the
-  mesher on cells without a vertex.
+  part at 0.5 to 0.1 mm cells. Still missed then: a lost body bounded by two surfaces (a ball's cap cut off flush
+  with another face), and a sliver within 2.5 mm of its own faces' polygons.
+- *Cells without a vertex (2026-10-23):* a cell round no crossing is searched for the other sign than its corners'
+  (best-first branch-and-bound on its field, 32 boxes, halving the side that bounds best; two opposite planes in one
+  ∩ or ∪ bound it by their mean, so zero-thickness contacts end at once). The deepest point found is a pocket in the
+  region result (cache format 3). Polygons part the grid's nodes as the field does, so where no polygon comes nearer
+  than the cell's nearest corner the mesh is on the corner's side all round: the material or gap there, twice the
+  depth across, is lost whole and reported (not where a lattice bounds it: its own sizes judge it). Both skipped repros
+  and variants (other corners, smaller holes, the cap off the grid's lines) are reported; pockets beside polygons
+  (the wedges where a hole runs out through a side) are not. And a cell beside a fillet run's cusp, where no vertex
+  fit its crossings' surfaces, kept their mean up to 0.1 mm off the surface: it now takes a real edge of two of its
+  surfaces, so every vertex there is on the surface. Result: silent 0 on both 150–1149 and 1150–2149, no document
+  newly refused; one refused document now built and agreeing (both build and agree 30.3% and 31.7%). Cost: the
+  search is 1–4 ms of the 20-op part's 0.1–0.6 s mesh at 0.5 to 0.1 mm cells and about 0.3 ms on a random part;
+  end to end within the noise.
 
 **Review.** An independent read of the K4 code found 15 problems (wrong geometry without a diagnostic in several);
 all fixed, each with a regression test (`ReviewFindingTests`).

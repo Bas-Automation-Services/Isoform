@@ -131,6 +131,7 @@ public sealed class FrepModeler(ModelingSettings settings, RegionCache? cache = 
         var falseEdges = new List<FalseEdges.Found>();
         var falseCorners = new List<FalseEdges.Corner>();
         var carried = new List<Carried>();
+        var pockets = new List<(Pocket Pocket, string Feature)>();
         var pieces = 0;
         foreach (var (body, plan) in part.Bodies.Zip(plans))
         {
@@ -141,6 +142,13 @@ public sealed class FrepModeler(ModelingSettings settings, RegionCache? cache = 
             pinched.AddRange(built.Pinches);
             falseEdges.AddRange(FalseEdges.Find(body.Field, oriented, built, Settings.Tolerance, Settings.CellSize));
             falseCorners.AddRange(FalseEdges.Corners(body.Field, built, Settings.Tolerance));
+            foreach (var p in LostPockets(bodyMesh))
+            {
+                // A lattice is judged by its own sizes (LatticeResolution): where its sheets run into the skin they
+                // leave channels thinner than any cell.
+                var near = Bounding(part, body.Field, p);
+                if (!near.Any(s => s.Kind == SurfaceKind.Lattice)) pockets.Add((p, near.MaxBy(s => s.Id)!.Source.Split('/')[0]));
+            }
             var t = built.Topology;
             if (t.BodyCount > 1)
                 diagnostics.Add(new Diagnostic(Diagnostic.MultipleBodies, part.Bodies.Count == 1 ? null : body.Name,
@@ -198,6 +206,17 @@ public sealed class FrepModeler(ModelingSettings settings, RegionCache? cache = 
                 Invariant($"{string.Join(", ", owners.Select(o => part.Surfaces[o].Source))} meet in a vertex near ({at.X:F2}, {at.Y:F2}, {at.Z:F2}) that the part does not have: an edge or face between them is below the resolved size of {ResolvedAt(zones, at):G4} mm")));
         }
 
+        // Material or a gap the cells lost whole, with nothing of the mesh near it. The latest feature's there.
+        reported = diagnostics.Select(d => d.FeatureId).ToHashSet();
+        foreach (var g in pockets.GroupBy(x => x.Feature).Where(g => !reported.Contains(g.Key)))
+        {
+            var p = g.MaxBy(x => Math.Abs(x.Pocket.Value)).Pocket;
+            var at = p.Location;
+            findings.AddRange(g.Select(x => new Finding(Around(x.Pocket.Location), 2 * Math.Abs(x.Pocket.Value), null)));
+            diagnostics.Add(new Diagnostic(Diagnostic.BelowResolution, g.Key,
+                Invariant($"{g.Key} leaves {(p.Value < 0 ? "material" : "a gap")} {2 * Math.Abs(p.Value):G3} mm across near ({at.X:F2}, {at.Y:F2}, {at.Z:F2}) that the cells lose whole, below the resolved size of {ResolvedAt(zones, at):G4} mm")));
+        }
+
         // A feature that already has a diagnostic (below resolution, rejected, unsupported) says enough.
         var unresolved = diagnostics.Select(d => d.FeatureId).ToHashSet();
         var lost = Lost(part, carried, unresolved);
@@ -226,6 +245,48 @@ public sealed class FrepModeler(ModelingSettings settings, RegionCache? cache = 
         }
 
         return new FrepResult(diagnostics, topology, part, mesh, faceOfQuad, bodies) { Refined = [.. zones.Select(z => (z.Box, z.Cell))] };
+    }
+
+    /// <summary>
+    /// The pockets of a body's mesh deeper than the tolerance with no polygon nearer than their cell's corner. The
+    /// polygons part the grid's nodes as the field does, so the mesh is on the corner's side all round the pocket:
+    /// the material (or gap) there, twice its depth across, is lost whole (a sliver body at a clipped corner).
+    /// </summary>
+    List<Pocket> LostPockets(Mesh mesh)
+    {
+        var deep = mesh.Pockets.Where(p => Math.Abs(p.Value) > Settings.Tolerance).ToList();
+        if (deep.Count == 0) return deep;
+        // Only the polygons within reach of a pocket, by boxes round runs of them.
+        var boxes = new List<Box3D>();
+        var grow = new Vector3D(1, 1, 1) * Settings.CellSize;
+        foreach (var p in deep)
+        {
+            var r = new Vector3D(1, 1, 1) * p.Corner;
+            var b = new Box3D(p.Location - r, p.Location + r);
+            var k = boxes.FindIndex(x => Overlap(x, new Box3D(b.Min - grow, b.Max + grow)));
+            if (k < 0) boxes.Add(b);
+            else boxes[k] = new Box3D(Min(boxes[k].Min, b.Min), Max(boxes[k].Max, b.Max));
+        }
+        var v = mesh.Vertices;
+        var near = mesh.Triangles().Where(t => boxes.Any(b => Overlap(b, Around([v[t.A], v[t.B], v[t.C]])))).ToList();
+        if (near.Count == 0) return deep;
+        var polygons = new TriangleBvh(v, near);
+        return deep.Where(p => polygons.Distance(p.Location) > p.Corner).ToList();
+
+        static bool Overlap(Box3D a, Box3D b) =>
+            a.Min.X <= b.Max.X && b.Min.X <= a.Max.X && a.Min.Y <= b.Max.Y && b.Min.Y <= a.Max.Y && a.Min.Z <= b.Max.Z && b.Min.Z <= a.Max.Z;
+        static Point3D Min(Point3D a, Point3D b) => new(Math.Min(a.X, b.X), Math.Min(a.Y, b.Y), Math.Min(a.Z, b.Z));
+        static Point3D Max(Point3D a, Point3D b) => new(Math.Max(a.X, b.X), Math.Max(a.Y, b.Y), Math.Max(a.Z, b.Z));
+    }
+
+    /// <summary>The surfaces that may bound the body within a pocket's cell corner of it.</summary>
+    static List<Surface> Bounding(CompiledPart part, Field body, Pocket pocket)
+    {
+        var r = new Vector3D(1, 1, 1) * pocket.Corner;
+        var box = new Box3D(pocket.Location - r, pocket.Location + r);
+        var local = body.Simplify(box);
+        var near = part.Surfaces.Where(s => (!s.Analytic || new LeafField(s).Bounds(box) is var b && b.Lo <= 0 && b.Hi >= 0) && LostFaces.Find(local, s.Id) is not null).ToList();
+        return near.Count > 0 ? near : [part.Surfaces[local.Sample(pocket.Location).Owner]];
     }
 
     /// <summary>What a body's mesh carries: the owners of its polygons, its surfaces as it sees them, the mesh, and the points of its edges and vertices.</summary>
