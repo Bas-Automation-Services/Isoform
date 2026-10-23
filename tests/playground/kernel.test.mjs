@@ -163,3 +163,12 @@ test('FaceFrame and Sketch: the plane of plate/z+, and a sketch on it solved wit
   assert.deepEqual(r.regions, [{ outer: ['ab', 'bc', 'ca'], holes: [] }]);
   assert.match(JSON.parse(kernel.Sketch(document, 'plate', '')).error, /not a sketch/);
 });
+
+test('SketchEdit says why a fillet or trim cannot be made', () => {
+  const sketched = readFileSync(new URL('./sketched.fixture.json', import.meta.url), 'utf8');
+  const edit = e => JSON.parse(kernel.SketchEdit(sketched, 'base', JSON.stringify(e)));
+  assert.match(edit({ op: 'fillet', corner: 'c' }).error, /needs a radius/);
+  assert.match(edit({ op: 'trim', entity: 'bore', x: 20 }).error, /needs y/);
+  assert.match(edit({ op: 'chamfer' }).error, /no sketch edit 'chamfer'/);
+  assert.match(JSON.parse(kernel.SketchEdit(sketched, 'plate', '{"op": "trim"}')).error, /not a sketch/);
+});

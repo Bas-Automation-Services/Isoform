@@ -192,6 +192,8 @@ public static class FormatGuide
         s.AppendLine("Regeneration solves every sketch: sketch-conflict names constraints that cannot all hold, sketch-redundant one the others");
         s.AppendLine("imply; a sketch that is not fully constrained keeps its free points where they are stored. Lines and arcs join where");
         s.AppendLine("their ends meet; open chains are ignored; a point joining three or more edges, or loops that cross, are sketch-invalid.");
+        s.AppendLine("sketch_edit fillets a corner point where two lines or arcs meet (a tangent arc; the corner stays, as a construction");
+        s.AppendLine("point) or trims the piece of an entity between its crossings nearest [x, y]; constraints on a deleted piece are dropped and listed.");
         s.AppendLine();
         s.AppendLine("## Face names");
         s.AppendLine("Every face is named by the feature that made it: <feature id>/<face>. Names survive parameter edits, so refer to");

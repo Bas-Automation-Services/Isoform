@@ -357,4 +357,34 @@ public class ToolTests
         conflict["solved"]!.GetValue<bool>().Should().BeFalse();
         conflict["problems"]![0]!["code"]!.GetValue<string>().Should().Be("sketch-conflict");
     }
+
+    // ---- sketch_edit ----
+
+    [Fact]
+    public void Sketch_edit_says_what_an_edit_lacks_or_why_it_cannot_be_made()
+    {
+        var doc = Doc(Plate, Outline);
+        var unknown = () => IsoformTools.SketchEdit(doc, "outline", "chamfer");
+        var noRadius = () => IsoformTools.SketchEdit(doc, "outline", "fillet", corner: "c");
+        var noPoint = () => IsoformTools.SketchEdit(doc, "outline", "trim", entity: "bore", x: 75);
+        var notSketch = () => IsoformTools.SketchEdit(doc, "plate", "fillet", corner: "c", radius: 2);
+
+        unknown.Should().Throw<McpException>().WithMessage("*no sketch edit 'chamfer'*fillet or trim*");
+        noRadius.Should().Throw<McpException>().WithMessage("*needs a radius*");
+        noPoint.Should().Throw<McpException>().WithMessage("*needs y*");
+        notSketch.Should().Throw<McpException>().WithMessage("*not a sketch*");
+    }
+
+    [Fact(Skip = "needs SketchEdits")]
+    public void Sketch_edit_fillets_a_corner_and_returns_the_new_document()
+    {
+        var r = Parse(IsoformTools.SketchEdit(Doc(Plate, Outline), "outline", "fillet", corner: "c", radius: 3));
+
+        r["solved"]!.GetValue<bool>().Should().BeTrue();
+        Strings(r["added"]).Should().NotBeEmpty();
+        Strings(r["dropped"]).Should().BeEmpty();
+        var sketch = (Sketch)CanonicalFormat.Read(r["settled"]!["text"]!.GetValue<string>())["outline"];
+        sketch.Entities.OfType<SketchArc>().Should().ContainSingle();
+        r["regions"]!.AsArray().Should().ContainSingle("the rounded outline is still one region round the bore");
+    }
 }

@@ -94,6 +94,12 @@ test('step and dxf answer as the wasm kernel does', async () => {
   assert.deepEqual(await call('dxf', { document: sketched, sketch: 'base' }), JSON.parse(wasm.Dxf('main', sketched, 'base', '')));
 });
 
+test('sketchEdit answers as the wasm kernel does', async () => {
+  const sketched = readFileSync(new URL('./sketched.fixture.json', import.meta.url), 'utf8');
+  const edit = { op: 'fillet', corner: 'c' };
+  assert.deepEqual(await call('sketchEdit', { document: sketched, id: 'base', edit }), JSON.parse(wasm.SketchEdit(sketched, 'base', JSON.stringify(edit))));
+});
+
 test('each connection is a session of its own: the previews\' slot is not the main one\'s', async () => {
   const [, document] = examples[0];
   const { result } = await previewClient.call('regenerate', { document, edits: [{ set: 'plate.size.0', value: 104 }], cell, chord, slot: 'preview', snap: true });

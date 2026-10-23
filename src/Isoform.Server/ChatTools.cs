@@ -7,8 +7,8 @@ namespace Isoform.Server;
 
 /// <summary>
 /// The chat agent's tools: the MCP tool set (<see cref="AgentTools"/>, <see cref="SketchJson"/>) on one working
-/// document instead of a document argument. The read-only tools look at the working text; <c>apply_edits</c> and
-/// <c>sketch</c> change it, and their edits are kept, in order, for the page to commit as one history entry.
+/// document instead of a document argument. The read-only tools look at the working text; <c>apply_edits</c>,
+/// <c>sketch</c> and <c>sketch_edit</c> change it, and their edits are kept, in order, for the page to commit as one history entry.
 /// </summary>
 public sealed class ChatTools(string document)
 {
@@ -51,6 +51,24 @@ public sealed class ChatTools(string document)
            "dragTo": {"type": "array", "items": {"type": "number"}, "description": "Where to drag it, [u, v] in sketch coordinates."},
            "settle": {"type": "boolean", "description": "Store the solution in the document (default true)."}},
           "required": ["id"]}
+         """),
+        ("sketch_edit",
+         "Fillets or trims one sketch of the document; it stays lines and arcs. fillet rounds the corner point where two " +
+         "lines or arcs meet with a tangent arc of radius (the corner stays as a construction point, so dimensions to it " +
+         "hold). trim deletes the piece of entity, between its crossings with the other entities, nearest [x, y] in sketch " +
+         "coordinates; a trimmed circle becomes an arc. Returns the sketch solved as sketch does, added (the new point and " +
+         "entity ids) and dropped (constraints that went with a deleted piece: tell the user). The edit is stored in the " +
+         "document like apply_edits's. One that cannot be made is an error saying why, and nothing changes.",
+         """
+         {"properties": {
+           "id": {"type": "string", "description": "The sketch's feature id."},
+           "op": {"type": "string", "enum": ["fillet", "trim"]},
+           "corner": {"type": "string", "description": "fillet: the corner point, by name."},
+           "radius": {"type": "number", "description": "fillet: the radius in mm."},
+           "entity": {"type": "string", "description": "trim: the line, arc or circle to trim, by id."},
+           "x": {"type": "number", "description": "trim: u of a point near the piece to delete."},
+           "y": {"type": "number", "description": "trim: v of a point near the piece to delete."}},
+          "required": ["id", "op"]}
          """),
         ("regenerate",
          "Regenerates the document: diagnostics, every face by its stable source name per body, edge and vertex counts, " +
@@ -99,6 +117,8 @@ public sealed class ChatTools(string document)
             "apply_edits" => ApplyEdits([.. AgentTools.Edits((Arg("edits") ?? throw new ToolException("edits is required")).EnumerateArray())], Arg("regenerate")?.GetBoolean() ?? true),
             "sketch" => Sketch(Arg("id")?.GetString() ?? throw new ToolException("id is required"), Arg("dragPoint")?.GetString(),
                 Arg("dragTo")?.Deserialize<double[]>(), Arg("settle")?.GetBoolean() ?? true),
+            "sketch_edit" => SketchEdit(Arg("id")?.GetString() ?? throw new ToolException("id is required"), Arg("op")?.GetString() ?? throw new ToolException("op is required"),
+                Arg("corner")?.GetString(), Arg("radius")?.GetDouble(), Arg("entity")?.GetString(), Arg("x")?.GetDouble(), Arg("y")?.GetDouble()),
             "regenerate" => AgentTools.Regenerate(Text, Arg("cellSize")?.GetDouble() ?? 0.5, density: Arg("density")?.GetDouble()),
             "validate" => AgentTools.Validate(Text),
             "query" => AgentTools.Query(Text, (Arg("queries") ?? throw new ToolException("queries is required")).Deserialize<AgentTools.QuerySpec[]>(Web)!),
@@ -122,13 +142,24 @@ public sealed class ChatTools(string document)
         var o = SketchJson.Solve(Text, id, dragPoint, dragTo);
         var settled = (string)o["settled"]!["text"]!;
         o.Remove("settled");
-        if (settle && (bool)o["solved"]!)
-        {
-            var edits = DocumentEdits.TryApply(settled, []).Text == Text ? [] : DocumentDiff.Between(Text, settled);
-            Text = DocumentEdits.Apply(Text, edits);
-            Edits.AddRange(edits);
-            o["settled"] = new JsonObject { ["edits"] = edits.Count, ["hash"] = Hash };
-        }
+        if (settle && (bool)o["solved"]!) o["settled"] = Store(settled);
         return o;
+    }
+
+    // The edit as the MCP tool gives it, stored in the working document whether or not it solves: it is the user's ask.
+    JsonObject SketchEdit(string id, string op, string? corner, double? radius, string? entity, double? x, double? y)
+    {
+        var o = SketchJson.Edit(Text, id, op, corner, radius, entity, x, y);
+        o["settled"] = Store((string)o["settled"]!["text"]!);
+        return o;
+    }
+
+    // The working document becomes text, by edits kept for the page: {edits (how many), hash}.
+    JsonObject Store(string text)
+    {
+        var edits = DocumentEdits.TryApply(text, []).Text == Text ? [] : DocumentDiff.Between(Text, text);
+        Text = DocumentEdits.Apply(Text, edits);
+        Edits.AddRange(edits);
+        return new JsonObject { ["edits"] = edits.Count, ["hash"] = Hash };
     }
 }
