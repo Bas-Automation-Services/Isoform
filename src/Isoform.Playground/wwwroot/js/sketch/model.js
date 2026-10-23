@@ -271,17 +271,20 @@ export const settledSketch = (text, id) => JSON.parse(text).features.find(f => f
 
 /**
  * The edits that finish a sketch, one history entry: an edited sketch is set in place; a new one is inserted at the
- * end with the feature that uses it after it. feature: null (the sketch alone) or {op: 'extrude' | 'cut' | 'revolve',
- * id, depth | angle, regions (outer entity ids each; empty for all), axis (a line, revolve)}; hasBody says whether the
- * document has a body to join or cut.
+ * end with the feature that uses it after it. feature: null (the sketch alone) or {op: 'extrude' | 'cut' | 'revolve' |
+ * 'sweep' | 'sweep-cut', id, depth | angle, regions (outer entity ids each; empty for all), axis (a line, revolve),
+ * path and from (a sweep: the path sketch and an entity of the chain it follows)}; hasBody says whether the document has
+ * a body to join or cut.
  */
 export function finishEdits(sketch, { editing = false, feature = null, hasBody = true } = {}) {
   if (editing) return [{ set: sketch.id, value: sketch }];
   const edits = [{ insert: sketch }];
   if (!feature) return edits;
   const regions = feature.regions?.length ? { regions: feature.regions } : {};
-  const op = !hasBody ? 'new' : feature.op === 'cut' ? 'cut' : 'join';
-  if (feature.op === 'revolve') {
+  const op = !hasBody ? 'new' : feature.op === 'cut' || feature.op === 'sweep-cut' ? 'cut' : 'join';
+  if (feature.op.startsWith('sweep')) {
+    edits.push({ insert: { id: feature.id, type: 'sweep', op, sketch: sketch.id, ...regions, path: { sketch: feature.path, from: feature.from } } });
+  } else if (feature.op === 'revolve') {
     edits.push({ insert: { id: feature.id, type: 'revolve', op, sketch: sketch.id, ...regions, ...(feature.axis ? { axis: feature.axis } : {}), angle: feature.angle } });
   } else {
     // A cut goes into the part, from a little outside the face so no skin of material is left on it.
@@ -290,6 +293,14 @@ export function finishEdits(sketch, { editing = false, feature = null, hasBody =
   }
   return edits;
 }
+
+/**
+ * The paths a sweep of sketch id can follow: every other sketch of the document with its entities, lines and arcs
+ * first (a chain runs through one), then circles (a closed path of their own).
+ */
+export const sweepPaths = (doc, id) => (doc?.features ?? []).filter(f => f.type === 'sketch' && f.id !== id)
+  .map(f => ({ id: f.id, entities: [...f.entities.filter(e => !e.circle), ...f.entities.filter(e => e.circle)].map(e => e.id) }))
+  .filter(p => p.entities.length > 0);
 
 /** What the history calls the finish. */
 export function finishLabel(sketch, { editing = false, feature = null } = {}) {

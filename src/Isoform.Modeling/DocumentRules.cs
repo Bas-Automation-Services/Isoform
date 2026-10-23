@@ -59,6 +59,7 @@ public static class DocumentRules
                     $"the revolve axis '{axis}' is not a line of sketch {s}",
                 Revolve { Sketch: { } s } r => SweepProblem(s, r.Regions, doc.Features.Take(i).ToList()),
                 Revolve r => Profiles.Problem(r.Plane!, r.Profile!, tolerance, revolve: true),
+                Sweep sw when bodies.Count > 0 || sw.Op == BooleanOp.New => SweepProblem(sw.Sketch, sw.Regions, doc.Features.Take(i).ToList()) ?? PathProblem(sw.Path, doc.Features.Take(i).ToList()),
                 Sketch s => SketchProblem(s, doc.Features.Take(i).ToList(), tolerance),
                 Pattern p => PatternProblem(p, doc.Features.Take(i).ToList(), tolerance),
                 Lattice l => LatticeProblem(l, doc.Features.Take(i).ToList(), tolerance),
@@ -81,6 +82,16 @@ public static class DocumentRules
         earlier.FirstOrDefault(f => f.Id == sketch) is not Sketch ? $"'{sketch}' is not an earlier sketch"
         : regions is { Count: 0 } || regions?.Any(r => r.Length == 0) == true ? "each region is named by one or more entities of its outer loop"
         : null;
+
+    /// <summary>A sweep path: an earlier sketch, and its entities or the one the chain runs through.</summary>
+    static string? PathProblem(SweepPath path, List<Feature> earlier)
+    {
+        if (earlier.FirstOrDefault(f => f.Id == path.Sketch) is not Sketch sketch) return $"the path sketch '{path.Sketch}' is not an earlier sketch";
+        if (path.Entities is null == path.From is null) return "a sweep path names its entities, or the one entity its chain runs through (from), not both";
+        var named = path.Entities ?? [path.From!];
+        if (named.Length == 0 || named.Distinct().Count() != named.Length) return "a sweep path lists one or more distinct entities";
+        return named.FirstOrDefault(id => !sketch.Entities.Any(e => e.Id == id)) is { } missing ? $"'{missing}' is not an entity of sketch {path.Sketch}" : null;
+    }
 
     /// <summary>A sketch's structure (names, references, constraints) and where it lies.</summary>
     static string? SketchProblem(Sketch s, List<Feature> earlier, double tolerance)
@@ -148,5 +159,5 @@ public static class DocumentRules
         _ => (BooleanOp.Join, 0),
     };
 
-    public static bool StartsBody(Feature f) => f is Block { Op: BooleanOp.New } or Extrude { Op: BooleanOp.New } or Revolve { Op: BooleanOp.New };
+    public static bool StartsBody(Feature f) => f is Block { Op: BooleanOp.New } or Extrude { Op: BooleanOp.New } or Revolve { Op: BooleanOp.New } or Sweep { Op: BooleanOp.New };
 }

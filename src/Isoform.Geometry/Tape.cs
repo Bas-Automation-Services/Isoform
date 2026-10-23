@@ -145,7 +145,9 @@ public sealed partial class Tape
                 MaxField m => Nary(TapeOp.Max, m.Children),
                 MinField m => Nary(TapeOp.Min, m.Children),
                 NegateField n => new(TapeOp.Negate, Emit(n.Child), 0, 0),
-                // The rounded edge's constant gA·gB, computed as its constructor does.
+                // A sphere or torus edge has a field of its own; the plain rounded edge's constant gA·gB is computed as
+                // its constructor does.
+                MeridianEdgeField => new(TapeOp.Call, 0, 0, Add(Objects, f)),
                 RoundedEdgeField e => new(TapeOp.Rounded, Emit(e.A), Emit(e.B), Add(Rounds,
                     new RoundData(e.Radius, e.A.Sample(new Point3D(0, 0, 0)).Gradient.Dot(e.B.Sample(new Point3D(0, 0, 0)).Gradient), e.Fillet.Id))),
                 ShellField s => new(TapeOp.Shell, Emit(s.Child), Emit(s.Outer), Add(Shells,

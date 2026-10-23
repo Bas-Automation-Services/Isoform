@@ -106,8 +106,9 @@ line's end centred on its normal, get tangent. Dimensions: what fits one or two 
 (numbers above 0, `=expressions` kept, an angle keeps the sense it has), labels off the geometry away from the
 sketch's middle. Regions: a click inside the outer loop and outside its holes, loops chained whatever their order and
 direction, arcs sampled. Colours: free, fixed and conflicting entities and the summary line. The finish: a new sketch
-is inserted with its feature after it (extrude `0…depth`, cut `−depth…1`, revolve with its axis; `op: new` when the
-document has no body yet), an edited one is one `set`; the working document holds the sketch in its place or at the
+is inserted with its feature after it (extrude `0…depth`, cut `−depth…1`, revolve with its axis, sweep or sweep cut
+along `{sketch, from}`; `op: new` when the document has no body yet), an edited one is one `set`; a sweep's paths are the
+document's other sketches with their entities, lines and arcs before circles; the working document holds the sketch in its place or at the
 end; the view maps the plane with x right and y up and zooms about the pointer. Fillet and trim (`sketch/edit.js`): the
 fillet tool picks points where exactly two lines or arcs end, nearest first, and previews a line corner's arc tangent to
 both (none where the tangent points would run off a line, or next to an arc); the trim tool lights the piece of the
@@ -137,7 +138,11 @@ selected face starts a new sketch, a line is drawn, and Escape (pressed until th
 hash as it was. Then a new sketch on `plate/z+` with the Project tool: the `plate/y-` edge lights under the pointer
 and a click copies it (a line from x = 0 to 98, where the fillet starts, one undo step); with Linked on, a click on the
 hole's rim adds a construction circle of radius 5 at (30, 25) that keeps `project` and is drawn as linked
-(`sketch-project.png`); Cancel leaves the hash as it was.
+(`sketch-project.png`); Cancel leaves the hash as it was. Last a sweep: a path sketch `rail` committed in the plane
+y = 25 (up from the plate's top, half a turn over, down), a circle drawn on `plate/z+` where it starts, and Sweep in the
+finish: the panel offers `rail` through `up` (`sketch-sweep-finish.png`), and the finish is one history entry whose second
+insert is a `sweep` along `{sketch: rail, from: up}`, with the faces `sweep1/up:<circle>`, `over:` and `down:`
+(`sketch-sweep.png`).
 
 **`kernel.test.mjs`** loads `_framework/dotnet.js` from the published folder in Node and calls the same exports the
 page's worker calls. For every example from `Examples()`, at the page's default settings (0.5 mm cells, 0.05 mm chord):

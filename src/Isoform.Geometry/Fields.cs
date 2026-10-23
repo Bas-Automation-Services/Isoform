@@ -253,22 +253,51 @@ public sealed class NegateField(Field child) : Field
 /// Exact constant-radius rolling-ball fillet on the convex edge between two leaves of the same intersection.
 /// The ball centre runs along {dA = -r, dB = -r}. Writing p minus its centre as w = α·gA + β·gB, p lies in the
 /// fillet sector when α, β ≥ 0, and the field there is |w| − r, the distance to the centre line or circle.
-/// That is exact for plane–plane edges at any angle and for a plane perpendicular to a cylinder; in both cases
-/// gA·gB is the same constant everywhere. Other pairs are rejected at compile time.
+/// That is exact wherever gA·gB is the same constant everywhere: plane–plane edges at any angle, and two surfaces
+/// round one axis that are lines in the (ρ, z) half-plane (a plane across the axis, a cylinder, a cone), where the
+/// ball centre runs round a circle. Pairs with a sphere or torus are <see cref="MeridianEdgeField"/>; other pairs
+/// are rejected at compile time (<see cref="Of"/>).
 /// </summary>
-public sealed class RoundedEdgeField : Field
+public class RoundedEdgeField : Field
 {
     readonly double _c;
 
-    readonly MaxField _sharp;
+    readonly double _tube;
+
+    private protected readonly MaxField Sharp;
 
     public RoundedEdgeField(LeafField a, LeafField b, double radius, Surface fillet)
     {
         (A, B, Radius, Fillet) = (a, b, radius, fillet);
-        _sharp = new MaxField([a, b]);
+        Sharp = new MaxField([a, b]);
         var origin = new Point3D(0, 0, 0);
         _c = a.Sample(origin).Gradient.Dot(b.Sample(origin).Gradient);
+        // Next to a cone the fillet is a torus round the ball centre circle; its radius bounds the curvature.
+        _tube = a.Surface.Kind == SurfaceKind.Cone || b.Surface.Kind == SurfaceKind.Cone
+            ? (SurfaceIntersection.Curve(Inward(a, radius), Inward(b, radius), a.Surface.Origin) as Circle)?.Radius ?? 0
+            : double.NaN;
     }
+
+    /// <summary>
+    /// The exact rolling-ball fillet of radius r on the edge between two leaves through <paramref name="onEdge"/>, or
+    /// null when the pair has none in closed form: two planes, a plane across a cylinder, or two surfaces of revolution
+    /// round one axis (a concave torus face aside).
+    /// </summary>
+    public static RoundedEdgeField? Of(LeafField a, LeafField b, double radius, Surface fillet, Point3D onEdge)
+    {
+        var (sa, sb) = (a.Surface, b.Surface);
+        if (sa.Kind == SurfaceKind.Plane && sb.Kind == SurfaceKind.Plane) return new RoundedEdgeField(a, b, radius, fillet);
+        if (SurfaceIntersection.CommonAxis(sa, sb) is null) return null;
+        static bool Straight(Surface s) => s.Kind is SurfaceKind.Plane or SurfaceKind.Cylinder or SurfaceKind.Cone;
+        if (Straight(sa) && Straight(sb)) return new RoundedEdgeField(a, b, radius, fillet);
+        return MeridianEdgeField.Of(a, b, radius, fillet, onEdge);
+    }
+
+    /// <summary>A surface moved inward (into its material) by r.</summary>
+    internal static Surface Inward(LeafField l, double r) => l.Surface.Offset(0, "", l.Complement ? r : -r);
+
+    /// <summary>The same rounding on other leaves and radius, as an offset of the part has it.</summary>
+    public virtual RoundedEdgeField With(LeafField a, LeafField b, double radius, Surface fillet) => new(a, b, radius, fillet);
 
     public LeafField A { get; }
     public LeafField B { get; }
@@ -326,7 +355,7 @@ public sealed class RoundedEdgeField : Field
         return new Interval(sharp.Lo, Math.Max(sharp.Hi, wMax - Radius)).Intersect(LipschitzBounds(box));
     }
 
-    /// <summary>A box entirely inside the fillet sector holds only the fillet: a cylinder, or a torus round a cylinder.</summary>
+    /// <summary>A box entirely inside the fillet sector holds only the fillet: a cylinder, or a torus.</summary>
     public override double? SinglePatch(Box3D box)
     {
         var denom = 1 - _c * _c;
@@ -336,6 +365,8 @@ public sealed class RoundedEdgeField : Field
         var alphaLo = (aLo - Math.Max(_c * bLo, _c * bHi)) / denom;
         var betaLo = (bLo - Math.Max(_c * aLo, _c * aHi)) / denom;
         if (alphaLo < 1e-9 || betaLo < 1e-9) return null;
+        // A torus round a circle of radius R with tube r curves no tighter than min(r, R − r).
+        if (!double.IsNaN(_tube)) return _tube - Radius > 1e-9 ? Math.Min(Radius, _tube - Radius) : null;
         var cylinder = A.Surface.Kind == SurfaceKind.Cylinder ? A.Surface.Radius
             : B.Surface.Kind == SurfaceKind.Cylinder ? B.Surface.Radius : double.PositiveInfinity;
         return Math.Min(Radius, cylinder);
@@ -353,9 +384,9 @@ public sealed class RoundedEdgeField : Field
     public override Field Simplify(Box3D box)
     {
         var denom = 1 - _c * _c;
-        if (denom < 1e-12) return _sharp.Simplify(box);
+        if (denom < 1e-12) return Sharp.Simplify(box);
         var (alphaHi, betaHi) = SectorReach(A.Bounds(box), B.Bounds(box), denom);
-        return alphaHi < 0 || betaHi < 0 ? _sharp.Simplify(box) : this;
+        return alphaHi < 0 || betaHi < 0 ? Sharp.Simplify(box) : this;
     }
 
     FieldSample Rounded(FieldSample sa, FieldSample sb, double alpha, double beta)
@@ -366,7 +397,7 @@ public sealed class RoundedEdgeField : Field
     }
 
     /// <summary>The ball centre and its two contact points for a point <paramref name="q"/> on the sharp edge.</summary>
-    public (Point3D Centre, Point3D OnA, Point3D OnB) Contacts(Point3D q)
+    public virtual (Point3D Centre, Point3D OnA, Point3D OnB) Contacts(Point3D q)
     {
         var ga = A.Sample(q).Gradient;
         var gb = B.Sample(q).Gradient;
@@ -619,6 +650,9 @@ public static class FieldAlgebra
         {
             var keep = intersection ? bounds[i].Hi >= limit : bounds[i].Lo <= limit;
             var simple = keep ? children[i].Simplify(box) : null;
+            // A child that comes down to the intersection of siblings before it never decides (a corner sphere
+            // outside its sector is its fillets' max): they reach its value first.
+            if (intersection && simple is MaxField sub && sub != children[i] && sub.Children.All(c => Before(children, c, i))) (keep, simple) = (false, null);
             if (kept is null && (!keep || !ReferenceEquals(simple, children[i])))
             {
                 kept = new List<Field>(n);
@@ -633,6 +667,13 @@ public static class FieldAlgebra
             for (var i = kept.Count - 1; i >= 0; i--)
                 if (kept[i] is LeafField l && HeldByRoundedEdge(kept, l)) kept.RemoveAt(i);
         return kept.Count == 1 ? kept[0] : intersection ? new MaxField(kept) : new MinField(kept);
+    }
+
+    static bool Before(IReadOnlyList<Field> children, Field f, int end)
+    {
+        for (var j = 0; j < end; j++)
+            if (ReferenceEquals(children[j], f)) return true;
+        return false;
     }
 
     static bool HeldByRoundedEdge(List<Field> fields, LeafField leaf)

@@ -2,7 +2,8 @@
 // sketch mode, draw a rectangle with the mouse, dimension its bottom line, fillet a corner and trim (each undone),
 // pick its region and finish it as an extrude: one history entry, faces <feature>/<entity>. Then edit the sketch from
 // the tree (a dimension changed in the panel saves as one set), and Escape leaves a new sketch without touching the
-// document. Last, the project tool copies a part edge and links another. Exits non-zero on failure.
+// document. Then the project tool copies a part edge and links another. Last, a circle on plate/z+ is finished as a
+// sweep along a path sketch. Exits non-zero on failure.
 // node tests/playground/sketch.e2e.mjs [published wwwroot]      (env: ISOFORM_BROWSER, ISOFORM_TIMEOUT, ISOFORM_SERVER)
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -228,11 +229,66 @@ async function project() {
   return !problems.length;
 }
 
+// A sweep: a path sketch committed in the plane y = 25 (up from the plate's top at x = 60, half a turn over, down at
+// x = 80), then a circle drawn on plate/z+ where it starts, finished as a Sweep along it: one history entry, faces
+// <feature>/<path entity>:<circle>.
+async function sweep() {
+  const problems = [];
+  let faces = [];
+  try {
+    const rail = {
+      id: 'rail', type: 'sketch', on: { plane: { origin: [0, 25, 0], x: [1, 0, 0], normal: [0, -1, 0] } },
+      points: { a: [60, 10], b: [60, 20], k: [70, 20], c: [80, 20], d: [80, 10] },
+      entities: [{ id: 'up', line: ['a', 'b'] }, { id: 'over', arc: { center: 'k', from: 'c', to: 'b' } }, { id: 'down', line: ['c', 'd'] }],
+      constraints: [],
+    };
+    await page.evaluate(`window.isoform.applyEdits([{ insert: ${JSON.stringify(rail)} }], 'rail', 'test')`);
+    await page.waitFor(settled, { timeout });
+    const hash = await page.evaluate('window.isoform.hash()');
+    const count = (await page.evaluate('window.isoform.history()')).entries.length;
+    await page.evaluate(`window.isoform.select(['plate/z+'])`);
+    await button('.sketch-enter');
+    await page.waitFor(`${sketch}.active() && !${sketch}.state().editing`, { timeout: 10000 });
+    await solved();
+    await button('.sketch-bar button[title^="Circle"]');
+    await page.click(await at([60, 25]));
+    await page.click(await at([63, 25]));
+    let s = await solved('s.sketch.entities.some(e => e.circle) && s.regions.length === 1');
+    const circle = s.sketch.entities.find(e => e.circle).id;
+    await page.evaluate(`(o => { o.value = 'sweep'; o.dispatchEvent(new Event('change')); })(document.querySelector('.sketch-finish select'))`);
+    s = await state();
+    const shown = await page.evaluate(`[...document.querySelectorAll('.sketch-finish select')].map(x => x.value)`);
+    if (s.finish.path !== 'rail' || s.finish.from !== 'up' || shown.join() !== 'sweep,rail,up') problems.push(`finish ${JSON.stringify({ finish: s.finish, shown })}`);
+    await page.frames();
+    await page.screenshot(join(shots, 'sketch-sweep-finish.png'));
+    await button('.sketch-finish button.primary');
+    await page.waitFor(`!${sketch}.active() && window.isoform.hash() !== ${JSON.stringify(hash)}`, { timeout });
+    await page.waitFor(settled, { timeout });
+    faces = (await page.evaluate('window.isoform.faces()')).flat();
+    for (const f of ['up', 'over', 'down'].map(p => `${s.finish.id}/${p}:${circle}`)) if (!faces.includes(f)) problems.push(`no face ${f}`);
+    const { entries } = await page.evaluate('window.isoform.history()');
+    const insert = entries.at(-1).edits[1]?.insert;
+    if (entries.length !== count + 1 || insert?.type !== 'sweep' || JSON.stringify(insert.path) !== '{"sketch":"rail","from":"up"}' || insert.op !== 'join')
+      problems.push(`history ${JSON.stringify(entries.slice(count).map(e => e.edits))}`);
+    const diagnostics = await page.evaluate('window.isoform.diagnostics()');
+    if (diagnostics.some(d => d.feature === s.finish.id || /sketch|invalid/.test(d.code))) problems.push(`diagnostics ${JSON.stringify(diagnostics)}`);
+    await page.frames();
+    await page.screenshot(join(shots, 'sketch-sweep.png'));
+  } catch (e) {
+    problems.push(e.message);
+  }
+  problems.push(...page.errors);
+  console.log(`${problems.length ? 'FAIL' : 'pass'}  sketch sweep: a circle on plate/z+ swept along rail to ${faces.filter(f => f.startsWith('sweep')).join(', ')}`);
+  for (const p of problems) console.log(`        ${p}`);
+  return !problems.length;
+}
+
 let ok = false;
 try {
   ok = await draw();
   ok = await edit() && ok;
   ok = await project() && ok;
+  ok = await sweep() && ok;
 } finally {
   await browser.close();
   await site.close();

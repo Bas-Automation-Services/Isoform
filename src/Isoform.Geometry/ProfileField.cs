@@ -287,10 +287,10 @@ public sealed class ProfileField : Field
     }
 
     /// <summary>
-    /// The profile with corner k (between two straight edges) rounded by a tangent arc of radius
-    /// <paramref name="size"/>, or cut by a straight chamfer at that distance along both edges. Works on convex and
-    /// reflex corners alike. The trimmed edges keep their faces; <paramref name="newLeaf"/> makes the new edge's face.
-    /// Null when an edge is an arc or too short for the corner.
+    /// The profile with corner k rounded by a tangent arc of radius <paramref name="size"/>, or, between two straight
+    /// edges, cut by a straight chamfer at that distance along both. Works on convex and reflex corners alike, next to
+    /// lines and arcs. The trimmed edges keep their faces; <paramref name="newLeaf"/> makes the new edge's face. Null
+    /// when an edge is too short for the corner, or for a chamfer next to an arc.
     /// </summary>
     /// <remarks>
     /// After an offset d the corner is rounded in the profile's own terms: an arc of radius r − d (convex) or r + d
@@ -301,9 +301,10 @@ public sealed class ProfileField : Field
     {
         var n = _edges.Length;
         var (e1, e2) = (_edges[k], _edges[(k + 1) % n]);
-        if (e1.IsArc || e2.IsArc || _vertexSign[k] == 0 || OnAxis(k) || !round && _offset != 0) return null;
+        if (_vertexSign[k] == 0 || OnAxis(k) || !round && (_offset != 0 || e1.IsArc || e2.IsArc)) return null;
         size -= _vertexSign[k] * _offset;
         if (size <= 1e-9) return null;
+        if (e1.IsArc || e2.IsArc) return ArcCorner(k, size, newLeaf);
         var (d1, d2) = (e1.EndTangent, e2.StartTangent);
         var turn = Math.Abs(Math.Atan2(d1.U * d2.V - d1.V * d2.U, d1.U * d2.U + d1.V * d2.V));
         var t = round ? size * Math.Tan(turn / 2) : size;
@@ -322,6 +323,90 @@ public sealed class ProfileField : Field
         edges.Insert(k + 1, corner);
         leaves.Insert(k + 1, newLeaf(corner, _offset));
         // The corner is now two tangent junctions: no round corner face at either.
+        corners[k] = null;
+        corners.Insert(k + 1, null);
+        return new(edges, leaves, _frame, _revolve, _offset, corners);
+    }
+
+    /// <summary>
+    /// Corner k rounded where an edge is an arc. The round's centre is where both edges, moved by r to the side the
+    /// corner turns to (into the profile at a convex corner, out of it at a reflex one), meet nearest the corner: a
+    /// line or a circle each. Its touching points trim the edges; an arc keeps its circle. Null when a touching point
+    /// falls off its edge or the round would not turn the corner's way.
+    /// </summary>
+    ProfileField? ArcCorner(int k, double r, Func<ProfileEdge2D, double, LeafField?> newLeaf)
+    {
+        var n = _edges.Length;
+        var (e1, e2) = (_edges[k], _edges[(k + 1) % n]);
+        var d = _vertexSign[k] * r; // to the left of travel, the profile's inside
+        var (pu, pv) = (e1.U1, e1.V1);
+        // Each edge moved left by d: a circle (centre, radius) or a line (point, unit direction).
+        (bool Round, double U, double V, double Du, double Dv, double R) Moved(ProfileEdge2D e)
+        {
+            if (e.IsArc) return (true, e.Cu, e.Cv, 0, 0, e.R - Math.Sign(e.Sweep) * d);
+            var (du, dv) = (e.U1 - e.U0, e.V1 - e.V0);
+            var len = Math.Sqrt(du * du + dv * dv);
+            return (false, e.U0 - dv / len * d, e.V0 + du / len * d, du / len, dv / len, 0);
+        }
+        var (m1, m2) = (Moved(e1), Moved(e2));
+        if (m1.Round && m1.R <= 1e-9 || m2.Round && m2.R <= 1e-9) return null;
+        if (!m1.Round) (m1, m2) = (m2, m1);
+        var centres = new List<(double U, double V)>();
+        if (!m2.Round)
+        {
+            // A circle (m1) and a line (m2).
+            var along = (m1.U - m2.U) * m2.Du + (m1.V - m2.V) * m2.Dv;
+            var (fu, fv) = (m2.U + m2.Du * along, m2.V + m2.Dv * along);
+            var disc = m1.R * m1.R - (m1.U - fu) * (m1.U - fu) - (m1.V - fv) * (m1.V - fv);
+            if (disc < 0) return null;
+            foreach (var s in new[] { Math.Sqrt(disc), -Math.Sqrt(disc) }) centres.Add((fu + m2.Du * s, fv + m2.Dv * s));
+        }
+        else
+        {
+            // Two circles.
+            var (du, dv) = (m2.U - m1.U, m2.V - m1.V);
+            var dist = Math.Sqrt(du * du + dv * dv);
+            if (dist <= 1e-12) return null;
+            var along = (m1.R * m1.R - m2.R * m2.R + dist * dist) / (2 * dist);
+            var disc = m1.R * m1.R - along * along;
+            if (disc < 0) return null;
+            var (fu, fv) = (m1.U + du * along / dist, m1.V + dv * along / dist);
+            foreach (var s in new[] { Math.Sqrt(disc), -Math.Sqrt(disc) }) centres.Add((fu - dv / dist * s, fv + du / dist * s));
+        }
+        var (cu, cv) = centres.MinBy(c => (c.U - pu) * (c.U - pu) + (c.V - pv) * (c.V - pv));
+
+        // Where the round touches an edge, and how far along the edge that is (0 to 1 inside it).
+        (double U, double V, double At) Touch(ProfileEdge2D e)
+        {
+            if (e.IsArc)
+            {
+                var (ru, rv) = (cu - e.Cu, cv - e.Cv);
+                var len = Math.Sqrt(ru * ru + rv * rv);
+                var (tu, tv) = (e.Cu + ru / len * e.R, e.Cv + rv / len * e.R);
+                var rel = (Math.Atan2(tv - e.Cv, tu - e.Cu) - e.A0) * Math.Sign(e.Sweep) % (2 * Math.PI);
+                return (tu, tv, (rel < 0 ? rel + 2 * Math.PI : rel) / Math.Abs(e.Sweep));
+            }
+            var (du, dv) = (e.U1 - e.U0, e.V1 - e.V0);
+            var t = ((cu - e.U0) * du + (cv - e.V0) * dv) / (du * du + dv * dv);
+            return (e.U0 + du * t, e.V0 + dv * t, t);
+        }
+        var (t1, t2) = (Touch(e1), Touch(e2));
+        if (!(t1.At > 1e-9 && t1.At < 1 - 1e-9 && t2.At > 1e-9 && t2.At < 1 - 1e-9)) return null;
+        var (a1u, a1v, a2u, a2v) = (t1.U - cu, t1.V - cv, t2.U - cu, t2.V - cv);
+        var turn = Math.Atan2(a1u * a2v - a1v * a2u, a1u * a2u + a1v * a2v);
+        if (Math.Sign(turn) != _vertexSign[k]) return null;
+
+        // An arc trimmed to a touching point keeps its circle: the same centre, the part of its sweep up to there.
+        ProfileEdge2D Trim(ProfileEdge2D e, double u0, double v0, double u1, double v1, double share) =>
+            new(u0, v0, u1, v1, e.IsArc ? Math.Tan(e.Sweep * share / 4) : 0);
+        var corner = new ProfileEdge2D(t1.U, t1.V, t2.U, t2.V, Math.Tan(turn / 4));
+        var edges = _edges.ToList();
+        var leaves = _leaves.ToList();
+        var corners = _corners.ToList();
+        edges[k] = Trim(e1, e1.U0, e1.V0, t1.U, t1.V, t1.At);
+        edges[(k + 1) % n] = Trim(e2, t2.U, t2.V, e2.U1, e2.V1, 1 - t2.At);
+        edges.Insert(k + 1, corner);
+        leaves.Insert(k + 1, newLeaf(corner, _offset));
         corners[k] = null;
         corners.Insert(k + 1, null);
         return new(edges, leaves, _frame, _revolve, _offset, corners);
