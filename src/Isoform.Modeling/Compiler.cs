@@ -741,13 +741,15 @@ public sealed class Compiler(ModelingSettings settings)
             if (Intersections(tree, null).SelectMany(x => FieldAlgebra.Descendants(x.Host)).Concat(FieldAlgebra.Descendants(tree))
                 .OfType<LoopEdgeField>().Any(l => FieldAlgebra.Descendants(l.Side).Contains(p)))
                 return Fail(unsupported, $"round the corner between {edge[0]} and {edge[1]} before the loop fillet round this profile");
+            if (!fillet && (p.Edges[corner].IsArc || p.Edges[(corner + 1) % p.Edges.Count].IsArc))
+                return Fail(unsupported, $"no exact chamfer at the corner between {edge[0]} and {edge[1]}: an arc has no setback along it");
             var rebuilt = p.WithCorner(corner, size, fillet, (e, offset) =>
             {
                 var leaf = ProfileField.EdgeLeaf(e, p.Frame, p.Revolved, (k, o, a, r, m, ang) => register(new Surface(0, name0, k, o, a, r, m, ang)));
                 return leaf is null || offset == 0 ? leaf : new LeafField(register(leaf.Surface.Offset(0, leaf.Surface.Source, leaf.Complement ? -offset : offset)), leaf.Complement);
             });
             if (rebuilt is null)
-                return Fail(invalid, Invariant($"{(fillet ? "radius" : "distance")} {size} does not fit on the straight profile edges next to the corner"));
+                return Fail(invalid, Invariant($"{(fillet ? "radius" : "distance")} {size} does not fit on the profile edges next to the corner"));
             var next = Replace(tree, p, rebuilt);
             // In a shell, the new face must stay clear of the cavity: probe its middle line on the new outside.
             // Project onto the new outside alone: where the wall is cut through, the shelled field is not zero there.

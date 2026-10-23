@@ -149,6 +149,11 @@ public class StepExportTests(ITestOutputHelper output)
         yield return new("fillet where a dome meets a plate", CoaxialFilletTests.Dome(1.5), CoaxialFilletTests.DomeVolume(1.5));
         yield return new("fillet where a bore leaves a torus", CoaxialFilletTests.Knob(1), CoaxialFilletTests.KnobVolume(1));
 
+        // Profile corners next to arcs rounded in the profile: a tangent cylinder (extrude) or torus (revolve).
+        yield return new("D with a corner rounded into its arc", ArcCornerTests.D(3), ArcCornerTests.DVolume(3));
+        yield return new("tab with a reflex corner rounded", ArcCornerTests.Tab(2), ArcCornerTests.TabVolume(2));
+        yield return new("lens with its rim rounded between two spheres", ArcCornerTests.Lens(1.5), ArcCornerTests.LensVolume(1.5));
+
         // Shells: the cavity is a void of the solid.
         yield return new("shelled block", new([new Block("box", BooleanOp.New, [0, 0, 0], [40, 30, 20]), new Shell("shell", 2)]), 24000 - 36 * 26 * 16);
         yield return new("shelled plate with hole", new([Plate, new Hole("hole", [30, 25], 10), new Shell("shell", 1.5)]),
