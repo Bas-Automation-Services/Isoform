@@ -123,6 +123,18 @@ public class ChatTests(WebApplicationFactory<Program> factory) : IClassFixture<W
     }
 
     [Fact]
+    public void A_projected_edge_is_stored_with_its_link()
+    {
+        var document = CanonicalFormat.Write(new PartDocument([FormatGuide.Plate, FormatGuide.Examples.Select(e => e.Feature).OfType<Sketch>().First()]));
+        var tools = new ChatTools(document);
+
+        var r = JsonNode.Parse(tools.Run("sketch_edit", Input("""{"id": "outline", "op": "project", "faces": ["plate/z+", "plate/y+"], "linked": true}""")))!;
+        r["added"]!.AsArray().Select(n => (string)n!).Should().Contain("projected");
+        DocumentEdits.Apply(document, tools.Edits).Should().Be(tools.Text);
+        CanonicalFormat.Read(tools.Text).Features.OfType<Sketch>().Single().Entities.Single(e => e.Id == "projected").Project.Should().Equal("plate/z+", "plate/y+");
+    }
+
+    [Fact]
     public async Task Without_a_key_the_chat_says_so()
     {
         var server = factory.WithWebHostBuilder(b => b.ConfigureTestServices(s => s.RemoveAll<IChatModel>()));

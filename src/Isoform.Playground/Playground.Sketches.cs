@@ -9,7 +9,10 @@ public static partial class Playground
     [JSExport]
     public static string Sketch(string document, string id, string drag) => SketchJson.Write(document, id, drag);
 
-    /// <summary>A sketch of the document filleted or trimmed, <c>edit</c> a <c>{op, corner, radius}</c> or <c>{op, entity, x, y}</c> JSON.</summary>
+    /// <summary>
+    /// A sketch of the document filleted, trimmed or given a projected part edge, <c>edit</c> a <c>{op, corner, radius}</c>,
+    /// <c>{op, entity, x, y}</c> or <c>{op, faces, near?, linked?}</c> JSON.
+    /// </summary>
     [JSExport]
     public static string SketchEdit(string document, string id, string edit) => SketchJson.WriteEdit(document, id, edit);
 

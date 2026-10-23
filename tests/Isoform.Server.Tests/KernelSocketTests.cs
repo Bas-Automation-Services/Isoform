@@ -86,6 +86,20 @@ public class KernelSocketTests(WebApplicationFactory<Program> factory) : IClassF
     }
 
     [Fact]
+    public async Task A_projection_replies_as_the_worker_does()
+    {
+        var document = CanonicalFormat.Write(new PartDocument([FormatGuide.Plate, FormatGuide.Examples.Select(e => e.Feature).OfType<Sketch>().First()]));
+        using var socket = await Connect();
+        var edit = new { op = "project", faces = new[] { "plate/z+", "plate/x+" }, near = new[] { 100.0, 20, 10 }, linked = true };
+        var (bytes, _) = await Call(socket, new { id = 6, op = "sketchEdit", args = new { document, id = "outline", edit } });
+
+        using var reply = JsonDocument.Parse(bytes);
+        var result = reply.RootElement.GetProperty("result");
+        result.GetRawText().Should().Be(SketchJson.WriteEdit(document, "outline", JsonSerializer.Serialize(edit)));
+        result.GetProperty("added").EnumerateArray().Select(a => a.GetString()).Should().Contain("projected");
+    }
+
+    [Fact]
     public async Task Only_the_servers_own_page_may_open_a_kernel()
     {
         var own = await Connect($"http://{factory.Server.BaseAddress.Authority}");

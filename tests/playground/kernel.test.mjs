@@ -172,3 +172,14 @@ test('SketchEdit says why a fillet or trim cannot be made', () => {
   assert.match(edit({ op: 'chamfer' }).error, /no sketch edit 'chamfer'/);
   assert.match(JSON.parse(kernel.SketchEdit(sketched, 'plate', '{"op": "trim"}')).error, /not a sketch/);
 });
+
+test('SketchEdit projects a part edge as an exact circle, linked when asked, and refuses an ellipse', () => {
+  const doc = JSON.parse(readFileSync(new URL('./sketched.fixture.json', import.meta.url), 'utf8'));
+  const on = face => JSON.stringify({ ...doc, features: [...doc.features, { id: 'top', type: 'sketch', on: { face }, points: {}, entities: [], constraints: [] }] });
+  const r = JSON.parse(kernel.SketchEdit(on('plate/end'), 'top', JSON.stringify({ op: 'project', faces: ['plate/end', 'plate/bore'], linked: true })));
+  assert.equal(r.error, undefined);
+  assert.deepEqual(r.added, ['projected', 'projected-centre']);
+  assert.ok(Math.abs(r.radii.projected - 4) < 1e-9);
+  assert.deepEqual(JSON.parse(r.settled.text).features.at(-1).entities[0].project, ['plate/end', 'plate/bore']);
+  assert.match(JSON.parse(kernel.SketchEdit(on('plate/right'), 'top', '{"op": "project", "faces": ["plate/end", "plate/bore"]}')).error, /ellipse/);
+});
