@@ -255,7 +255,8 @@ public sealed class NegateField(Field child) : Field
 /// fillet sector when α, β ≥ 0, and the field there is |w| − r, the distance to the centre line or circle.
 /// That is exact wherever gA·gB is the same constant everywhere: plane–plane edges at any angle, and two surfaces
 /// round one axis that are lines in the (ρ, z) half-plane (a plane across the axis, a cylinder, a cone), where the
-/// ball centre runs round a circle. Other pairs are rejected at compile time (<see cref="Of"/>).
+/// ball centre runs round a circle. Pairs with a sphere or torus are <see cref="MeridianEdgeField"/>; other pairs
+/// are rejected at compile time (<see cref="Of"/>).
 /// </summary>
 public class RoundedEdgeField : Field
 {
@@ -280,7 +281,7 @@ public class RoundedEdgeField : Field
     /// <summary>
     /// The exact rolling-ball fillet of radius r on the edge between two leaves through <paramref name="onEdge"/>, or
     /// null when the pair has none in closed form: two planes, a plane across a cylinder, or two surfaces of revolution
-    /// round one axis that are lines in the (ρ, z) half-plane.
+    /// round one axis (a concave torus face aside).
     /// </summary>
     public static RoundedEdgeField? Of(LeafField a, LeafField b, double radius, Surface fillet, Point3D onEdge)
     {
@@ -288,7 +289,8 @@ public class RoundedEdgeField : Field
         if (sa.Kind == SurfaceKind.Plane && sb.Kind == SurfaceKind.Plane) return new RoundedEdgeField(a, b, radius, fillet);
         if (SurfaceIntersection.CommonAxis(sa, sb) is null) return null;
         static bool Straight(Surface s) => s.Kind is SurfaceKind.Plane or SurfaceKind.Cylinder or SurfaceKind.Cone;
-        return Straight(sa) && Straight(sb) ? new RoundedEdgeField(a, b, radius, fillet) : null;
+        if (Straight(sa) && Straight(sb)) return new RoundedEdgeField(a, b, radius, fillet);
+        return MeridianEdgeField.Of(a, b, radius, fillet, onEdge);
     }
 
     /// <summary>A surface moved inward (into its material) by r.</summary>
