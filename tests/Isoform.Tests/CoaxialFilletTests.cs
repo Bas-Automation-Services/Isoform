@@ -23,7 +23,7 @@ public class CoaxialFilletTests(ITestOutputHelper output)
         new(start, edges.Select(e => new ProfileEdge(e.Id, [e.U, e.V], e.Bulge)).ToList());
 
     // A 60 × 40 × 10 plate with a 90° countersunk hole at (30, 20): a 3 mm bore, the cone reaching ρ = 6 at the top.
-    static PartDocument Countersink(double r, Feature? edgeFeature = null) => new(
+    public static PartDocument Countersink(double r, Feature? edgeFeature = null) => new(
     [
         new Block("plate", BooleanOp.New, [0, 0, 0], [60, 40, 10]),
         new Revolve("sink", BooleanOp.Cut, Upright, Loop([0, -1], ("bottom", 3, -1, 0), ("wall", 3, 7, 0), ("cone", 7, 11, 0), ("top", 0, 11, 0), ("axis", 0, -1, 0))),
@@ -31,7 +31,7 @@ public class CoaxialFilletTests(ITestOutputHelper output)
     ]);
 
     // A cone 10 across the base and 20 high, bored through its axis with a 2 mm radius: the bore leaves the cone at z = 16.
-    static PartDocument BoredCone(double r) => new(
+    public static PartDocument BoredCone(double r) => new(
     [
         new Revolve("cone", BooleanOp.New, AtOrigin, Loop([0, 0], ("base", 10, 0, 0), ("side", 0, 20, 0), ("axis", 0, 0, 0))),
         new Hole("bore", [0, 0], 4),
@@ -47,13 +47,8 @@ public class CoaxialFilletTests(ITestOutputHelper output)
 
         result.Diagnostics.Should().BeEmpty();
         result.Mesh!.IsWatertight().Should().BeTrue();
-        // In (ρ, z): the top z = 10 meets the cone ρ = z − 4 at E = (6, 10) at 135°; the ball touches both t from E.
-        var t = r * (Math.Sqrt(2) - 1);
-        var (e, centre) = ((6.0, 10.0), (Rho: 6 + t, Z: 10 - r));
-        var (onTop, onCone) = ((6 + t, 10.0), (6 - t / Math.Sqrt(2), 10 - t / Math.Sqrt(2)));
-        TorusDeviation(result, 30, 20, centre, r).Should().BeLessThan(1e-7);
-        var corner = Segment(e, onTop) + Arc(centre, r, Math.PI / 2, 3 * Math.PI / 4) + Segment(onCone, e);
-        var exact = 60 * 40 * 10 - 126 * Math.PI - 2 * Math.PI * Math.Abs(corner);
+        TorusDeviation(result, 30, 20, (6 + r * (Math.Sqrt(2) - 1), 10 - r), r).Should().BeLessThan(1e-7);
+        var exact = CountersinkVolume(r);
         Volume(result).Should().BeApproximately(exact, exact * VolumeTolerance);
         result.Topology!.Faces.SelectMany(f => f.Sources).Should().BeEquivalentTo(
             ["plate/x-", "plate/x+", "plate/y-", "plate/y+", "plate/z-", "plate/z+", "sink/wall", "sink/cone", "round/face"]);
@@ -68,30 +63,25 @@ public class CoaxialFilletTests(ITestOutputHelper output)
 
         result.Diagnostics.Should().BeEmpty();
         result.Mesh!.IsWatertight().Should().BeTrue();
-        // In (ρ, z): the bore ρ = 2 meets the cone z = 20 − 2ρ at E = (2, 16); the ball touches both t from E.
-        var psi = Math.Acos(2 / Math.Sqrt(5));
-        var t = r / Math.Tan(psi / 2);
-        var (e, centre) = ((2.0, 16.0), (Rho: 2 + r, Z: 16 - t));
-        var (onBore, onCone) = ((2.0, 16 - t), (2 + t / Math.Sqrt(5), 16 - 2 * t / Math.Sqrt(5)));
-        TorusDeviation(result, 0, 0, centre, r).Should().BeLessThan(1e-7);
-        var corner = Segment(e, onCone) + Arc(centre, r, Math.Atan2(1, 2), Math.PI) + Segment(onBore, e);
-        var exact = 1792 * Math.PI / 3 - 2 * Math.PI * Math.Abs(corner);
+        TorusDeviation(result, 0, 0, (2 + r, 16 - r / Math.Tan(Math.Acos(2 / Math.Sqrt(5)) / 2)), r).Should().BeLessThan(1e-7);
+        var exact = BoredConeVolume(r);
         Volume(result).Should().BeApproximately(exact, exact * VolumeTolerance);
         result.Topology!.Faces.SelectMany(f => f.Sources).Should().BeEquivalentTo(["cone/base", "cone/side", "bore/wall", "round/face"]);
     }
 
-    // A hemisphere of radius 8 joined on the plate's top at (30, 20), the inside corner where they meet rounded.
-    static PartDocument Dome(double r) => new(
+    // A dome joined on the plate's top at (30, 20): a cap 4 high of a sphere of radius 8 centred 4 below the top,
+    // meeting the top at ρ = √48 at 60°. The inside corner where they meet is rounded.
+    public static PartDocument Dome(double r) => new(
     [
         new Block("plate", BooleanOp.New, [0, 0, 0], [60, 40, 10]),
         new Revolve("dome", BooleanOp.Join, new SketchPlane([30, 20, 10], [1, 0, 0], [0, -1, 0]),
-            Loop([0, 0], ("base", 8, 0, 0), ("cap", 0, 8, Math.Tan(Math.PI / 8)), ("axis", 0, 0, 0))),
+            Loop([0, 0], ("base", Math.Sqrt(48), 0, 0), ("cap", 0, 4, Math.Tan(Math.PI / 12)), ("axis", 0, 0, 0))),
         new Fillet("round", ["plate/z+", "dome/cap"], r),
     ]);
 
     // A puck 14 in radius and 6 high whose top rim is a quarter torus (tube 6 round ρ = 8), bored 11 in radius: the
     // bore leaves the torus at z = √27.
-    static PartDocument Knob(double r) => new(
+    public static PartDocument Knob(double r) => new(
     [
         new Revolve("knob", BooleanOp.New, AtOrigin, Loop([0, 0], ("base", 14, 0, 0), ("rim", 8, 6, Math.Tan(Math.PI / 8)), ("top", 0, 6, 0), ("axis", 0, 0, 0))),
         new Hole("bore", [0, 0], 22),
@@ -107,13 +97,8 @@ public class CoaxialFilletTests(ITestOutputHelper output)
 
         result.Diagnostics.Should().BeEmpty();
         result.Mesh!.IsWatertight().Should().BeTrue();
-        // In (ρ, z): the ball sits on the top z = 10 and against the sphere round (0, 10), outside both.
-        var centre = (Rho: Math.Sqrt(Sq(8 + r) - r * r), Z: 10 + r);
-        var onSphere = (Rho: centre.Rho * 8 / (8 + r), Z: 10 + r * 8 / (8 + r));
-        TorusDeviation(result, 30, 20, centre, r).Should().BeLessThan(1e-7);
-        var filler = Segment((8, 10), (centre.Rho, 10)) + Arc(centre, r, -Math.PI / 2, Math.Atan2(-r, -centre.Rho))
-            + Arc((0, 10), 8, Math.Atan2(onSphere.Z - 10, onSphere.Rho), 0);
-        var exact = 60 * 40 * 10 + 2 * Math.PI * 512 / 3 + 2 * Math.PI * Math.Abs(filler);
+        TorusDeviation(result, 30, 20, DomeBall(r), r).Should().BeLessThan(1e-7);
+        var exact = DomeVolume(r);
         Volume(result).Should().BeApproximately(exact, exact * VolumeTolerance);
         result.Topology!.Faces.SelectMany(f => f.Sources).Should().BeEquivalentTo(
             ["plate/x-", "plate/x+", "plate/y-", "plate/y+", "plate/z-", "plate/z+", "dome/cap", "round/face"]);
@@ -128,15 +113,8 @@ public class CoaxialFilletTests(ITestOutputHelper output)
 
         result.Diagnostics.Should().BeEmpty();
         result.Mesh!.IsWatertight().Should().BeTrue();
-        // In (ρ, z): the ball sits inside the tube round (8, 0) and against the bore ρ = 11 from outside it.
-        var centre = (Rho: 11 + r, Z: Math.Sqrt(Sq(6 - r) - Sq(3 + r)));
-        var onTorus = (Rho: 8 + (3 + r) * 6 / (6 - r), Z: centre.Z * 6 / (6 - r));
-        var edge = (11.0, Math.Sqrt(27));
-        TorusDeviation(result, 0, 0, centre, r).Should().BeLessThan(1e-7);
-        var ring = Segment((11, 0), (14, 0)) + Arc((8, 0), 6, 0, Math.PI / 3) + Segment(edge, (11, 0));
-        var corner = Segment(edge, (11, centre.Z)) + Arc(centre, r, Math.PI, Math.Atan2(onTorus.Z - centre.Z, onTorus.Rho - centre.Rho))
-            + Arc((8, 0), 6, Math.Atan2(onTorus.Z, onTorus.Rho - 8), Math.PI / 3);
-        var exact = 2 * Math.PI * (Math.Abs(ring) - Math.Abs(corner));
+        TorusDeviation(result, 0, 0, (11 + r, Math.Sqrt(Sq(6 - r) - Sq(3 + r))), r).Should().BeLessThan(1e-7);
+        var exact = KnobVolume(r);
         // A small part with long thin cusps where the fillet runs into its faces: 2e-6 off at 0.25 mm cells, 1e-7 at 0.125.
         Volume(result).Should().BeApproximately(exact, exact * 5 * VolumeTolerance);
         result.Topology!.Faces.SelectMany(f => f.Sources).Should().BeEquivalentTo(["knob/base", "knob/rim", "bore/wall", "round/face"]);
@@ -225,6 +203,53 @@ public class CoaxialFilletTests(ITestOutputHelper output)
         var volume = MassProperties.Of(result.Part.Field!, result.Mesh!).Volume;
         output.WriteLine($"volume {volume:F6}");
         return volume;
+    }
+
+    /// <summary>The countersunk plate less the corner the ball leaves out of the rim.</summary>
+    public static double CountersinkVolume(double r)
+    {
+        // In (ρ, z): the top z = 10 meets the cone ρ = z − 4 at E = (6, 10) at 135°; the ball touches both t from E.
+        var t = r * (Math.Sqrt(2) - 1);
+        var (e, centre) = ((6.0, 10.0), (6 + t, 10 - r));
+        var (onTop, onCone) = ((6 + t, 10.0), (6 - t / Math.Sqrt(2), 10 - t / Math.Sqrt(2)));
+        var corner = Segment(e, onTop) + Arc(centre, r, Math.PI / 2, 3 * Math.PI / 4) + Segment(onCone, e);
+        return 60 * 40 * 10 - 126 * Math.PI - 2 * Math.PI * Math.Abs(corner);
+    }
+
+    /// <summary>The bored cone (its section the triangle (2, 0), (10, 0), (2, 16)) less the corner at the bore's exit.</summary>
+    public static double BoredConeVolume(double r)
+    {
+        // In (ρ, z): the bore ρ = 2 meets the cone z = 20 − 2ρ at E = (2, 16); the ball touches both t from E.
+        var t = r / Math.Tan(Math.Acos(2 / Math.Sqrt(5)) / 2);
+        var (e, centre) = ((2.0, 16.0), (2 + r, 16 - t));
+        var (onBore, onCone) = ((2.0, 16 - t), (2 + t / Math.Sqrt(5), 16 - 2 * t / Math.Sqrt(5)));
+        var corner = Segment(e, onCone) + Arc(centre, r, Math.Atan2(1, 2), Math.PI) + Segment(onBore, e);
+        return 1792 * Math.PI / 3 - 2 * Math.PI * Math.Abs(corner);
+    }
+
+    /// <summary>Plate and hemisphere plus the filler the ball leaves in the corner between them.</summary>
+    public static double DomeVolume(double r)
+    {
+        // In (ρ, z): the ball sits on the top z = 10 and against the sphere round (0, 6), outside both.
+        var centre = DomeBall(r);
+        var filler = Segment((Math.Sqrt(48), 10), (centre.Rho, 10)) + Arc(centre, r, -Math.PI / 2, Math.Atan2(-(4 + r), -centre.Rho))
+            + Arc((0, 6), 8, Math.Atan2(4 + r, centre.Rho), Math.PI / 6);
+        return 60 * 40 * 10 + 320 * Math.PI / 3 + 2 * Math.PI * Math.Abs(filler);
+    }
+
+    static (double Rho, double Z) DomeBall(double r) => (Math.Sqrt(Sq(8 + r) - Sq(4 + r)), 10 + r);
+
+    /// <summary>The bored knob's ring less the corner where the bore leaves the torus.</summary>
+    public static double KnobVolume(double r)
+    {
+        // In (ρ, z): the ball sits inside the tube round (8, 0) and against the bore ρ = 11 from outside it.
+        var centre = (Rho: 11 + r, Z: Math.Sqrt(Sq(6 - r) - Sq(3 + r)));
+        var onTorus = (Rho: 8 + (3 + r) * 6 / (6 - r), Z: centre.Z * 6 / (6 - r));
+        var edge = (11.0, Math.Sqrt(27));
+        var ring = Segment((11, 0), (14, 0)) + Arc((8, 0), 6, 0, Math.PI / 3) + Segment(edge, (11, 0));
+        var corner = Segment(edge, (11, centre.Z)) + Arc(centre, r, Math.PI, Math.Atan2(onTorus.Z - centre.Z, onTorus.Rho - centre.Rho))
+            + Arc((8, 0), 6, Math.Atan2(onTorus.Z, onTorus.Rho - 8), Math.PI / 3);
+        return 2 * Math.PI * (Math.Abs(ring) - Math.Abs(corner));
     }
 
     // ∫∫ ρ dA over a region of the (ρ, z) half-plane is ∮ ρ²/2 dz round it (Green); Pappus makes 2π times it a volume.
