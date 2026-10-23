@@ -156,7 +156,7 @@ public static class Examples
                 new ProfileEdge("bottom", [50, 0]), new ProfileEdge("tip", [50, 10]), new ProfileEdge("inner", [10, 10]),
                 new ProfileEdge("riser", [10, 40]), new ProfileEdge("top", [0, 40]), new ProfileEdge("back", [0, 0]),
             ]), 0, 20),
-            new Lattice("infill", "gyroid", 10, 1, 1.5),
+            new Lattice("infill", "gyroid", 10, 1, 1.6),
         ])),
         ("Strut lattice cube: body-centred cubic", new(
         [
