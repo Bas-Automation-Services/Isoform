@@ -1,5 +1,6 @@
 using BasAutomation.Geometry;
 using Isoform.Meshing;
+using Isoform.Modeling;
 
 namespace Isoform.Interactive;
 
@@ -40,6 +41,38 @@ public sealed class MeshBuffers
 
     // Faces meeting at less than this angle are tangent: drawn faintly, like the tangent edges in a CAD view.
     static readonly double SharpCos = Math.Cos(20 * Math.PI / 180);
+
+    /// <summary>
+    /// A view's mesh simplified face by face for display (<see cref="FaceSimplifier"/>): every part once, in its own
+    /// coordinates, then placed. Faces are the view's, so picks resolve through the octree mesh as before.
+    /// </summary>
+    public static MeshBuffers Display(View view, double chord)
+    {
+        if (view.Part is { Mesh: not null } part)
+        {
+            var (mesh, faces) = Simplified(part, chord);
+            return Of(mesh, faces);
+        }
+        if (view.Assembly is not { } assembly) return Of(view.Mesh, view.FaceOfQuad);
+        var (vertices, quads, faceOf) = (new List<Point3D>(), new List<Quad>(), new List<int>());
+        var parts = new Dictionary<FrepResult, (Mesh Mesh, int[] Faces)>(ReferenceEqualityComparer.Instance);
+        var f0 = 0;
+        foreach (var i in assembly.Instances)
+        {
+            if (i.Result.Mesh is not null)
+            {
+                if (!parts.TryGetValue(i.Result, out var s)) parts.Add(i.Result, s = Simplified(i.Result, chord));
+                var v0 = vertices.Count;
+                vertices.AddRange(s.Mesh.Vertices.Select(i.Placement.ToWorld));
+                quads.AddRange(s.Mesh.Quads.Select(q => new Quad(q.A + v0, q.B + v0, q.C + v0, q.D + v0, q.Owner)));
+                faceOf.AddRange(s.Faces.Select(f => f + f0));
+            }
+            f0 += i.Result.Topology?.Faces.Count ?? 0;
+        }
+        return Of(new Mesh(vertices, quads), faceOf);
+    }
+
+    static (Mesh, int[]) Simplified(FrepResult r, double chord) => FaceSimplifier.Simplify(r.Mesh!, r.FaceOfQuad, r.Part.Surfaces, r.Part.Field!, chord);
 
     // Plain arrays, integer keys and no closures: in WebAssembly, arrays of structs read through IReadOnlyList and
     // tuple keys are many times slower.
