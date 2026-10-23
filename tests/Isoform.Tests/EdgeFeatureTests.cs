@@ -140,11 +140,16 @@ public class EdgeFeatureTests(ITestOutputHelper output)
     }
 
     [Fact]
-    public void Profile_edges_the_profile_is_not_behind_are_reported_unsupported()
+    public void Fillet_on_a_swept_profile_edge_the_profile_is_not_behind()
     {
+        // The corner along the riser is taken away, up to the top and the foot (SweptEdgeTests); under a cap at an
+        // angle to the sweep it is still refused.
         var result = Modeler.Regenerate(BracketFillet("riser"));
 
-        result.Diagnostics.Should().ContainSingle().Which.Code.Should().Be(Diagnostic.UnsupportedFillet);
+        result.Diagnostics.Should().BeEmpty();
+        var exact = (40 * 5 + 5 * 25) * 20 - (1 - Math.PI / 4) * 25;
+        SignedVolume(result.Mesh!).Should().BeApproximately(exact, exact * VolumeTolerance);
+        Deviation(result, "round/face", p => Math.Sqrt(Sq(p.X - 4) + Sq(p.Z - 19)) - 1).Should().BeLessThan(1e-7);
     }
 
     [Fact]

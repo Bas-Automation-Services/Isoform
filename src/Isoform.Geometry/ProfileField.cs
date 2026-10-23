@@ -327,6 +327,9 @@ public sealed class ProfileField : Field
         return new(edges, leaves, _frame, _revolve, _offset, corners);
     }
 
+    /// <summary>The corner at the end of edge k: +1 convex, −1 reflex, 0 tangent.</summary>
+    public int Turn(int k) => _vertexSign[k];
+
     /// <summary>The faces of the edges next to this leaf's edge, where they meet it at an angle (not tangent).</summary>
     public IEnumerable<LeafField> Neighbours(LeafField leaf)
     {
