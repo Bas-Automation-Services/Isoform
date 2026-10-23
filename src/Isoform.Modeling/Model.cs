@@ -41,6 +41,8 @@ public sealed record Diagnostic(string Code, string? FeatureId, string Message)
     public const string UnsupportedFillet = "unsupported-fillet";
     public const string ChamferInvalid = "chamfer-invalid";
     public const string UnsupportedChamfer = "unsupported-chamfer";
+    /// <summary>Three fillets of unequal radii meet at a corner: no exact corner patch, so they meet in a mitre (a warning).</summary>
+    public const string CornerMitred = "corner-mitred";
     public const string BelowResolution = "below-resolution";
     public const string BackendFailed = "backend-failed";
     public const string PartMissing = "part-missing";

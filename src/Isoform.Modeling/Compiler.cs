@@ -447,6 +447,9 @@ public sealed class Compiler(ModelingSettings settings)
                     Walk(r.A, negated);
                     Walk(r.B, negated);
                     break;
+                case VertexSphereField v:
+                    Add(v.Sphere, negated);
+                    break;
                 case LoopEdgeField l:
                     foreach (var face in l.FaceOf.Values) Add(face, negated);
                     Walk(l.Cap, negated);
@@ -489,7 +492,14 @@ public sealed class Compiler(ModelingSettings settings)
             case LeafField l:
                 return Leaf(l, d);
             case MaxField m:
-                return Each(m.Children, c => new MaxField(c));
+                // A corner sphere is set again on its fillets as they moved; it goes when they shrank to nothing.
+                var flat = m.Children.Where(c => c is not VertexSphereField).ToList();
+                return Each(flat, moved =>
+                {
+                    foreach (var v in m.Children.OfType<VertexSphereField>())
+                        if (v.Edges.Select(e => moved[flat.IndexOf(e)]).OfType<RoundedEdgeField>().ToList() is { Count: 3 } edges) moved.Add(v.With(edges, register));
+                    return new MaxField(moved);
+                });
             case MinField m when m.Children.OfType<LoopEdgeField>().FirstOrDefault(l => l.Side is NegateField) is { Side: NegateField { Child: var tool } } rim
                                  && m.Children.Any(c => c is LeafField l && l.Surface.Id == rim.Cap.Surface.Id && l.Complement != rim.Cap.Complement):
                 // What a cut-out's rim round takes away, normalized to min(−cap, tool, rim): the cap and the outside of
@@ -790,12 +800,17 @@ public sealed class Compiler(ModelingSettings settings)
             // ball must fit on the faces as they were before such rounds.
             var mitred = FieldAlgebra.Descendants(tree).OfType<RoundedEdgeField>()
                 .Where(r => new[] { r.A, r.B }.All(l => l.Surface.Source != a.Surface.Source && l.Surface.Source != b.Surface.Source))
-                .Aggregate(tree, (t, r) => Replace(t, r, new MaxField([r.A, r.B])));
+                .Aggregate(Sharpened(tree, []), (t, r) => Replace(t, r, new MaxField([r.A, r.B])));
             if (onEdge.Select(rounded.Contacts).Any(c => mitred.Value(c.OnA) > 10 * _tol || mitred.Value(c.OnB) > 10 * _tol))
                 return Fail(invalid, Invariant($"radius {size} does not fit between the faces next to the edge"));
             // The arc's middle must stay outside the cavity, or the round cuts through the wall.
             if (shell is not null && onEdge.Select(rounded.Contacts).Any(c => -shell.Child.Value(Middle(c, size)) - shell.Thickness > -10 * _tol))
                 return Fail(invalid, Invariant($"radius {size} cuts through the shell wall"));
+            var rounds = host.Children.Where(c => c != a && c != b).Append(rounded).ToList();
+            var corners = Corners(feature.Id, rounds, tree, register, diagnostics);
+            if (shell is not null && corners.Any(c => CutsShell(shell, c.Field.Sphere.Origin + (c.Vertex - c.Field.Sphere.Origin).Normalized() * size)))
+                return Fail(invalid, Invariant($"radius {size} cuts through the shell wall at a corner"));
+            if (corners.Count > 0) return Replace(tree, host, new MaxField([.. rounds, .. corners.Select(c => c.Field)]));
             addition = rounded;
         }
         else
@@ -1273,6 +1288,42 @@ public sealed class Compiler(ModelingSettings settings)
     }
 
     /// <summary>The middle of the fillet arc (or chamfer face) over an edge point q whose faces meet at right angles.</summary>
+    /// <summary>
+    /// The corners the fillet just added (the last of <paramref name="children"/>) closes: with two plane–plane fillets
+    /// already in the intersection, each sharing a face with it and one with each other, at a vertex of the part. The
+    /// ball rolls round such a corner on a sphere, named <c>id/corner:a+b+c</c> after the three fillets. Unequal radii
+    /// have no exact corner patch: those fillets keep their mitre, and a diagnostic says so.
+    /// </summary>
+    List<(VertexSphereField Field, Point3D Vertex)> Corners(string id, List<Field> children, Field tree, Func<Surface, Surface> register, List<Diagnostic> diagnostics)
+    {
+        var corners = new List<(VertexSphereField, Point3D)>();
+        var added = (RoundedEdgeField)children[^1];
+        var flat = children.OfType<RoundedEdgeField>().Where(r => r != added).ToList();
+        static string Of(RoundedEdgeField r) => r.Fillet.Source.EndsWith("/face", StringComparison.Ordinal) ? r.Fillet.Source[..^"/face".Length] : r.Fillet.Source;
+        for (var i = 0; i < flat.Count; i++)
+        for (var j = i + 1; j < flat.Count; j++)
+        {
+            RoundedEdgeField[] edges = [flat[i], flat[j], added];
+            if (VertexSphereField.Meet(edges, 0) is not { } vertex || Math.Abs(Sharpened(tree, [flat[i], flat[j]]).Value(vertex)) > 10 * _tol) continue;
+            var named = edges.Select(e => (Name: Of(e), e.Radius)).OrderBy(e => e.Name, StringComparer.Ordinal).ToList();
+            if (VertexSphereField.Ball(edges, 0, $"{id}/corner:{string.Join("+", named.Select(e => e.Name))}") is not { } ball)
+            {
+                diagnostics.Add(new Diagnostic(Diagnostic.CornerMitred, id, Invariant(
+                    $"fillets {named[0].Name} (radius {named[0].Radius}), {named[1].Name} ({named[1].Radius}) and {named[2].Name} ({named[2].Radius}) meet at a corner: only equal radii have an exact corner (a sphere), so they meet in a mitre")));
+                continue;
+            }
+            corners.Add((new VertexSphereField(edges, register(ball)), vertex));
+        }
+        return corners;
+    }
+
+    /// <summary>The tree with its corner spheres taken out (leaving their fillets' max) and the given fillets made sharp.</summary>
+    static Field Sharpened(Field tree, IEnumerable<RoundedEdgeField> edges)
+    {
+        tree = FieldAlgebra.Descendants(tree).OfType<VertexSphereField>().ToList().Aggregate(tree, (t, v) => Replace(t, v, new MaxField(v.Edges)));
+        return edges.Aggregate(tree, (t, r) => Replace(t, r, new MaxField([r.A, r.B])));
+    }
+
     static Point3D MidEdge(Point3D q, Vector3D ga, Vector3D gb, double size, bool round)
     {
         if (!round) return q - (ga + gb) * (size / 2);
