@@ -169,7 +169,7 @@ public static class ExactBrep
         /// face that does not close in the face's parameters, where the face is not cut open round its axis or tube (a
         /// loop through a pole, where the surface is one point, closes there); or other faces, edges and corners than
         /// the F-rep topology's, but for the edges of no length the mesh can leave where more than three faces meet
-        /// (with a corner too many at each, as the export tests allow).
+        /// (with a corner too many at each) where the topology could not tell its corners are one point.
         /// </summary>
         void Check(Brep brep)
         {

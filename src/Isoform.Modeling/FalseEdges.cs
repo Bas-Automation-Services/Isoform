@@ -67,7 +67,7 @@ static class FalseEdges
     }
 
     /// <summary>The largest distance to one of the surfaces at the point Gauss-Newton reaches from <paramref name="p"/>.</summary>
-    static double Residual(Field body, int[] owners, Point3D p, out Point3D at)
+    internal static double Residual(Field body, int[] owners, Point3D p, out Point3D at)
     {
         at = p;
         double Worst(Point3D q) => owners.Max(o => Math.Abs(body.SampleSurface(o, q)?.Value ?? 0));

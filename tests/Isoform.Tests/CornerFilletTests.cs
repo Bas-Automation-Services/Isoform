@@ -155,10 +155,15 @@ public class CornerFilletTests(ITestOutputHelper output)
 
     /// <summary>
     /// Plate, boss and the fillers: along each rounded edge the corner less a quarter disc, and at each corner where
-    /// two meet a quarter of the spandrel swept round the boss's edge (Pappus: its ∫ρ dA is r³(5/6 − π/4)).
+    /// two meet a quarter of the spandrel swept round the boss's edge (Pappus: its ∫ρ dA is r³(5/6 − π/4)). Offset by
+    /// <paramref name="d"/>, every face moves out by d (the edges stay sharp) and the inside fillets shrink to r − d.
     /// </summary>
-    public static double BossVolume(double r, bool all = false) =>
-        60 * 40 * 10 + 20 * 16 * 8 + r * r * (1 - Math.PI / 4) * (all ? 72 : 36) + (all ? 4 : 1) * Math.PI / 2 * r * r * r * (5.0 / 6 - Math.PI / 4);
+    public static double BossVolume(double r, bool all = false, double d = 0)
+    {
+        var f = r - d;
+        return (60 + 2 * d) * (40 + 2 * d) * (10 + 2 * d) + (20 + 2 * d) * (16 + 2 * d) * 8
+            + f * f * (1 - Math.PI / 4) * (all ? 72 + 8 * d : 36 + 4 * d) + (all ? 4 : 1) * Math.PI / 2 * f * f * f * (5.0 / 6 - Math.PI / 4);
+    }
 
     [Theory]
     [InlineData(1.5)]
@@ -169,6 +174,12 @@ public class CornerFilletTests(ITestOutputHelper output)
 
         result.Diagnostics.Should().BeEmpty();
         result.Mesh!.IsWatertight().Should().BeTrue();
+        // Plate, boss less its foot, two fillets and the horn. The horn's tip is narrower than a cell below its apex, so
+        // the mesh joins the fillets there and splits the apex in two; the topology has the one apex, where the boss's
+        // edge, the fillets' tangent lines and the horn's two tube circles meet.
+        var t = result.Topology!;
+        (t.Faces.Count, t.Edges.Count, t.Vertices.Count).Should().Be((14, 31, 20));
+        t.Vertices.Should().ContainSingle(v => v.Faces.Count == 5);
         // Round the boss's edge at (20, 10): the ball centre circle of radius r at height 10 + r, a tube of r.
         Deviation(result, "f2/corner:f1+f2", p => Math.Sqrt(Sq(Math.Sqrt(Sq(p.X - 20) + Sq(p.Y - 10)) - r) + Sq(p.Z - 10 - r)) - r).Should().BeLessThan(1e-7);
         var exact = BossVolume(r);
@@ -184,6 +195,7 @@ public class CornerFilletTests(ITestOutputHelper output)
 
         result.Diagnostics.Should().BeEmpty();
         result.Mesh!.IsWatertight().Should().BeTrue();
+        (result.Topology!.Faces.Count, result.Topology.Edges.Count, result.Topology.Vertices.Count).Should().Be((19, 40, 24));
         result.Topology!.Faces.SelectMany(f => f.Sources).Where(s => s.Contains("/corner:", StringComparison.Ordinal)).Should()
             .BeEquivalentTo(["f2/corner:f1+f2", "f3/corner:f2+f3", "f4/corner:f1+f4", "f4/corner:f3+f4"]);
         var exact = BossVolume(2, all: true);
@@ -212,7 +224,43 @@ public class CornerFilletTests(ITestOutputHelper output)
         result.Topology!.Faces.SelectMany(f => f.Sources).Should().NotContain(s => s.Contains("corner", StringComparison.Ordinal));
     }
 
-    public static IEnumerable<object[]> Parts => [["box"], ["slanted"], ["unequal"], ["boss"], ["boss all round"]];
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Offset_moves_the_horn_corners_with_the_boss(bool all)
+    {
+        const double r = 2, d = 0.5;
+        var plain = Modeler.Regenerate(Boss(r, all: all));
+        var result = Modeler.Regenerate(new PartDocument([.. Boss(r, all: all).Features, new Offset("grow", d)]));
+
+        result.Diagnostics.Should().BeEmpty();
+        result.Mesh!.IsWatertight().Should().BeTrue();
+        static string[] Names(FrepResult x) => x.Topology!.Faces.SelectMany(f => f.Sources).Order(StringComparer.Ordinal).ToArray();
+        Names(result).Should().Equal(Names(plain));
+        var (t, p) = (result.Topology!, plain.Topology!);
+        (t.Faces.Count, t.Edges.Count, t.Vertices.Count).Should().Be((p.Faces.Count, p.Edges.Count, p.Vertices.Count));
+        // The boss's edge moved out to (20 − d, 10 − d); the ball of r − d still rolls on its centre circle at 10 + r.
+        Deviation(result, "f2/corner:f1+f2", q => Math.Sqrt(Sq(Math.Sqrt(Sq(q.X - 20 + d) + Sq(q.Y - 10 + d)) - (r - d)) + Sq(q.Z - 10 - r)) - (r - d))
+            .Should().BeLessThan(1e-7);
+        var exact = BossVolume(r, all, d);
+        var volume = MassProperties.Of(result.Part.Field!, result.Mesh!).Volume;
+        output.WriteLine($"volume {volume:F6} vs {exact:F6}");
+        volume.Should().BeApproximately(exact, exact * VolumeTolerance);
+    }
+
+    [Fact]
+    public void A_boss_with_horn_corners_can_be_shelled()
+    {
+        var result = Modeler.Regenerate(new PartDocument([.. Boss(2, all: true).Features, new Shell("shell", 1)]));
+
+        result.Diagnostics.Should().BeEmpty();
+        result.Mesh!.IsWatertight().Should().BeTrue();
+        // Each block's faces move in: the plate's cavity and the boss's are apart, and the fillers stay solid.
+        var exact = BossVolume(2, all: true) - 58 * 38 * 8 - 18 * 14 * 6;
+        MassProperties.Of(result.Part.Field!, result.Mesh!).Volume.Should().BeApproximately(exact, exact * VolumeTolerance);
+    }
+
+    public static IEnumerable<object[]> Parts => [["box"], ["slanted"], ["unequal"], ["boss"], ["boss all round"], ["boss offset"]];
 
     [Theory]
     [MemberData(nameof(Parts))]
@@ -223,13 +271,15 @@ public class CornerFilletTests(ITestOutputHelper output)
             "slanted" => Slanted(1.5),
             "boss" => Boss(3),
             "boss all round" => Boss(2, all: true),
+            "boss offset" => new PartDocument([.. Boss(2, all: true).Features, new Offset("grow", 0.5)]),
             _ => Box(2, r3: 3),
         }));
 
     /// <summary>Largest |distance| of the vertices a face owns on the solid.</summary>
     static double Deviation(FrepResult r, string source, Func<Point3D, double> distance)
     {
-        var owner = r.Part.Surfaces.Single(s => s.Source == source).Id;
+        // An offset registers each face's moved surface under its name again: the last one is the face's.
+        var owner = r.Part.Surfaces.Last(s => s.Source == source).Id;
         var mesh = r.Mesh!;
         var points = mesh.Quads.Where(q => q.Owner == owner).SelectMany(q => new[] { q.A, q.B, q.C, q.D }).Distinct()
             .Select(v => mesh.Vertices[v])

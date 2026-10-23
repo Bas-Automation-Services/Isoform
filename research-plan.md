@@ -289,7 +289,10 @@ Sample, bounds enclose, simplification bit-exact) and keeps its face names under
 
 Corners (2026-10-23): three plane–plane fillets of one radius at a convex corner meet in a sphere
 (`<id>/corner:a+b+c`), and two inside fillets round a joined boss meet round its square edge in a horn torus
-(`<id>/corner:a+b`), both exact in STEP (a horn's apex, like a sphere's pole, needs the reader's healing). Not yet:
+(`<id>/corner:a+b`), both exact in STEP (a horn's apex, like a sphere's pole, needs the reader's healing). Below its
+apex a horn is narrower than a cell, so the mesh splits the apex in two; corners joined by a chain that are one point
+of the part (Gauss-Newton on all their surfaces, judged by the field) are one vertex, so the topology counts what the
+exact B-rep does. An offset moves a horn with its boss: the edge it rolls round stays a line, its apex stays. Not yet:
 corners of unequal radii (convex ones keep their mitre, `corner-mitred`; inside ones stay open, `corner-open`), and
 inside corners round a leaning or curved edge; fillets on cone, sphere and torus edges off a common axis (no closed form), chamfers
 on them, and fillets next to a hollow torus. The OCCT baseline does not run the new features, so they are checked
