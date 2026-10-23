@@ -112,6 +112,12 @@ public sealed record SketchPlacement(SketchPlane? Plane = null, string? Face = n
 public abstract record SketchEntity(string Id)
 {
     public bool Construction { get; init; }
+
+    /// <summary>
+    /// A part edge this construction entity is the projection of, by its two faces: each regeneration projects the two
+    /// surfaces' intersection onto the sketch plane and holds the entity's points on it, so it follows the part.
+    /// </summary>
+    public string[]? Project { get; init; }
 }
 
 /// <summary>A straight line from point <paramref name="From"/> to point <paramref name="To"/>.</summary>

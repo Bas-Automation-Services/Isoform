@@ -42,11 +42,14 @@ public static class SketchSolver
     /// <summary>What is wrong with the sketch's structure (names, references, constraint arity); null when it can be solved.</summary>
     public static string? Problem(Sketch sketch) => Model.Problem(sketch);
 
-    /// <summary>Solves the sketch from its stored coordinates; a dragged point starts at its target instead.</summary>
-    public static SketchSolution Solve(Sketch sketch, (string Point, double X, double Y)? drag = null)
+    /// <summary>
+    /// Solves the sketch from its stored coordinates; a dragged point starts at its target instead. A projected entity
+    /// is held on its carrier in <paramref name="carriers"/> (by entity id), or where it was stored without one.
+    /// </summary>
+    public static SketchSolution Solve(Sketch sketch, (string Point, double X, double Y)? drag = null, IReadOnlyDictionary<string, SketchCarrier>? carriers = null)
     {
         if (Model.Problem(sketch) is { } invalid) return Unsolved(sketch, invalid);
-        var model = new Model(sketch);
+        var model = new Model(sketch, carriers);
         var x = model.Start();
         var all = Enumerable.Range(0, sketch.Constraints.Count).ToArray();
         if (drag is { } d && model.PointIndex.TryGetValue(d.Point, out var at))

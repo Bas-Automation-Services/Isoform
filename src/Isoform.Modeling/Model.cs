@@ -54,6 +54,8 @@ public sealed record Diagnostic(string Code, string? FeatureId, string Message)
     public const string SketchInvalid = "sketch-invalid";
     /// <summary>A sketch placed on a face that is not a flat face of the part where the sketch stands.</summary>
     public const string SketchPlaneLost = "sketch-plane-lost";
+    /// <summary>A sketch entity projected from a part edge whose faces are gone or ambiguous, or that projects to an ellipse now.</summary>
+    public const string SketchReferenceLost = "sketch-reference-lost";
 }
 
 /// <summary>A connected face that exists after regeneration, with every source surface it came from.</summary>

@@ -2,7 +2,7 @@
 // sketch mode, draw a rectangle with the mouse, dimension its bottom line, fillet a corner and trim (each undone),
 // pick its region and finish it as an extrude: one history entry, faces <feature>/<entity>. Then edit the sketch from
 // the tree (a dimension changed in the panel saves as one set), and Escape leaves a new sketch without touching the
-// document. Exits non-zero on failure.
+// document. Last, the project tool copies a part edge and links another. Exits non-zero on failure.
 // node tests/playground/sketch.e2e.mjs [published wwwroot]      (env: ISOFORM_BROWSER, ISOFORM_TIMEOUT, ISOFORM_SERVER)
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -178,10 +178,61 @@ async function edit() {
   return !problems.length;
 }
 
+// The project tool on a new sketch on plate/z+: the plate's y- edge lit under the pointer and projected as a copy
+// (a line from x = 0 to where the fillet starts), then, Linked, the hole's rim as a construction circle that keeps its
+// faces; each one undo step. Cancel leaves the document as it was.
+async function project() {
+  const problems = [];
+  try {
+    const hash = await page.evaluate('window.isoform.hash()');
+    await page.evaluate(`window.isoform.select(['plate/z+'])`);
+    await button('.sketch-enter');
+    await page.waitFor(`${sketch}.active() && !${sketch}.state().editing`, { timeout: 10000 });
+    let s = await solved();
+    const steps = s.undo;
+    await button('.sketch-bar button[title^="Project"]');
+    const edges = await page.evaluate(`${sketch}.edges()`);
+    const edge = names => edges.find(e => names.every(n => e.faces.includes(n)));
+    const side = edge(['plate/z+', 'plate/y-']), rim = edge(['plate/z+', 'hole/wall']);
+    if (!side || !rim) throw new Error(`edges offered: ${JSON.stringify(edges.map(e => e.faces))}`);
+    const over = await at(side.at);
+    await page.mouse('mouseMoved', over);
+    await page.waitFor(`!!document.querySelector('.sketch-svg path.edge.lit')`, { timeout: 5000 });
+    await page.click(over);
+    s = await solved(`s.sketch.entities.some(e => e.id === 'projected')`);
+    const line = s.sketch.entities.find(e => e.id === 'projected');
+    const xs = line.line?.map(p => s.sketch.points[p][0]).sort((a, b) => a - b) ?? [];
+    if (line.project || line.construction || Math.abs(xs[0]) > 1e-9 || Math.abs(xs[1] - 98) > 1e-6 || s.undo !== steps + 1)
+      problems.push(`copy of the y- edge: ${JSON.stringify({ line, xs, undo: s.undo - steps, note: s.note })}`);
+
+    await button('.sketch-bar button[title^="Linked"]');
+    await page.click(await at(rim.at));
+    s = await solved(`s.sketch.entities.some(e => e.circle)`);
+    const circle = s.sketch.entities.find(e => e.circle);
+    const centre = s.sketch.points[circle.circle.center];
+    if (JSON.stringify(circle.project) !== JSON.stringify(rim.faces) || !circle.construction || Math.abs(circle.circle.radius - 5) > 1e-9 ||
+        Math.hypot(centre[0] - 30, centre[1] - 25) > 1e-9 || s.undo !== steps + 2 || s.problems.length)
+      problems.push(`linked rim: ${JSON.stringify({ circle, centre, problems: s.problems, undo: s.undo - steps })}`);
+    if (!await page.evaluate(`!!document.querySelector('.sketch-svg path.entity.linked')`)) problems.push('the linked circle is not drawn as linked');
+    await page.frames();
+    await page.screenshot(join(shots, 'sketch-project.png'));
+    await button('.sketch-bar button[title^="Leave"]');
+    if (await page.evaluate(`${sketch}.active()`)) problems.push('Cancel did not leave sketch mode');
+    if (await page.evaluate('window.isoform.hash()') !== hash) problems.push('cancelling changed the document');
+  } catch (e) {
+    problems.push(e.message);
+  }
+  problems.push(...page.errors);
+  console.log(`${problems.length ? 'FAIL' : 'pass'}  sketch project: the y- edge copied, the hole's rim linked, each one undo step`);
+  for (const p of problems) console.log(`        ${p}`);
+  return !problems.length;
+}
+
 let ok = false;
 try {
   ok = await draw();
   ok = await edit() && ok;
+  ok = await project() && ok;
 } finally {
   await browser.close();
   await site.close();

@@ -115,7 +115,11 @@ entity under the pointer between its crossings with the others (a segment's, a c
 end past its sweep), and none where the kernel would refuse (nothing crossing, a circle crossed once, construction,
 which neither cuts nor is cut). Against a fake kernel an edit asks `sketchEdit` with `{document, id, edit}` on the working
 document, takes the kernel's settled sketch as one undo step, and notes it; the constraints a trim dropped are listed
-in the note, and a refusal or a failed call keeps the sketch and the undo stack and notes why.
+in the note, and a refusal or a failed call keeps the sketch and the undo stack and notes why. Projecting
+(`sketch/project.js`): the part's sharp edges in the plane, one per face pair named by each face's first name; the one
+under the pointer is the nearest within reach, with the world point under it; the edit asks `sketchEdit` with `{op:
+'project', faces, near, linked}`, one undo step, its note naming the faces; a lost projection (`sketch-reference-lost`)
+is red and says so in the status line, and stays construction.
 
 **`sketch.e2e.mjs`** drives sketch mode in the browser, against the published folder or (`ISOFORM_SERVER`) the native
 server. On example 0 it selects `plate/z+`, presses the Sketch button, draws a rectangle with two clicks (four lines,
@@ -130,7 +134,10 @@ tool, sets the depth to 5 and finishes: the document gains `sketch1` and `extrud
 (`out/screenshots/sketch-draw.png`, `sketch-extrude.png`). Then it double-clicks `sketch1` in the tree, sets the
 dimension to 30 in the panel and saves: one history entry with one `set`, the stored points 30 apart. Last, S on a
 selected face starts a new sketch, a line is drawn, and Escape (pressed until the mode ends) leaves the document's
-hash as it was.
+hash as it was. Then a new sketch on `plate/z+` with the Project tool: the `plate/y-` edge lights under the pointer
+and a click copies it (a line from x = 0 to 98, where the fillet starts, one undo step); with Linked on, a click on the
+hole's rim adds a construction circle of radius 5 at (30, 25) that keeps `project` and is drawn as linked
+(`sketch-project.png`); Cancel leaves the hash as it was.
 
 **`kernel.test.mjs`** loads `_framework/dotnet.js` from the published folder in Node and calls the same exports the
 page's worker calls. For every example from `Examples()`, at the page's default settings (0.5 mm cells, 0.05 mm chord):
@@ -148,14 +155,16 @@ It prints the kernel time, triangles, faces and diagnostics per example. A broke
 `Dxf` writes the sketch of `sketched.fixture.json` (four lines and a circle) and its flat end face, and refuses its bore.
 `FaceFrame` gives `plate/z+`'s plane (and an error for a face that is not flat), and `Sketch` solves a triangle on it
 with a point dragged: free degrees, solved points and its one region. `SketchEdit` answers `{error}` saying what a
-fillet or trim lacks (a radius, a point), an unknown edit, and a feature that is not a sketch.
+fillet or trim lacks (a radius, a point), an unknown edit, and a feature that is not a sketch; it projects the bore's
+rim onto a sketch on `plate/end`, linked, as a circle of radius 4 that keeps its faces, and refuses it on `plate/right`
+(an ellipse).
 
 **`server.test.mjs`** drives the native kernel server (`src/Isoform.Server`, started by `server.mjs` on a free port)
 through the page's own `connectKernel` and `createClient`: every example regenerates to result v2 whose mesh buffers
 agree with its counts (positions and lines as `Float32Array`, indices as `Int32Array`, as the worker gives them), with
 the same hash, faces and diagnostic codes as the wasm kernel; a broken document and a bad edit come back as `{info:
 {error}}` without a mesh, an unknown op as a failed reply; `apply`, `diff`, `handles`, `resolve`, `step`, `dxf` and
-`sketchEdit` answer exactly as the wasm exports do; a second connection is a session of its own (the preview slot is not the main one's, and not
+`sketchEdit` (a fillet and a linked projection) answer exactly as the wasm exports do; a second connection is a session of its own (the preview slot is not the main one's, and not
 refined). `kernel-client.test.mjs` checks `unpack`, the reading of the server's binary reply.
 
 **`e2e.mjs`** serves the folder with `serve.mjs` (with `ISOFORM_SERVER`, the native server serves it instead, and each

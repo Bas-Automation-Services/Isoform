@@ -81,22 +81,29 @@ public static class IsoformTools
         Run(() => SketchJson.Solve(AgentTools.Text(document), id, dragPoint, dragTo));
 
     [McpServerTool(Name = "sketch_edit", ReadOnly = true, Idempotent = true)]
-    [Description("Fillets or trims one sketch of a part; the sketch stays lines and arcs. fillet rounds the corner point where " +
+    [Description("Fillets, trims or projects into one sketch of a part; the sketch stays lines and arcs. fillet rounds the corner point where " +
                  "two lines or arcs meet with a tangent arc of radius (the corner stays as a construction point, so dimensions " +
                  "to it hold). trim deletes the piece of entity, between its crossings with the other entities, nearest [x, y] " +
-                 "in sketch coordinates; a trimmed circle becomes an arc. Returns what sketch returns for the edited document " +
+                 "in sketch coordinates; a trimmed circle becomes an arc. project adds the part edge between two faces (as the " +
+                 "part is where the sketch stands) as exact lines, arcs and circles cut to the edge, or with near only its piece " +
+                 "nearest that world point; linked makes them construction that follows the edge at every regeneration " +
+                 "(sketch-reference-lost when it cannot). An edge that projects to an ellipse is refused. " +
+                 "Returns what sketch returns for the edited document " +
                  "(settled.text is the new document: continue from it), plus added (the new point and entity ids) and dropped " +
                  "(the constraints that went with a deleted piece). An edit that cannot be made is a tool error saying why.")]
     public static string SketchEdit(
         [Description(DocumentHelp)] string document,
         [Description("The sketch's feature id.")] string id,
-        [Description("fillet | trim")] string op,
+        [Description("fillet | trim | project")] string op,
         [Description("fillet: the corner point, by name.")] string? corner = null,
         [Description("fillet: the radius in mm.")] double? radius = null,
         [Description("trim: the line, arc or circle to trim, by id.")] string? entity = null,
         [Description("trim: u of a point near the piece to delete, in sketch coordinates.")] double? x = null,
-        [Description("trim: v of that point.")] double? y = null) =>
-        Run(() => SketchJson.Edit(AgentTools.Text(document), id, op, corner, radius, entity, x, y));
+        [Description("trim: v of that point.")] double? y = null,
+        [Description("project: the edge's two faces by name, e.g. [\"plate/z+\", \"plate/x+\"].")] string[]? faces = null,
+        [Description("project: a world point [x, y, z] near the piece of the edge to take; all pieces without it.")] double[]? near = null,
+        [Description("project: keep the link, so the entities follow the edge (default false: a copy).")] bool linked = false) =>
+        Run(() => SketchJson.Edit(AgentTools.Text(document), id, op, corner, radius, entity, x, y, faces, near, linked));
 
     [McpServerTool(Name = "validate", ReadOnly = true, Idempotent = true)]
     [Description("Fast check of a part without meshing: parses it, applies the document rules and compiles it. " +

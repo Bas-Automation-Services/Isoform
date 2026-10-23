@@ -386,6 +386,7 @@ public static partial class CanonicalFormat
                     w.WriteEndObject();
                     break;
             }
+            if (e.Project is { } faces) Strings(w, "project", faces);
             if (e.Construction) w.WriteBoolean("construction", true);
             w.WriteEndObject();
         }
@@ -414,7 +415,7 @@ public static partial class CanonicalFormat
                 : e["arc"] is { } a ? new SketchArc(eid, (string)a["center"]!, (string)a["from"]!, (string)a["to"]!)
                 : e["circle"] is { } c ? new SketchCircle(eid, (string)c["center"]!, (double)c["radius"]!)
                 : throw new FormatException($"Sketch entity '{eid}' must be a line, arc or circle.");
-            return entity with { Construction = (bool?)e["construction"] ?? false };
+            return entity with { Construction = (bool?)e["construction"] ?? false, Project = e["project"]?.AsArray().Select(f => (string)f!).ToArray() };
         }).ToList();
         var constraints = (n["constraints"]?.AsArray() ?? []).Select(c =>
         {

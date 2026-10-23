@@ -194,6 +194,8 @@ public static class FormatGuide
         s.AppendLine("their ends meet; open chains are ignored; a point joining three or more edges, or loops that cross, are sketch-invalid.");
         s.AppendLine("sketch_edit fillets a corner point where two lines or arcs meet (a tangent arc; the corner stays, as a construction");
         s.AppendLine("point) or trims the piece of an entity between its crossings nearest [x, y]; constraints on a deleted piece are dropped and listed.");
+        s.AppendLine("sketch_edit project copies a part edge [faceA, faceB] in (no ellipses); linked: construction with project: [faceA, faceB],");
+        s.AppendLine("held on the edge each regeneration, else sketch-reference-lost and it stays put.");
         s.AppendLine();
         s.AppendLine("## Face names");
         s.AppendLine("Every face is named by the feature that made it: <feature id>/<face>. Names survive parameter edits, so refer to");
