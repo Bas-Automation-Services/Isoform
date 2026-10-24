@@ -542,12 +542,12 @@ the design in a report (JSON and markdown, the same bytes for the same inputs). 
 and chat tools, native only. On the pump stand (`Examples.PumpStand`, now parametric in `height` and `splay`): three
 parts in nine instances, 23.79 kg; legs Ø48.3 × 3.2 at 609.7/583.6 mm, ends 15.1°; the top's eight blend runs
 fitted by 48 arcs within 0.026 mm. The report proves the contacts (8, no interference), the fits, the pump and socket
-keep-outs, every interface's surface match and the legs' −0.85 mm; it fails nothing, and leaves `unknown` what rests
-on bounds over holes and slabs that do not close at 20,000 boxes (the hose's clearance [3.2, 10], the holes' coverage,
-the plates' excess). Height 600 → 700 and splay 110 → 140 through `apply_edits`: every name still binds, top and feet
+keep-outs, every interface's surface match and the legs' −0.85 mm, and, with the bounds for sketched plates (the
+Excess entry), the plates inside the design within 0.023 mm, the hose 10 mm clear and every hole covered: verdict
+pass, every bound certified at 20,000 boxes. Height 600 → 700 and splay 110 → 140 through `apply_edits`: every name still binds, top and feet
 unchanged, legs 718.5/690.3 mm at 16.3°, and `DocumentDiff` between the bundles names exactly that. Time on a loaded
-desktop at 1 mm: 40–46 s for the build tool, of which 30–34 s verification (the design not covered per face, volumes,
-minimum walls) and 4–5 s regenerating the design.
+desktop at 1 mm: about 24 s for the build tool, of which 16 s verification (assembly meshing, volumes, minimum walls)
+and 3.5 s regenerating the design.
 
 **Review.** An independent read of the K4 code found 15 problems (wrong geometry without a diagnostic in several);
 all fixed, each with a regression test (`ReviewFindingTests`).
@@ -567,8 +567,7 @@ agent can edit and verify, and exact output, as an open-source .NET kernel.
 2. *Breadth.* Mature kernels have decades of breadth; ours follows what the build methods of section 12 need.
 3. *Proof by demo.* One end-to-end case should show the point: a frame or bracket design model rationalised into
    plates and tubes, exported as exact STEP, with a verification report. *Done (2026-10-24):* the pump stand of
-   `demo.md`, run by MCP or chat, with a design edit re-run; its verdict is "unknown, nothing failed" until the
-   certified bounds over holes and slabs close.
+   `demo.md`, run by MCP or chat, with a design edit re-run; verdict pass, every bound certified.
 4. *Oracles.* New operations are checked against analytic answers; K7 adds OCCT cross-checks.
 
 ## 16. Assemblies (planned)

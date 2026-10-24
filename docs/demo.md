@@ -45,10 +45,10 @@ its design: the design and build document default to the ones it carries.
 ```
 
 ```json
-{"verdict": "unknown", "checks": {"outside": "unknown", "uncovered": "reported", "volumes": "reported", "contacts": "pass",
- "keepouts": "unknown", "interfaces": "unknown", "walls": "reported", "fits": "pass", "diagnostics": "pass"},
+{"verdict": "pass", "checks": {"outside": "pass", "uncovered": "reported", "volumes": "reported", "contacts": "pass",
+ "keepouts": "pass", "interfaces": "pass", "walls": "reported", "fits": "pass", "diagnostics": "pass"},
  "bundle": "2d82a3b8…", "folder": "…/out", "files": ["assembly.json", "bom.csv", …, "top.json"], "diagnostics": [],
- "summary": "# Verification: UNKNOWN\n…", "ms": {"regenerate": 4299, "build": 2146, "outputs": 4037, "verify": 30121}}
+ "summary": "# Verification: PASS\n…", "ms": {"regenerate": 3536, "build": 1469, "outputs": 2750, "verify": 16099}}
 ```
 
 An agent that starts from a design writes the build document itself: `describe_format` has the format, `regenerate`
@@ -93,12 +93,12 @@ The head of `report.md` (cell 1 mm, search budget 20,000 boxes):
 
 | Check | Verdict | Result |
 |---|---|---|
-| Parts outside the design | unknown | at most [0.023, 5.833] mm (top/plate/lobe-blend~6 at design lobe/blend); limit 0.05 mm |
-| Design not covered | reported | at most [2.943, 3.145] mm on leg/blend (top/plate/start nearest); no limit |
+| Parts outside the design | pass | at most 0.023 mm (top/plate/lobes-3:lobe-blend~12 at design lobes/3:lobe/blend); limit 0.05 mm |
+| Design not covered | reported | at most 2.943 mm on leg/blend (legs-1/tube/outside nearest); no limit |
 | Volume and mass | reported | parts 23.79 kg, design 52.26 kg; design not covered 3626.6 cm³ |
 | Contacts and interference | pass | 8 contacts, 0 interfering, 0 unknown |
-| Keep-outs | unknown | pump [0.000, 0.000] (≥ 0); hose [3.208, 10.000] (≥ 5); socket-1 [0.000, 0.000] (≥ 0); … |
-| Interfaces | unknown | 2 of 5 reproduced; mount/wall unknown; bore/wall unknown; anchor/wall unknown |
+| Keep-outs | pass | pump [0.000, 0.000] (≥ 0); hose [10.000, 10.001] (≥ 5); socket-1 [0.000, 0.000] (≥ 0); … |
+| Interfaces | pass | 5 of 5 reproduced |
 | Minimum wall | reported | thinnest 0.000 mm (legs.json); no limit |
 | Fitted edges | pass | 8 fitted edges, largest error 0.0260 mm; limit 0.05 mm |
 | Diagnostics | pass | none |
@@ -107,14 +107,13 @@ Read it as: every joint is a contact and nothing interferes; the pump and the fo
 enter them; every interface lies on a part face of the same surface at every mesh vertex (worst 0), and the pump seat
 and the floor faces are covered, certified; the legs are 0.85 mm inside the Ø50 design legs, settled; the blends no
 part covers are what is left of the design (the leg blends about 3 mm). The thinnest wall is the knife edge of a
-leg's oblique cut, which the report explains. The verdict is **unknown, not fail**: the checks still open are certified
-bounds on the holes' walls and the plates' slabs that do not close at this budget (the hose is 10 mm clear of the bore,
-read [3.2, 10]; the holes' coverage reads [0, 0.3]). Closing those bounds is kernel work under way in `Queries`; with
-it they read pass, with no change to the build.
+leg's oblique cut, which the report explains. The top plate's fitted outline stays within 0.023 mm of the design's
+blend, the hose is 10 mm clear of the bore, and every hole's wall is covered: the verdict is **pass**, every bound
+certified within the budget (the bounds for sketched plates' holes and fitted outlines are in `Queries.Convex`).
 
-The demo test (`tests/Isoform.Tests/Build/DemoTests.cs`) asserts exactly that: contacts, fits and diagnostics pass;
-the pump and socket keep-outs pass; every interface's surface match (no vertex unmatched, worst ≤ 1e-6), the pump
-seat and floor pass; the legs' −0.85 settled; and no check, keep-out, interface or instance fails.
+The demo test (`tests/Isoform.Tests/Build/DemoTests.cs`) asserts exactly that: the verdict pass, every check pass or
+reported; contacts, fits and diagnostics; every keep-out, interface and instance pass; every interface's surface match
+(no vertex unmatched, worst ≤ 1e-6); the legs' −0.85 settled.
 
 ## The design edited
 
@@ -128,9 +127,9 @@ and nothing else.
 
 ## Time
 
-Measured on a loaded desktop (other builds running): the build tool 40–46 s, of which regenerating the design 4–5 s,
-the plates and tubes 2 s, STEP and the other outputs 4–5 s and the verification 30–34 s (the design not covered per
-face, the volumes and the minimum walls take most of it). The edited design regenerated and built again: 3.6 s. The
+Measured on the desktop at 1 mm: the build tool about 24 s, of which regenerating the design 3.5 s, the plates and
+tubes 1.5 s, STEP and the other outputs 3 s and the verification 16 s (assembly meshing, the volumes and the minimum
+walls take most of it). The edited design regenerated and built again: 3.6 s. The
 demo test (two full builds for the byte comparison, one edited) takes about 90 s.
 
 ## What it does not check

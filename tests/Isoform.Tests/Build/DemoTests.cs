@@ -133,14 +133,13 @@ public class DemoTests(DemoTests.Demo demo, ITestOutputHelper output) : IClassFi
         report["outside"]!.AsArray().Where(o => (string)o!["part"]! == "legs.json").Should().HaveCount(4)
             .And.OnlyContain(o => (string)o!["verdict"]! == "pass" && Math.Abs((double)o["excess"]!["bounds"]![0]! + 0.85) < 1e-3);
 
-        // The rest is not disproved: what is still unknown (the plates outside the design, the hose's 5 mm in the bore,
-        // the holes' coverage) are certified bounds on holes and slabs that do not close yet at this budget; with those
-        // bounds closed they read pass, and these asserts can say so.
-        checks.Values.Should().NotContain("fail");
-        ((string)report["verdict"]!).Should().NotBe("fail");
-        report["keepouts"]!.AsArray().Single(k => (string)k!["body"]! == "hose")!["verdict"]!.GetValue<string>().Should().NotBe("fail");
-        report["outside"]!.AsArray().Should().OnlyContain(o => (string)o!["verdict"]! != "fail");
-        interfaces.Should().OnlyContain(i => (string)i!["verdict"]! != "fail");
+        // And the rest, certified within the budget: every part inside the design within the tolerance, the hose 5 mm clear
+        // in the bore, every interface covered.
+        checks.Values.Should().OnlyContain(v => v == "pass" || v == "reported");
+        ((string)report["verdict"]!).Should().Be("pass");
+        report["keepouts"]!.AsArray().Single(k => (string)k!["body"]! == "hose")!["verdict"]!.GetValue<string>().Should().Be("pass");
+        report["outside"]!.AsArray().Should().OnlyContain(o => (string)o!["verdict"]! == "pass");
+        interfaces.Should().OnlyContain(i => (string)i!["verdict"]! == "pass");
     }
 
     [Fact]
