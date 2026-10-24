@@ -1,4 +1,5 @@
 using System.Text.Json.Nodes;
+using BasAutomation.Geometry;
 using Isoform.Document;
 using Isoform.Modeling;
 using Xunit.Abstractions;
@@ -123,6 +124,14 @@ public class SweepTests(ITestOutputHelper output)
             {"id": "hole", "type": "sketch", "on": {{{AcrossX}}}, "points": {"o": [0, 0]}, "entities": [{"id": "bore", "circle": {"center": "o", "radius": 3}}]},
             {"id": "drill", "type": "sweep", "op": "cut", "sketch": "hole", "path": {"sketch": "route", "from": "a1"}}
             """, 10 * 30 * 30 + Math.PI * 16 * ElbowLength, (14, 20, 8, 1));
+        // The bored pipe and a copy 15 higher, on a taller block.
+        yield return new("bored pipes on a block, patterned", $$$"""
+            {"id": "flange", "type": "block", "op": "new", "origin": [-10, -15, -15], "size": [10, 30, 40]},
+            {{{Route}}}, {{{Section(AcrossX, (0, 0, 5, "wall"))}}}, {{{Sweep(op: "join")}}},
+            {"id": "hole", "type": "sketch", "on": {{{AcrossX}}}, "points": {"o": [0, 0]}, "entities": [{"id": "bore", "circle": {"center": "o", "radius": 3}}]},
+            {"id": "drill", "type": "sweep", "op": "cut", "sketch": "hole", "path": {"sketch": "route", "from": "a1"}},
+            {"id": "row", "type": "pattern", "features": ["pipe", "drill"], "linear": {"direction": [0, 0, 1], "spacing": 15, "count": 2}}
+            """, 10 * 30 * 40 + 2 * Math.PI * 16 * ElbowLength, (22, 28, 8, 1));
     }
 
     public static IEnumerable<object[]> PartNames => Parts().Select(p => new object[] { p.Name });
@@ -207,6 +216,37 @@ public class SweepTests(ITestOutputHelper output)
             ReferenceResolver.Resolve(new FaceReference(source, source), after.Topology!).Status.Should().Be(ReferenceStatus.Resolved, source);
         var length = 40 + 50 + 30 * Math.PI / 2;
         Volume(after).Should().BeApproximately(Math.PI * 25 * length, Math.PI * 25 * length * 1e-3);
+    }
+
+    [Fact]
+    public void Pattern_copies_of_a_sweep_are_named_after_their_copy()
+    {
+        var r = Regenerate(Get("bored pipes on a block, patterned").Features);
+
+        Names(r).Should().Contain(["pipe/a1:wall", "drill/l2:bore", "row/1:pipe/a1:wall", "row/1:pipe/end", "row/1:drill/l2:bore"]);
+        r.Part.Surfaces.Single(s => s.Source == "row/1:pipe/end").Origin.Should().Be(new Point3D(60, 50, 15));
+    }
+
+    [Fact]
+    public void A_sweep_can_be_a_lattice_region()
+    {
+        // Cubic struts 1.2 thick on a 4 mm grid in the pipe; the flange stays solid. Struts graze the round wall here and
+        // there (gaps the mesher reports), so the field is checked as compiled.
+        var part = new Compiler(Settings).Compile(Read($$"""
+            {"id": "flange", "type": "block", "op": "new", "origin": [-10, -15, -15], "size": [10, 30, 30]},
+            {{Route}}, {{Section(AcrossX, (0, 0, 5, "wall"))}}, {{Sweep(op: "join")}},
+            {"id": "infill", "type": "lattice", "kind": "cubic", "cell": 4, "thickness": 1.2, "region": "pipe"}
+            """));
+
+        part.Diagnostics.Should().BeEmpty();
+        part.Surfaces.Select(s => s.Source).Should().Contain(["infill/struts", "infill/region:pipe/a1:wall", "infill/region:pipe/l1+a1"]);
+        var field = part.Field!;
+        field.Value(new Point3D(-5, 0, 0)).Should().Be(-5, "the flange is solid");
+        field.Value(new Point3D(22, 2, 2)).Should().BeGreaterThan(0, "a cell's middle in the pipe is void");
+        field.Value(new Point3D(22, 0, 0)).Should().BeApproximately(-0.6, 1e-12, "the strut along the pipe's axis is there");
+        field.Value(new Point3D(50, 2, 2)).Should().BeGreaterThan(0, "the bend is in the region too");
+        field.Value(new Point3D(50, 0, 0)).Should().BeApproximately(-0.6, 1e-12);
+        FieldProperties.Check(part);
     }
 
     [Fact]

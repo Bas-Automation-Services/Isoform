@@ -213,6 +213,13 @@ public class StepExportTests(ITestOutputHelper output)
         foreach (var sweep in SweepTests.Parts().Where(s => s.Name != "triangle along a loop and a bend"))
             yield return new($"sweep: {sweep.Name}", SweepTests.Document(sweep.Name), sweep.Volume);
         yield return new("sweep: triangle along a loop and a tight bend", TightBend(), 12 * (40 + 1.5 * Math.PI * 15 + 0.5 * Math.PI * 4));
+        // A sweep's start rounded all round (a torus), and a corner of its profile rounded along the whole path:
+        // cylinders along the lines, a torus round the bend (the outer top corner, 38 from the bend's centre).
+        yield return new("sweep: elbow with its start rounded", new([.. SweepTests.Document("elbow pipe").Features, new Fillet("round", ["pipe/start", "pipe/l1:wall"], 1.5)]),
+            Math.PI * 25 * (70 + 10 * Math.PI) - 2 * Math.PI * (5 - Centroid(1.5)) * Spandrel(1.5));
+        yield return new("sweep: square bar with a corner rounded along its path",
+            new([.. SweepTests.Document("square bar turning right").Features, new Fillet("round", ["pipe/l1:high", "pipe/l1:outer"], 1)]),
+            36 * (70 + Math.PI / 2 * 35) - Spandrel(1) * (70 + Math.PI / 2 * (38 - Centroid(1))));
     }
 
     /// <summary>The triangle along a loop and a bend, its bend of radius 4 round (1, 15) instead of 10 round (−5, 15).</summary>
