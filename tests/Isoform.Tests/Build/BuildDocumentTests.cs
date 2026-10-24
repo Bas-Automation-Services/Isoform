@@ -15,7 +15,7 @@ public class BuildDocumentTests
     ], 0.05, new Material("S235", 7.85e-6), [new Keepout("pump"), new Keepout("hose", 5), new Keepout("sockets")],
         ["cap/face", "mount/wall", "bore/wall", "foot/z-", "anchor/wall"]);
 
-    const string StandText = """
+    static readonly string StandText = """
         {
           "format": "isoform-build/0",
           "units": "mm",
@@ -72,7 +72,7 @@ public class BuildDocumentTests
           ]
         }
 
-        """;
+        """.ReplaceLineEndings("\n");
 
     static string Text(BuildDocument build) => CanonicalFormat.Write(build);
 
