@@ -6,6 +6,9 @@ The question: can an implicit (F-rep/CSG) core keep stable, CAD-meaningful refer
 vertices while producing exact output, and does it do better at this than a B-rep kernel? See
 [`research-plan.md`](research-plan.md) for the hypotheses, the edit suite and the results.
 
+**Try it:** [the playground](https://bas-automation-services.github.io/Isoform/) runs the kernel in your browser
+(WebAssembly, one thread; the chat panel needs the native server, see below).
+
 ## Layout
 
 | Project | What |
