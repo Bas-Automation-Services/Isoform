@@ -6,17 +6,22 @@ using Isoform.Meshing;
 namespace Isoform.Modeling;
 
 /// <summary>
-/// The channels a lattice's sheets leave against its skin. Where a sheet runs nearly parallel to the skin's inner face
-/// without meeting it, the void between them is as thin as the distance there: a critical point of the wall's depth on
-/// the sheet's surface, the sheet facing the wall. A saddle is a channel between two voids, closed on either side where
-/// the sheet meets the wall; a bump towards the wall a neck; a dip a pocket the sheet seals. The lattice's own sizes
-/// never see them, the mesher's thin-spot search takes a saddle's sides for wedges, and the cells fill it in.
+/// The channels a lattice's sheets leave against the rest of the part: its skin's inner faces, a region's faces with
+/// the solid beyond them, or both. Where a sheet runs nearly parallel to such a wall without meeting it, the void
+/// between them is as thin as the wall's depth there: a critical point of that depth on the sheet's surface, the sheet
+/// facing the wall. A saddle is a channel between two voids, closed on either side where the sheet meets the wall; a
+/// bump towards the wall a neck; a dip a pocket the sheet seals. The lattice's own sizes never see them, the mesher's
+/// thin-spot search takes a saddle's sides for wedges, and the cells fill it in.
 /// <para>
-/// Seeds are the centres of boxes an eighth of the lattice cell across where the bounds allow both the sheet's surface
-/// and a depth below the reach; from each whose sheet already faces the wall, Newton on the sheet's value and the two
-/// normals' tangential difference finds the critical point. The mesh is then judged along the line across the channel.
-/// Struts are cylinders, convex across: against a wall they only make necks, two opposing surfaces that do not meet,
-/// which the mesher's thin-spot search looks for.
+/// The wall is the part with the sheets taken out (<see cref="Rest"/>), and its depth the value of that. Seeds are the
+/// centres of boxes an eighth of the lattice cell across where the bounds allow the sheet's surface and a depth below
+/// the reach; from each whose sheet already faces the wall, Newton on the sheet's value and the two normals' tangential
+/// difference finds the critical point. Where two faces of the wall meet (an edge of the cavity, a region's face against
+/// the skin) the depth has a crease, the lesser of the two, and the narrowest place of a channel over it lies on the
+/// crease: Newton on the sheet's value, the two depths' difference and the sheet's normal in the plane of theirs. The
+/// sheet's point must be on the part's boundary, and the wall material. The mesh is then judged along the line across the channel. Struts are cylinders, convex
+/// across: against a wall they only make necks, two opposing surfaces that do not meet, which the mesher's thin-spot
+/// search looks for.
 /// </para>
 /// </summary>
 public static class LatticeChannels
@@ -27,16 +32,19 @@ public static class LatticeChannels
     // Seeds per lattice cell along each axis.
     const int SeedsPerCell = 8;
 
-    /// <summary>The narrowest place of a channel: the point on the sheet, the foot on the wall across it, its width.</summary>
-    public readonly record struct Channel(string Lattice, Point3D Sheet, Point3D Wall, double Width)
+    /// <summary>
+    /// The narrowest place of a channel: the point on the sheet, the foot on the wall across it, its width, and what
+    /// the wall is (its skin, its region).
+    /// </summary>
+    public readonly record struct Channel(string Lattice, Point3D Sheet, Point3D Wall, double Width, string Against = "its skin")
     {
         public Point3D Middle => Sheet + (Wall - Sheet) / 2;
     }
 
-    /// <summary>The channels narrower than <paramref name="reach"/> of the skinned sheet lattices, by body.</summary>
+    /// <summary>The channels narrower than <paramref name="reach"/> of the sheet lattices against their walls, by body.</summary>
     public static List<Channel>[] Find(PartDocument document, CompiledPart part, double reach, double tolerance)
     {
-        var lattices = document.Features.OfType<Lattice>().Where(l => l is { Sheets: true, Skin: > 0 }).ToList();
+        var lattices = document.Features.OfType<Lattice>().Where(l => l.Sheets).ToList();
         var result = part.Bodies.Select(_ => new List<Channel>()).ToArray();
         if (lattices.Count == 0) return result;
         for (var b = 0; b < part.Bodies.Count; b++)
@@ -44,39 +52,73 @@ public static class LatticeChannels
             var body = part.Bodies[b];
             foreach (var l in lattices)
             {
-                // The skin: the shell whose cavity's inner face for the lattice is the lattice itself.
-                if (FieldAlgebra.Descendants(body.Field).OfType<ShellField>()
-                        .FirstOrDefault(s => s.InnerOf.Any(kv => kv.Key == kv.Value && part.Surfaces[kv.Key].Source == l.Face)) is not { } skin) continue;
-                var sheet = new LatticeField(DocumentRules.LatticeKindOf(l.Kind)!.Value, l.Cell, l.Thickness, part.Surfaces.First(s => s.Source == l.Face));
-                result[b].AddRange(Search(l.Id, body.Field, skin.Outer, skin.Thickness, sheet, new Box3D(body.Min, body.Max), reach, l.Cell / SeedsPerCell, tolerance));
+                var face = part.Surfaces.First(s => s.Source == l.Face);
+                // No wall where the lattice is open to the outside, or not in this body.
+                if (!Holds(body.Field, face.Id) || Rest(body.Field, face.Id).F is not { } wall) continue;
+                var sheet = new LatticeField(DocumentRules.LatticeKindOf(l.Kind)!.Value, l.Cell, l.Thickness, face);
+                result[b].AddRange(Search(l.Id, part.Surfaces, body.Field, wall, sheet, new Box3D(body.Min, body.Max), reach, l.Cell / SeedsPerCell, tolerance));
             }
         }
         return result;
     }
 
-    static List<Channel> Search(string id, Field body, Field outer, double skin, LatticeField sheet, Box3D box, double reach, double spacing, double tolerance)
+    static bool Holds(Field f, int face) =>
+        FieldAlgebra.Descendants(f).Any(n => n is LatticeField l && l.Surface.Id == face || n is ShellField s && Holds(s.Child, face));
+
+    /// <summary>
+    /// The part with the lattice's sheets taken out: the field of what is left, the wall the sheets face. Null where
+    /// nothing is left; Inf says which: +1 nothing, −1 everything (the sheets' voids, a skin's child, become solid).
+    /// </summary>
+    static (Field? F, int Inf) Rest(Field f, int face)
     {
-        // The depth into the cavity is −outer − skin; seeds where it may lie in [0, reach] and the sheet may pass, a
+        switch (f)
+        {
+            case LatticeField l when l.Surface.Id == face:
+                return (null, l.Complement ? -1 : 1);
+            case NegateField n:
+                return Rest(n.Child, face) is { F: { } c } ? (new NegateField(c), 0) : (null, -Rest(n.Child, face).Inf);
+            case MaxField or MinField:
+                // +∞ absorbs a ∩ and drops out of a ∪; −∞ the other way round.
+                var max = f is MaxField;
+                var kept = new List<Field>();
+                foreach (var child in max ? ((MaxField)f).Children : ((MinField)f).Children)
+                {
+                    var (g, inf) = Rest(child, face);
+                    if (inf == (max ? 1 : -1)) return (null, inf);
+                    if (g is not null) kept.Add(g);
+                }
+                return kept.Count switch { 0 => (null, max ? -1 : 1), 1 => (kept[0], 0), _ => (max ? new MaxField(kept) : new MinField(kept), 0) };
+            case ShellField s when Holds(s.Child, face):
+                return Rest(s.Child, face) is { F: { } inside } ? (new ShellField(inside, s.Thickness, s.InnerOf).WithOuter(s.Outer), 0) : (null, 1);
+            default:
+                return (f, 0);
+        }
+    }
+
+    static List<Channel> Search(string id, IReadOnlyList<Surface> surfaces, Field body, Field wall, LatticeField sheet, Box3D box, double reach, double spacing, double tolerance)
+    {
+        // The depth into the void is the wall's value; seeds where it may lie in [0, reach] and the sheet may pass, a
         // level of boxes at a time, each side halved until it is no longer than the spacing.
         var seeds = new List<Point3D>();
-        for (var level = new List<(Box3D Box, Field Outer)> { (box, outer.Simplify(box)) }; level.Count > 0;)
+        for (var level = new List<(Box3D Box, Field Wall)> { (box, wall.Simplify(box)) }; level.Count > 0;)
         {
             var kept = level.AsParallel().AsOrdered().Where(x =>
             {
-                var depth = x.Outer.Bounds(x.Box);
-                return -depth.Hi - skin <= reach && -depth.Lo - skin >= 0 && sheet.Bounds(x.Box) is var f && f.Lo <= 0 && f.Hi >= 0;
+                var depth = x.Wall.Bounds(x.Box);
+                return depth.Lo <= reach && depth.Hi >= 0 && sheet.Bounds(x.Box) is var f && f.Lo <= 0 && f.Hi >= 0;
             }).ToList();
             if (kept.Count > 0 && Halves(kept[0].Box, spacing).Count() == 1)
             {
                 seeds.AddRange(kept.Select(x => x.Box.Center));
                 break;
             }
-            level = [.. kept.AsParallel().AsOrdered().SelectMany(x => { var o = x.Outer.Simplify(x.Box); return Halves(x.Box, spacing).Select(c => (c, o)); })];
+            level = [.. kept.AsParallel().AsOrdered().SelectMany(x => { var w = x.Wall.Simplify(x.Box); return Halves(x.Box, spacing).Select(c => (c, w)); })];
         }
 
         // Each seed onto the sheet; only where the sheet already faces the wall within 60° is the critical point
-        // looked for. The seeds that find one land on it to the last bits, so the first of each is kept, in seed order.
-        var at = new Channel?[seeds.Count];
+        // looked for, on the wall's face and on each crease between two faces near it. The seeds that find one land on
+        // it to the last bits, so the first of each is kept, in seed order.
+        var at = new List<Channel>?[seeds.Count];
         Parallel.For(0, seeds.Count, i =>
         {
             var q = seeds[i];
@@ -85,25 +127,43 @@ public static class LatticeChannels
                 var a = sheet.Sample(q);
                 q -= a.Gradient * (a.Value / a.Gradient.LengthSquared);
             }
-            if (!(sheet.Sample(q).Gradient.Normalized().Dot(outer.Sample(q).Gradient.Normalized()) >= Facing)) return;
-            if (Critical(outer, sheet, q, spacing) is not { } p) return;
-            // The sheet's void faces the wall: its normal is the outside's there.
-            var n = outer.Sample(p).Gradient.Normalized();
-            if (sheet.Sample(p).Gradient.Normalized().Dot(n) < 0.99) return;
-            // Across to the wall, the inner offset −outer − skin = 0, along the normal.
-            var s = 0.0;
-            for (var it = 0; it < 4 && double.IsFinite(s); it++)
-            {
-                var o = outer.Sample(p + n * s);
-                s += (-o.Value - skin) / o.Gradient.Dot(n);
-            }
-            if (!(s > tolerance && s < reach) || !Void(body, p, n, s)) return; // NaN too: a wall the line does not reach
-            at[i] = new Channel(id, p, p + n * s, s);
+            if (!(sheet.Sample(q).Gradient.Normalized().Dot(-wall.Sample(q).Gradient.Normalized()) >= Facing)) return;
+            var found = new List<Channel>();
+            if (Critical(wall, sheet, q, spacing) is { } p && -wall.Sample(p).Gradient.Normalized() is var n && sheet.Sample(p).Gradient.Normalized().Dot(n) >= 0.99
+                && Across(id, surfaces, body, wall, p, n, reach, tolerance) is { } c)
+                found.Add(c);
+            var pieces = new List<Piece>();
+            Pieces(wall, q, spacing, 1, 0, pieces);
+            for (var x = 0; x < pieces.Count; x++)
+            for (var y = x + 1; y < pieces.Count; y++)
+                if (Crease(wall, sheet, pieces[x], pieces[y], q, spacing) is { } e && Across(id, surfaces, body, wall, e.At, e.Towards, reach, tolerance) is { } d)
+                    found.Add(d);
+            at[i] = found;
         });
-        var found = new List<Channel>();
-        foreach (var c in at)
-            if (c is { } x && !found.Any(f => (f.Sheet - x.Sheet).LengthSquared < 1e-12)) found.Add(x);
-        return found;
+        var result = new List<Channel>();
+        foreach (var c in at.Where(x => x is not null).SelectMany(x => x!))
+            if (!result.Any(f => (f.Sheet - c.Sheet).LengthSquared < 1e-12)) result.Add(c);
+        return result;
+    }
+
+    /// <summary>
+    /// The channel from <paramref name="p"/> on the sheet across to the wall along <paramref name="n"/>, if it is one: p
+    /// on the part's boundary, the wall within reach, void all the way and material beyond it.
+    /// </summary>
+    static Channel? Across(string id, IReadOnlyList<Surface> surfaces, Field body, Field wall, Point3D p, Vector3D n, double reach, double tolerance)
+    {
+        if (!(Math.Abs(body.Value(p)) <= tolerance)) return null;
+        // Across to the wall, where its depth is 0, along the normal.
+        var s = 0.0;
+        for (var it = 0; it < 4 && double.IsFinite(s); it++)
+        {
+            var o = wall.Sample(p + n * s);
+            s -= o.Value / o.Gradient.Dot(n);
+        }
+        // NaN too: a wall the line does not reach.
+        if (!(s > tolerance && s < reach) || !Void(body, p, n, s) || !(body.Value(p + n * (1.01 * s)) < 0)) return null;
+        var face = surfaces[wall.Sample(p + n * s).Owner].Source;
+        return new Channel(id, p, p + n * s, s, face.StartsWith(id + "/inner:") ? "its skin" : face.StartsWith(id + "/region:") ? "its region" : face);
     }
 
     /// <summary>The box with each side longer than <paramref name="spacing"/> halved.</summary>
@@ -135,24 +195,98 @@ public static class LatticeChannels
     }
 
     /// <summary>
-    /// The point of the sheet's surface near <paramref name="p"/> whose normal is parallel to the outside's: Newton on
-    /// the sheet's value over its gradient and the tangential part of the two unit normals' difference, with the
-    /// Jacobian by differences. Null if it does not converge within a few spacings.
+    /// The point of the sheet's surface near <paramref name="p"/> whose normal is opposite the wall's: the sheet's
+    /// value over its gradient and the tangential part of the two unit normals' sum. Null if it does not converge
+    /// within a few spacings.
     /// </summary>
-    static Point3D? Critical(Field outer, LatticeField sheet, Point3D p, double spacing)
+    static Point3D? Critical(Field wall, LatticeField sheet, Point3D p, double spacing) => Newton(p, spacing, at =>
+    {
+        var n = sheet.Sample(at).Gradient.Normalized();
+        var e1 = (Math.Abs(n.X) < 0.6 ? new Vector3D(1, 0, 0) : new Vector3D(0, 1, 0)).Cross(n).Normalized();
+        var e2 = n.Cross(e1);
+        return q =>
+        {
+            var a = sheet.Sample(q);
+            var d = a.Gradient.Normalized() + wall.Sample(q).Gradient.Normalized();
+            return new Vector3D(a.Value / a.Gradient.Length, e1.Dot(d), e2.Dot(d));
+        };
+    });
+
+    /// <summary>A smooth piece of the wall's depth: <see cref="Sign"/> · F + <see cref="Offset"/>.</summary>
+    readonly record struct Piece(Field F, double Sign, double Offset)
+    {
+        public double Value(Point3D p) => Sign * F.Value(p) + Offset;
+        public Vector3D Gradient(Point3D p) => F.Sample(p).Gradient * Sign;
+    }
+
+    /// <summary>
+    /// The smooth pieces of a depth near <paramref name="p"/>: the children of its ∩ and ∪ (a shell's outside and
+    /// inside, a profile's edges) within <paramref name="within"/> of the one that decides there, down to the fields
+    /// that are none.
+    /// </summary>
+    static void Pieces(Field f, Point3D p, double within, double sign, double offset, List<Piece> into)
+    {
+        switch (f)
+        {
+            case NegateField n:
+                Pieces(n.Child, p, within, -sign, offset, into);
+                return;
+            case MaxField or MinField:
+                var v = f.Value(p);
+                foreach (var c in f is MaxField m ? m.Children : ((MinField)f).Children)
+                    if (Math.Abs(c.Value(p) - v) <= within) Pieces(c, p, within, sign, offset, into);
+                return;
+            case ShellField s:
+                var (outer, inner, value) = (s.Outer.Value(p), -s.Child.Value(p) - s.Thickness, s.Value(p));
+                if (Math.Abs(outer - value) <= within) Pieces(s.Outer, p, within, sign, offset, into);
+                if (Math.Abs(inner - value) <= within) Pieces(s.Child, p, within, -sign, offset - sign * s.Thickness, into);
+                return;
+            case ProfileField profile:
+                // Where the nearest point lies inside an edge, the profile's value is that edge's surface's.
+                var near = profile.Leaves.Where(l => Math.Abs(l.Value(p) - profile.Value(p)) <= within).ToList();
+                if (near.Count == 0) into.Add(new Piece(f, sign, offset));
+                foreach (var l in near) into.Add(new Piece(l, sign, offset));
+                return;
+            default:
+                into.Add(new Piece(f, sign, offset));
+                return;
+        }
+    }
+
+    /// <summary>
+    /// The narrowest place of a channel over the crease where two pieces of the wall's depth meet: the point of the
+    /// sheet's surface near <paramref name="p"/> on the crease (the two depths equal) where the sheet's normal lies in
+    /// the plane of theirs, and the sheet faces in between. It is a critical point of the depth, the lesser of the
+    /// two, on the sheet. Null if there is none near, or the two pieces are not the wall there; else the point and
+    /// the way to the first piece's face.
+    /// </summary>
+    static (Point3D At, Vector3D Towards)? Crease(Field wall, LatticeField sheet, Piece a, Piece b, Point3D p, double spacing)
+    {
+        if (Newton(p, spacing, _ => q =>
+            {
+                var s = sheet.Sample(q);
+                return new Vector3D(s.Value / s.Gradient.Length, a.Value(q) - b.Value(q),
+                    s.Gradient.Normalized().Dot(a.Gradient(q).Normalized().Cross(b.Gradient(q).Normalized())));
+            }) is not { } at)
+            return null;
+        // The sheet faces in between: its normal a positive sum of the two ways to the wall, and the two are the wall.
+        var (n, ga, gb) = (sheet.Sample(at).Gradient.Normalized(), -a.Gradient(at).Normalized(), -b.Gradient(at).Normalized());
+        var c = ga.Dot(gb);
+        var (u, v) = ((n.Dot(ga) - c * n.Dot(gb)) / (1 - c * c), (n.Dot(gb) - c * n.Dot(ga)) / (1 - c * c));
+        if (!(u > 0 && v > 0 && (ga * u + gb * v - n).Length < 1e-6 && Math.Abs(wall.Value(at) - a.Value(at)) < 1e-9)) return null;
+        return (at, ga);
+    }
+
+    /// <summary>
+    /// Newton on a residual of three components with the Jacobian by differences, the residual set up afresh at each
+    /// step (<paramref name="residual"/> of the point). Null if it does not converge within a few spacings.
+    /// </summary>
+    static Point3D? Newton(Point3D p, double spacing, Func<Point3D, Func<Point3D, Vector3D>> residual)
     {
         var start = p;
         for (var it = 0; it < 30; it++)
         {
-            var n = sheet.Sample(p).Gradient.Normalized();
-            var e1 = (Math.Abs(n.X) < 0.6 ? new Vector3D(1, 0, 0) : new Vector3D(0, 1, 0)).Cross(n).Normalized();
-            var e2 = n.Cross(e1);
-            Vector3D R(Point3D q)
-            {
-                var a = sheet.Sample(q);
-                var d = a.Gradient.Normalized() - outer.Sample(q).Gradient.Normalized();
-                return new Vector3D(a.Value / a.Gradient.Length, e1.Dot(d), e2.Dot(d));
-            }
+            var R = residual(p);
             var r = R(p);
             if (!double.IsFinite(r.Length)) return null;
             if (r.Length < 1e-12) return p;
