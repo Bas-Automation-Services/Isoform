@@ -321,6 +321,9 @@ public static partial class DualContouring
     // grid points. Beyond that the wedge is reported (FindThin), so the two agree on four cells.
     const int Reach = 4;
 
+    // A vertex this close to the field's zero is on the solid (they normally land within 1e-15).
+    const double OnSolid = 1e-10;
+
     static void Subdivide(Node node, Field field, Context ctx, int depth)
     {
         var g = ctx.Grid;
@@ -678,7 +681,8 @@ public static partial class DualContouring
         // Tangent (G1) junctions leave the along-face position undetermined; land on the solid itself.
         var v = Project(field, edge);
         var box = grid.Box(node);
-        if (Inside(box, v, node.Size * grid.H / 2)) return v;
+        if (Inside(box, v, node.Size * grid.H / 2))
+            return Math.Abs(field.Value(v)) <= OnSolid ? v : OntoOwner(field, v, owners[..ownerCount], box, node.Size * grid.H / 2) ?? v;
         // The tip of a wedge too thin to hold grid points lies beyond the cells it cuts; where the vertex is on every
         // owner and on the solid it is that edge, and goes there. That far out only the whole field is exact.
         wide = true;
@@ -742,6 +746,22 @@ public static partial class DualContouring
         p = Project(field, p);
         return Math.Abs(field.Value(p)) <= 1e-9 && field.SampleSurface(a, p) is { } x && Math.Abs(x.Value) <= 1e-9
             && field.SampleSurface(b, p) is { } y && Math.Abs(y.Value) <= 1e-9 ? p : null;
+    }
+
+    /// <summary>
+    /// Where four faces meet tangentially the owners have no common point, and their least-squares point can sit in a
+    /// sliver between two of them, where the field has a positive minimum and Newton rocks between the two. One of the
+    /// owners' own surfaces is the solid's there: the nearest point of the cell on the solid that one reaches, if any.
+    /// </summary>
+    static Point3D? OntoOwner(Field field, Point3D p, ReadOnlySpan<int> owners, Box3D box, double margin)
+    {
+        Point3D? best = null;
+        foreach (var owner in owners)
+        {
+            var q = OntoSurface(field, owner, p);
+            if (Math.Abs(field.Value(q)) <= OnSolid && Inside(box, q, margin) && (best is not { } b || (q - p).LengthSquared < (b - p).LengthSquared)) best = q;
+        }
+        return best;
     }
 
     static bool OnEvery(Field field, Point3D p, ReadOnlySpan<int> owners)

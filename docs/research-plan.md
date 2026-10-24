@@ -240,6 +240,11 @@ to `CellSize`. Polygons are dual to minimal edges, so the mesh has no cracks.
   vertices, one body, watertight) with nothing reported. Below 2 cells: 91 correct, 58 wrong but reported, 0 silent.
 - *Chord tolerance:* measured error ≤ 0.67 ε on coarse curved cells.
 - On the 20-op part it found a real defect: hole h5 and the boss's y+ face touch tangentially (0.004 mm sliver).
+- *Tangent junctions (2026-10-24):* where four faces meet tangentially (a fillet's contact line across a profile's
+  line–arc tangent point) the owners have no common point. Their least-squares point sat in the sliver between two
+  of them, where the field has a positive minimum, and Newton on the field rocked between the two, leaving vertices
+  up to 8e-7 off. A cell vertex left off the solid now goes to the nearest point on it that one owner's own surface
+  reaches within the cell; those vertices are on their surfaces within 1e-14 like the rest.
 
 | 20-op, mesh + topology | K2 start | K2 end | K3 | OCCT |
 |---|---|---|---|---|
@@ -268,8 +273,7 @@ Sample, bounds enclose, simplification bit-exact) and keeps its face names under
   patterns name copy k of `hole/wall` as `row/k:hole/wall`. A mirrored part is symmetric to 1e-12.
 - *Edge features:* chamfers (a plane, or a 45° cone on a hole or boss edge); fillets sharing a face meet in a mitre;
   fillets on swept edges where the profile lies behind the edge; a fillet after a shell rounds only the outside and
-  is rejected when it would cut through the wall. Vertices lie on the exact surfaces to 1e-7 (1e-6 where four faces
-  meet tangentially at a junction of a tangent run). Where such a side runs on smoothly into an arc (2026-10-23), the
+  is rejected when it would cut through the wall. Vertices lie on the exact surfaces to 1e-7. Where such a side runs on smoothly into an arc (2026-10-23), the
   fillet or chamfer follows the whole tangent run, as on a side the profile is not behind: a round of the side's own
   plane ran straight on past the tangent point (1.45 mm³ too much at r = 2 on a block with one R5 corner) and left the
   arc sharp, unreported. Lines, convex and concave arcs, arc to arc and cut rims match a brute-force rolling ball;

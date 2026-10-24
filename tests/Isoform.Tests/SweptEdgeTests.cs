@@ -222,8 +222,8 @@ public class SweptEdgeTests(ITestOutputHelper output)
         Deviation(result, "round/face", p => Math.Sqrt(Sq(p.X - (40 - r)) + Sq(p.Z - (10 - r))) - r).Should().BeLessThan(1e-7);
         Deviation(result, "round/block/arc", p => Math.Sqrt(Sq(Math.Sqrt(Sq(p.X - 35) + Sq(p.Y - 15)) - (5 - r)) + Sq(p.Z - (10 - r))) - r).Should().BeLessThan(1e-7);
         Deviation(result, "round/block/top", p => Math.Sqrt(Sq(p.Y - (20 - r)) + Sq(p.Z - (10 - r))) - r).Should().BeLessThan(1e-7);
-        // The ends of the contact lines at a junction, where four faces meet tangentially, land within 1e-6.
-        MaxVertexError(result).Should().BeLessThan(1e-6);
+        // Also the ends of the contact lines at a junction, where four faces meet tangentially.
+        MaxVertexError(result).Should().BeLessThan(1e-7);
     }
 
     public static IEnumerable<object[]> TangentRuns =>
@@ -274,7 +274,7 @@ public class SweptEdgeTests(ITestOutputHelper output)
         var volume = SignedVolume(result.Mesh);
         output.WriteLine($"volume {volume:F4} vs {exact:F4}");
         volume.Should().BeApproximately(exact, exact * VolumeTolerance);
-        MaxVertexError(result).Should().BeLessThan(1e-6);
+        MaxVertexError(result).Should().BeLessThan(1e-7);
     }
 
     [Fact]
