@@ -16,7 +16,7 @@ namespace Isoform.Document;
 /// <remarks>
 /// A path of one id is the whole feature (<c>{"set": "hole", "value": {...}}</c> replaces it); a deeper remove drops a
 /// field or a list entry (<c>{"remove": "boss.blend"}</c>). The empty path is the whole document. Assemblies and
-/// bundles take the same edits (see <c>DocumentEdits.Assembly.cs</c>).
+/// bundles take the same edits (see <c>DocumentEdits.Assembly.cs</c>), and so do build documents (<c>DocumentEdits.Build.cs</c>).
 /// <para>Each edit is checked as it is applied: a path that names nothing, a field the format does not have, or a
 /// result that no longer reads is an <see cref="EditException"/>. <see cref="TryApply(string, string)"/> returns it
 /// as a problem instead.</para>
@@ -28,7 +28,7 @@ public static partial class DocumentEdits
     public static PartDocument Apply(PartDocument doc, IEnumerable<JsonNode> edits) =>
         CanonicalFormat.Read(Apply(CanonicalFormat.Write(doc), edits));
 
-    /// <summary>Applies edits to a part, assembly or bundle given as text, and returns the canonical text of the result.</summary>
+    /// <summary>Applies edits to a part, assembly, bundle or build document given as text, and returns the canonical text of the result.</summary>
     /// <exception cref="EditException">The first edit that cannot be applied.</exception>
     public static string Apply(string document, IEnumerable<JsonNode> edits)
     {
@@ -132,6 +132,7 @@ public static partial class DocumentEdits
     static (JsonNode Parent, string Key, int Depth) Item(JsonObject root, string[] keys)
     {
         if (Format(root) == AssemblyDocument.FormatVersion) return AssemblyItem(root, keys);
+        if (Format(root) == BuildDocument.FormatVersion) return BuildItem(root, keys);
         if (keys[0] == "parameters") return (root, "parameters", 1);
         var features = root["features"]!.AsArray();
         return (features, IndexOf(features, keys[0], "feature").ToString(CultureInfo.InvariantCulture), 1);
@@ -190,11 +191,12 @@ public static partial class DocumentEdits
 
     internal static JsonObject Canonical(JsonNode root) => JsonNode.Parse(CanonicalText(root))!.AsObject();
 
-    /// <summary>The canonical text of a part, assembly or bundle given as JSON; a bundle's documents are made canonical too.</summary>
+    /// <summary>The canonical text of a part, assembly, bundle or build document given as JSON; a bundle's documents are made canonical too.</summary>
     internal static string CanonicalText(JsonNode root) => Format(root) switch
     {
         PartDocument.FormatVersion => CanonicalFormat.Write(CanonicalFormat.FromNode(root)),
         AssemblyDocument.FormatVersion => CanonicalFormat.Write(CanonicalFormat.ReadAssembly(root.ToJsonString())),
+        BuildDocument.FormatVersion => CanonicalFormat.Write(CanonicalFormat.ReadBuild(root.ToJsonString())),
         Bundle.FormatVersion => CanonicalFormat.Write(new Bundle(CanonicalFormat.ReadAssembly(root["assembly"]!.ToJsonString()),
             root["documents"]!.AsObject().ToDictionary(d => d.Key, d => CanonicalText(d.Value!)))),
         var format => throw new FormatException($"Unsupported format '{format}'."),

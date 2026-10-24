@@ -36,9 +36,10 @@ public static partial class DocumentEdits
         return (items, IndexOf(items, id, list[..^1]).ToString(CultureInfo.InvariantCulture), 2);
     }
 
-    // Where an insert goes: a part's features, or an assembly's components (they name a part) or mates (they have a kind).
+    // Where an insert goes: a part's features, a build's sections, or an assembly's components (they name a part) or mates (they have a kind).
     static (JsonArray List, string What) ListFor(JsonObject root, JsonObject item)
     {
+        if (Format(root) == BuildDocument.FormatVersion) return ((root["sections"] ??= new JsonArray()).AsArray(), "section");
         if (Format(root) != AssemblyDocument.FormatVersion) return (root["features"]!.AsArray(), "feature");
         var list = item.ContainsKey("part") ? "components" : item.ContainsKey("kind") ? "mates"
             : throw new FormatException("an assembly inserts a component (with a part) or a mate (with a kind)");

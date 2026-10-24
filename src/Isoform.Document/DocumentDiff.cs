@@ -14,7 +14,7 @@ namespace Isoform.Document;
 /// <item>a list of plain values with one entry changed sets that entry (<c>plate.size.0</c>, as a handle drag does);
 /// with more changed it sets the list (a moved point is one change, not three); a list of objects (profile edges) is
 /// compared entry by entry; a list that changes length is set whole;</item>
-/// <item>features, components and mates are matched by id: a missing one is removed, a new one inserted before the
+/// <item>features, components, mates and build sections are matched by id: a missing one is removed, a new one inserted before the
 /// item it now precedes, and the items outside the longest run both orders share are moved (remove, insert);</item>
 /// <item>a feature that changes type, or swaps one object for another (a pattern's motion), is set whole;</item>
 /// <item>parameters are set or removed one by one (<c>parameters.width</c>); a bundle's documents get their own edits
@@ -36,6 +36,10 @@ public static class DocumentDiff
 
     /// <summary>The edits that turn one bundle into the other: its assembly's, then each document's under <c>"document"</c>.</summary>
     public static IReadOnlyList<JsonNode> Between(Bundle old, Bundle @new) =>
+        Between(CanonicalFormat.Write(old), CanonicalFormat.Write(@new));
+
+    /// <summary>The edits that turn one build document into the other: sections matched by id, the rest by field.</summary>
+    public static IReadOnlyList<JsonNode> Between(BuildDocument old, BuildDocument @new) =>
         Between(CanonicalFormat.Write(old), CanonicalFormat.Write(@new));
 
     /// <summary>The edits between two documents of any format, given as text.</summary>
@@ -65,6 +69,16 @@ public static class DocumentDiff
         }
         if (format == AssemblyDocument.FormatVersion)
             return Items(a["components"], b["components"], "components.", edits) && Items(a["mates"], b["mates"], "mates.", edits) ? edits : null;
+        if (format == BuildDocument.FormatVersion)
+        {
+            foreach (var (key, _) in a)
+                if (!b.ContainsKey(key)) edits.Add(Remove(key));
+            foreach (var (key, value) in b)
+                if (key == "sections") { if (!Items(a[key], value, "sections.", edits)) return null; }
+                else if (a.TryGetPropertyValue(key, out var before)) Value(key, before, value, edits);
+                else edits.Add(Set(key, value));
+            return edits;
+        }
 
         edits.AddRange(Edits(a["assembly"]!.AsObject(), b["assembly"]!.AsObject()) ?? [Whole(b["assembly"]!)]);
         var (old, @new) = (a["documents"]!.AsObject(), b["documents"]!.AsObject());

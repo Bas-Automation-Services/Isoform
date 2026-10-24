@@ -7,7 +7,7 @@ namespace Isoform.Document;
 
 public static partial class CanonicalFormat
 {
-    /// <summary>The format a document's text declares: part, assembly or bundle.</summary>
+    /// <summary>The format a document's text declares: part, assembly, bundle or build.</summary>
     public static string? FormatOf(string text) => (string?)JsonNode.Parse(text)?["format"];
 
     public static string Write(AssemblyDocument assembly) => Text(w => WriteAssembly(w, assembly));

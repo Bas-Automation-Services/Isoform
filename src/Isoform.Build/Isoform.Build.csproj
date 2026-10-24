@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Build methods: a design rationalised into plates and tubes, each an exact part, as a bundle. -->
+  <ItemGroup>
+    <ProjectReference Include="../Isoform.Modeling/Isoform.Modeling.csproj" />
+    <ProjectReference Include="../Isoform.Step/Isoform.Step.csproj" />
+  </ItemGroup>
+
+</Project>
