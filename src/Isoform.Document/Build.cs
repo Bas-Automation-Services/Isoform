@@ -1,7 +1,7 @@
 namespace Isoform.Document;
 
 /// <summary>
-/// How a design is made from plates and tubes: sections bound to the design by face name, in priority order (each
+/// How a design is made from plates, tubes and beams: sections bound to the design by face name, in priority order (each
 /// section is cut by the parts of the sections before it), with the build's material, tolerance, keep-outs and
 /// interfaces. <paramref name="Design"/> names the design part (a path the caller resolves, as a component's part).
 /// </summary>
@@ -40,3 +40,15 @@ public sealed record PlateSection(string Id, double Thickness, string? Face = nu
 /// cylinder <paramref name="Along"/> (and its pattern copies, a tube each), or along a <paramref name="Line"/> of two points.
 /// </summary>
 public sealed record TubeSection(string Id, double Outside, double Wall, string? Along = null, double[][]? Line = null) : BuildSection(Id);
+
+/// <summary>
+/// Beams of a catalog profile by its id (<c>IPE200</c>, <c>RHS100x50x4</c>): along the axis of the named cylinder
+/// <paramref name="Along"/> (a beam per copy), or along each of <paramref name="Lines"/> (a beam per line, the joints
+/// where lines meet made by the beam method). <paramref name="Up"/> is the direction the section's y points (null: the
+/// method's default); <paramref name="Anchor"/> the point of the section's box on the line, one of
+/// <see cref="Anchors"/> (null: <c>center</c>). The profile is resolved by the build's beam method, from its catalog.
+/// </summary>
+public sealed record BeamSection(string Id, string Profile, string? Along = null, double[][][]? Lines = null, double[]? Up = null, string? Anchor = null) : BuildSection(Id)
+{
+    public static readonly string[] Anchors = ["center", "top", "bottom", "left", "right", "top-left", "top-right", "bottom-left", "bottom-right"];
+}

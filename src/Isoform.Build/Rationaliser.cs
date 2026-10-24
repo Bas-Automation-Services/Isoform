@@ -6,12 +6,16 @@ namespace Isoform.Build;
 /// <summary>
 /// Runs a build document on a design: each section in order, by its method, against the design minus the hulls of the
 /// parts before it (section order is priority), then packs the parts into a bundle: the design, the build document and
-/// one document per distinct part, each instance a component pinned by hash.
+/// one document per distinct part, each instance a component pinned by hash. Beam sections need a beam method, which
+/// brings its profile catalog (<see cref="IProfileCatalog"/>); without one they are reported, not built.
 /// </summary>
-public sealed class Rationaliser(IBuildMethod plates, IBuildMethod tubes)
+public sealed class Rationaliser(IBuildMethod plates, IBuildMethod tubes, IBuildMethod? beams = null)
 {
     /// <summary>Plates by <see cref="PlateMethod"/> (sections of <paramref name="cellSize"/> mm cells) and tubes by <see cref="TubeMethod"/>.</summary>
     public static Rationaliser PlatesAndTubes(double cellSize = 1) => new(new PlateMethod(cellSize), new TubeMethod());
+
+    /// <summary>This rationaliser with beam sections built by <paramref name="method"/>.</summary>
+    public Rationaliser WithBeams(IBuildMethod method) => new(plates, tubes, method);
 
     /// <param name="design">The design part; it goes into the bundle under the build's <see cref="BuildDocument.Design"/> path.</param>
     /// <param name="regenerated">The design regenerated: its faces bind the build's names.</param>
@@ -34,8 +38,14 @@ public sealed class Rationaliser(IBuildMethod plates, IBuildMethod tubes)
             {
                 PlateSection p => (plates, p.Face),
                 TubeSection t => (tubes, t.Along),
+                BeamSection b => (beams, b.Along),
                 _ => throw new NotSupportedException(section.GetType().Name),
             };
+            if (method is null)
+            {
+                diagnostics.Add(new(BuildDiagnostic.NoMethod, section.Id, $"section '{section.Id}' is a beam of '{((BeamSection)section).Profile}': no beam method (and profile catalog) is given"));
+                continue;
+            }
             if (face is not null && model.Faces(face).Count == 0)
             {
                 diagnostics.Add(new(BuildDiagnostic.FaceMissing, section.Id, $"the design has no face '{face}' for section '{section.Id}'"));

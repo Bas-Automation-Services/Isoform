@@ -46,4 +46,25 @@ public class BuildStepTests(ITestOutputHelper output)
             o.Placement.Zip(expected).Max(x => Math.Abs(x.First - x.Second)).Should().BeLessThan(1e-12, o.Path);
         }
     }
+
+    [Fact]
+    public void A_catalog_profile_member_reads_back_with_its_exact_volume()
+    {
+        // A hollow section 40 × 20 × 2 with round corners between a floor and a ceiling tilted 20°: its top cut is an
+        // ellipse on each corner. Both cuts pass through the axis at the section's centroid: the volume is its area
+        // times the axis.
+        var settings = new ModelingSettings { CellSize = 2 };
+        var result = ProfileCatalogTests.BuildPost(new FrepModeler(settings));
+        result.Diagnostics.Should().BeEmpty();
+        var path = Path.Combine(Path.GetTempPath(), $"isoform-{Guid.NewGuid():N}.step");
+        File.WriteAllText(path, Outputs.Step(result, settings, "post"));
+        var read = OcctAssembly.ReadStep(path);
+        File.Delete(path);
+
+        var post = read.Occurrences.Single(o => o.Path == "post");
+        var exact = new ProfileCatalogTests.Catalog().Find("RHS40x20x2")!.Area * 100;
+        output.WriteLine($"post: volume {post.Shape.Volume:F6} (exact {exact:F6}), valid {post.Shape.IsValid}");
+        post.Shape.IsValid.Should().BeTrue();
+        post.Shape.Volume.Should().BeApproximately(exact, exact * 1e-9);
+    }
 }

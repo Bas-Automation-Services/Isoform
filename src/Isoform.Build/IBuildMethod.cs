@@ -96,10 +96,14 @@ public static class BuildDiagnostic
     public const string FaceMissing = "build-face-missing";
     /// <summary>A section gave no part: nothing of the design is left where it is.</summary>
     public const string RegionEmpty = "build-region-empty";
-    /// <summary>A tube end meets another tube (a cope): refused.</summary>
+    /// <summary>A tube end meets another tube (a cope with no closed form, round on round): refused.</summary>
     public const string TubeMeetsTube = "build-tube-meets-tube";
     /// <summary>A tube end meets no flat face of an earlier part and does not leave the design either: refused.</summary>
     public const string OpenEnd = "build-open-end";
+    /// <summary>A section has no method to build it: a beam section without a beam method.</summary>
+    public const string NoMethod = "build-no-method";
+    /// <summary>A beam's profile is not in the catalog, or not as lines and arcs.</summary>
+    public const string ProfileMissing = "build-profile-missing";
 }
 
 /// <summary>
