@@ -6,7 +6,9 @@ of materials; the rationalised assembly is rebuilt as F-rep and compared with th
 report. It is the first of the build methods of §12 and the generated assemblies of §16.5, kept to the two methods the
 demo needs.
 
-Decisions: none yet (see the end). Plan first.
+Decisions (2026-10-24): the pump stand; fitted tangent arcs; `Isoform.Build`; MCP and chat first, the playground
+after; certified deviations in the first cut. And a speed task with D1: 41 s at 1 mm is too slow for a demo, so the
+stand is profiled and made fast before the build work leans on it.
 
 ## Findings that shape the plan
 
