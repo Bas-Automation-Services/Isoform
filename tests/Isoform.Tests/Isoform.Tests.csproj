@@ -13,6 +13,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\..\src\Isoform.Build\Isoform.Build.csproj" />
     <ProjectReference Include="..\..\src\Isoform.Document\Isoform.Document.csproj" />
     <ProjectReference Include="..\..\src\Isoform.Geometry\Isoform.Geometry.csproj" />
     <ProjectReference Include="..\..\src\Isoform.Interactive\Isoform.Interactive.csproj" />

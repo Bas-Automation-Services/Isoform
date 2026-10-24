@@ -240,6 +240,11 @@ to `CellSize`. Polygons are dual to minimal edges, so the mesh has no cracks.
   vertices, one body, watertight) with nothing reported. Below 2 cells: 91 correct, 58 wrong but reported, 0 silent.
 - *Chord tolerance:* measured error ≤ 0.67 ε on coarse curved cells.
 - On the 20-op part it found a real defect: hole h5 and the boss's y+ face touch tangentially (0.004 mm sliver).
+- *Tangent junctions (2026-10-24):* where four faces meet tangentially (a fillet's contact line across a profile's
+  line–arc tangent point) the owners have no common point. Their least-squares point sat in the sliver between two
+  of them, where the field has a positive minimum, and Newton on the field rocked between the two, leaving vertices
+  up to 8e-7 off. A cell vertex left off the solid now goes to the nearest point on it that one owner's own surface
+  reaches within the cell; those vertices are on their surfaces within 1e-14 like the rest.
 
 | 20-op, mesh + topology | K2 start | K2 end | K3 | OCCT |
 |---|---|---|---|---|
@@ -268,8 +273,7 @@ Sample, bounds enclose, simplification bit-exact) and keeps its face names under
   patterns name copy k of `hole/wall` as `row/k:hole/wall`. A mirrored part is symmetric to 1e-12.
 - *Edge features:* chamfers (a plane, or a 45° cone on a hole or boss edge); fillets sharing a face meet in a mitre;
   fillets on swept edges where the profile lies behind the edge; a fillet after a shell rounds only the outside and
-  is rejected when it would cut through the wall. Vertices lie on the exact surfaces to 1e-7 (1e-6 where four faces
-  meet tangentially at a junction of a tangent run). Where such a side runs on smoothly into an arc (2026-10-23), the
+  is rejected when it would cut through the wall. Vertices lie on the exact surfaces to 1e-7. Where such a side runs on smoothly into an arc (2026-10-23), the
   fillet or chamfer follows the whole tangent run, as on a side the profile is not behind: a round of the side's own
   plane ran straight on past the tangent point (1.45 mm³ too much at r = 2 on a block with one R5 corner) and left the
   arc sharp, unreported. Lines, convex and concave arcs, arc to arc and cut rims match a brute-force rolling ball;
@@ -318,6 +322,19 @@ against analytic answers only; cross-checking them is part of K7.
   knife edge where `cut3/x+` runs through hole `h6`.
 - *Mass properties:* volume, area, centroid, inertia from the mesh with curvature correction (errors 1e-10 to
   5e-7), plus a certified volume range.
+- *Excess (2026-10-24, demo plan V1):* the largest value of one field over another's solid (`Queries.Excess`: how
+  far parts stray outside a design) or over the boundary points a face owns (`BoundaryExcess`, `ExcessByFace`: how
+  far each design face is from the parts), certified [lower, upper] with the witness point and both faces, and a flag
+  when the budget stopped it first. Branch and bound, highest box first: the upper end from the field's structure
+  over the convex shapes the region lies in (a plane's highest point over planes, balls and rods by duality; a
+  cylinder within a rod round a near-coaxial axis; a sphere round a ball), the lower end from points of the region
+  climbed up the gradient. Faces a constant distance apart settle in one box: a Ø48.3 tube in a Ø50 leg reads −0.85
+  outside and 0.85 uncovered exactly, as do a box poking 1 mm out, a tilted plate's top edge and an offset ball. Face
+  ownership follows the tree (ties to the first child, a flush plane cut never shows a blend's rim), blends get bounds
+  that close on their face (the plain ones stay k/4 wide), and a smooth union's face keeps both sides within k. A
+  round peak still closes only to first order (1e-4 on a ball in 0.6 s). Stand-sized: a Ø50 × 600 leg blended
+  (k = 10) into a foot and a top, against a placed Ø48.3 × 3.2 tube cut by two planes: outside 50 ms, all 16 design
+  faces 0.7 s at 1e-3, the leg's blend 10.85 (its rim on the foot, k + 0.85 from the tube).
 
 **K6 spike — exact B-rep / STEP (works for the analytic case).** `src/Isoform.Step` writes STEP from Isoform's own
 exact B-rep; OCCT reads every one of 15 parts back as one valid solid with Isoform's face/edge/vertex counts, volume
@@ -378,7 +395,7 @@ but about half are features a finer local mesh would build.
   ∩ or ∪ bound it by their mean, so zero-thickness contacts end at once). The deepest point found is a pocket in the
   region result (cache format 3). Polygons part the grid's nodes as the field does, so where no polygon comes nearer
   than the cell's nearest corner the mesh is on the corner's side all round: the material or gap there, twice the
-  depth across, is lost whole and reported (not where a lattice bounds it: its own sizes judge it). Both skipped repros
+  depth across, is lost and reported, unless it reaches the mesh further on (see lattices, 2026-10-24). Both skipped repros
   and variants (other corners, smaller holes, the cap off the grid's lines) are reported; pockets beside polygons
   (the wedges where a hole runs out through a side) are not. And a cell beside a fillet run's cusp, where no vertex
   fit its crossings' surfaces, kept their mean up to 0.1 mm off the surface: it now takes a real edge of two of its
@@ -393,6 +410,26 @@ but about half are features a finer local mesh would build.
   through the corner where it starts) into a report; on 3000 random documents (F-rep only and common, seeds 0–1499)
   it reports nothing. Cost: about 2 ms on the 20-op part. Still silent: a corner on a face's inside, and two edges
   that cross in a point.
+  *Generalised (2026-10-24):* the points tried are every corner and every pair of edges of a piece whose chains come
+  within two cells (Gauss-Newton on their three or four surfaces). At a point on them within the tolerance, every
+  surface through it stands for its tangent plane: the planes' great circles cut the sphere of directions into cells,
+  each probed once in the field 1e-4 mm out (from beside every crossing of two circles, so none is missed), and cells
+  of one kind that share an arc are one piece. Two pieces of material, or of space, that meet only in the point are a
+  contact. No heuristics about split faces, tangent junctions, merged coincident faces or edge ends are needed; it says
+  nothing where a blend or lattice, or a surface not through the point, comes within 2e-4 mm, or two planes are within
+  about 1° without being one. Repros (`SelfContactTests`; each moved 0.05 mm either way is not reported): a cube on its
+  corner touching a flat face, an edge, the same edge 0.6 mm from its end (silent before), a fillet's face (its
+  distance from its field), and two edges crossing. The exact B-rep now also refuses a corner inside another face of
+  its solid (winding number in the face's parameters) and two edges that cross (Gauss-Newton on the curves'
+  parameters), naming the same point; OCCT reads all three back as valid solids. Seeds 0–2149, both sets: nine new
+  reports, all line contacts (two blocks meeting edge to edge, two of them within 1e-7 mm), silent before; nothing
+  else changed. K7 labels: 158 and 1812 add tangent-contact to a below-resolution refusal, 945 is refused for the
+  contact instead, and 639 (two blocks meeting edge to edge, F-rep built, "OCCT topology differs") is now refused as a
+  tangent-contact. Cost: 5–10 ms of the 20-op part's 0.3–1.4 s at 0.5 to 0.1 mm cells (was 2–4 ms). Still silent: an
+  edge touching a face in a point (a circle's edge on a plane), smooth surfaces touching (a ball on a plate, two
+  cylinders along a line), contacts on blends and lattices; the exact B-rep still writes a line contact (639, 168:
+  the topology ends both edges at the contact's corner); and the crossing edges run 0.05 mm into each other lose the
+  overlap with nothing reported (below the cells).
 - *Lattice channels (2026-10-23):* where a TPMS sheet comes within a cell of its skin's inner face, facing it, the
   void between them is a channel: at a saddle of the wall's depth on the sheet a lens 0.07–0.09 mm thick and about
   1 mm wide joining two voids (gyroid and diamond of 6 mm cells in a 1.5 mm skin 0.0852 mm, Schwarz P of 10 mm 0.0843,
@@ -406,8 +443,39 @@ but about half are features a finer local mesh would build.
   refinement level meshes the 0.085 mm ones right. Pockets that a lattice and another face bound (the sheet cutting a
   sliver off an edge of the cavity, 0.01–0.07 mm) are now reported too; the bracket example's skin went from 1.5 to
   1.6 mm, where it has none. Cost: the search 6–35 ms on a 20 mm cube and 40–60 ms on the bracket (1–3% of the
-  regeneration), the mesh check under 10 ms a pass. Still silent: channels against a region's faces (no skin) and a
-  sheet grazing an edge or a corner of the cavity, where the depth is not smooth.
+  regeneration), the mesh check under 10 ms a pass. Channels against a region and over the cavity's edges: below.
+- *What lattices still left silent (2026-10-24):* the wall a sheet faces is now the part with the sheets taken out
+  (+∞ for them in the tree, so a skin's child becomes the solid and a region's complement stays): a skin's inner faces,
+  a region's faces with the solid beyond, or both. A region from 1.5 to 18.5 mm with no skin leaves the skin repro's
+  0.0852 mm channels, now reported as "against its region" and resolved by one more level; a region that is the body
+  leaves none (nothing is beyond its faces: the sheet's point must be on the part's boundary and the wall material).
+  Where two faces of the wall meet the depth has a crease, and a channel over it is narrowest on the crease: Newton on
+  the sheet's value, the two faces' depth difference and the sheet's normal in the plane of theirs, from each seed and
+  each pair of the depth's pieces near it (∩/∪ children, a shell's inside, a profile's edges), kept where the sheet
+  faces in between. A Schwarz P of 6 mm cells in an 11 mm box passes 0.0445 mm from two inner faces at once; only the
+  lattice's own gap was reported, now the channel is. Over about 220 shifted boxes and brackets (gyroid, diamond, Schwarz P)
+  crease channels of 0.004–0.3 mm were found, the cells filling those below about 0.25 mm, but no document was silent
+  before: each had another report (often the pocket search, which takes a crease channel for a gap lost whole); those
+  the cells carry are not reported (0.316 mm over a 7 mm box's edges). A corner of the cavity, three faces, is a dome
+  the sheet seals, not a channel: the pocket search's. Lost pockets inside a strut lattice's junctions (the bcc of the
+  format guide: 117 of them, 0.035 and 0.134 mm across) are real void, the field being the exact distance to the
+  struts: the thin end of the crevice where two struts meet at 70.5°. They are not lost whole: up the field's slope
+  from the pocket, in steps of half the depth, the gap reaches a point deeper than its distance to the polygons within
+  0.15–0.27 mm, so the mesh carries the crevice and lost only its tip, as at any edge. Every pocket now gets this test
+  instead of the lattice's exemption; the sliver bodies, the ball's cap and the sheet's sliver at the cavity's edge
+  never reach the mesh on walks of 1–10 mm, and stay reported; the format guide's bcc is clean as it was. Lattice
+  regenerations got 1.6–3.6× faster (the gyroid cube 4.2 → 1.2 s, the bracket 2.9 → 1.8 s, the diamond cylinder 1.8 →
+  0.5 s, the bcc example 1.4 → 0.4 s): the old code named the surfaces round every lattice pocket before dropping it.
+  The channel search is 80–130 ms on the gyroid cube and the bracket (from 35–45; 10–20 ms of it the creases), 15–20 ms
+  on the cylinder; 20-op unchanged (0.5/0.6/1.4–1.5 s at 0.5/0.25/0.1 mm, no lattice). The pocket search's budget of 32
+  boxes is not sound and cannot be made so with these bounds: it runs out in 70% of the cells without a vertex in the
+  smooth-blend example, and in a near-tangent sphere-on-plane cell the bound stays at 0.09 mm after 200,000 boxes, so a
+  "not searched fully" report would fire on most blended parts. Measured instead: on 600 random documents, 13 example
+  parts and 50 slivers and caps 0.1–10 µm thick at five grid offsets, 2000 boxes changed no result from silent to
+  reported or back (in 8 only the pocket or size named); in the lattice examples 163 pockets of 1.6–2.9 µm depth are
+  missed by 32 boxes and found by 5000, none lost whole. A thin piece lost whole spans several cells, and the deepest
+  find in any of them reports it. Still silent: a pocket small in every direction, thinner than a cell's bound can
+  resolve in 32 boxes, alone in its cell; a crease inside a field the search does not take apart (a blend, a sweep's section).
 - *Seeds 0–2149, both sets, F-rep side (2026-10-24):* three crashes. Two (F-rep only 1495, 1867) were a surface
   component the cells flattened to nothing: its enclosed volume, −1.5e-15, made it a void, no body's box held it,
   and it got a body number past the last (`PieceContacts` indexed by it). A surface no body holds is now a body of its

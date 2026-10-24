@@ -93,7 +93,7 @@ public sealed class Session
                 if (CanonicalFormat.FormatOf(text) != Bundle.FormatVersion) modeler.MeshShare(CanonicalFormat.Read(text), index, count);
                 else
                     foreach (var part in CanonicalFormat.ReadBundle(text).Documents.Values)
-                        if (CanonicalFormat.FormatOf(part) != AssemblyDocument.FormatVersion) modeler.MeshShare(CanonicalFormat.Read(part), index, count);
+                        if (CanonicalFormat.FormatOf(part) == PartDocument.FormatVersion) modeler.MeshShare(CanonicalFormat.Read(part), index, count);
             }
         }
         catch (Exception e) when (Unreadable(e)) { }

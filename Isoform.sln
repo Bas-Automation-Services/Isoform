@@ -24,7 +24,7 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Solution Items", "Solution 
 		global.json = global.json
 		LICENSE = LICENSE
 		README.md = README.md
-		research-plan.md = research-plan.md
+		docs\research-plan.md = docs\research-plan.md
 	EndProjectSection
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Isoform.Occt.Tests", "tests\Isoform.Occt.Tests\Isoform.Occt.Tests.csproj", "{3D55D300-B398-4870-B846-B87466FC1FAB}"
@@ -46,6 +46,8 @@ EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Isoform.Server", "src\Isoform.Server\Isoform.Server.csproj", "{A24BA08F-28A7-48A7-A523-B74D76C44C37}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Isoform.Server.Tests", "tests\Isoform.Server.Tests\Isoform.Server.Tests.csproj", "{5C169FD2-8AE2-46FD-A751-68566EB06AC6}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Isoform.Build", "src\Isoform.Build\Isoform.Build.csproj", "{B07C68AF-C0BA-49A9-9A37-C130B9D5640B}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -249,6 +251,18 @@ Global
 		{5C169FD2-8AE2-46FD-A751-68566EB06AC6}.Release|x64.Build.0 = Release|Any CPU
 		{5C169FD2-8AE2-46FD-A751-68566EB06AC6}.Release|x86.ActiveCfg = Release|Any CPU
 		{5C169FD2-8AE2-46FD-A751-68566EB06AC6}.Release|x86.Build.0 = Release|Any CPU
+		{B07C68AF-C0BA-49A9-9A37-C130B9D5640B}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{B07C68AF-C0BA-49A9-9A37-C130B9D5640B}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{B07C68AF-C0BA-49A9-9A37-C130B9D5640B}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{B07C68AF-C0BA-49A9-9A37-C130B9D5640B}.Debug|x64.Build.0 = Debug|Any CPU
+		{B07C68AF-C0BA-49A9-9A37-C130B9D5640B}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{B07C68AF-C0BA-49A9-9A37-C130B9D5640B}.Debug|x86.Build.0 = Debug|Any CPU
+		{B07C68AF-C0BA-49A9-9A37-C130B9D5640B}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{B07C68AF-C0BA-49A9-9A37-C130B9D5640B}.Release|Any CPU.Build.0 = Release|Any CPU
+		{B07C68AF-C0BA-49A9-9A37-C130B9D5640B}.Release|x64.ActiveCfg = Release|Any CPU
+		{B07C68AF-C0BA-49A9-9A37-C130B9D5640B}.Release|x64.Build.0 = Release|Any CPU
+		{B07C68AF-C0BA-49A9-9A37-C130B9D5640B}.Release|x86.ActiveCfg = Release|Any CPU
+		{B07C68AF-C0BA-49A9-9A37-C130B9D5640B}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

@@ -155,15 +155,9 @@ public sealed class FrepModeler(ModelingSettings settings, RegionCache? cache = 
             pinched.AddRange(built.Pinches);
             falseEdges.AddRange(FalseEdges.Find(body.Field, oriented, built, Settings.Tolerance, Settings.CellSize));
             falseCorners.AddRange(FalseEdges.Corners(body.Field, oriented, built, Settings.Tolerance));
-            foreach (var p in LostPockets(bodyMesh))
-            {
-                // A lattice alone is judged by its own sizes (LatticeResolution); a sliver its sheets cut off against
-                // another face, its skin's at a corner of the cavity, is lost whole like any other. A face that bounds
-                // it may be one whose surface is elsewhere (a profile's corner rounds its offset): the owner there says.
-                var near = Bounding(part, body.Field, p);
-                if (!near.All(s => s.Kind == SurfaceKind.Lattice) || part.Surfaces[body.Field.Sample(p.Location).Owner].Kind != SurfaceKind.Lattice)
-                    pockets.Add((p, near.MaxBy(s => s.Id)!.Source.Split('/')[0]));
-            }
+            // A face that bounds a pocket may be one whose surface is elsewhere (a profile's corner rounds its offset).
+            foreach (var p in LostPockets(bodyMesh, body.Field))
+                pockets.Add((p, Bounding(part, body.Field, p).MaxBy(s => s.Id)!.Source.Split('/')[0]));
             var t = built.Topology;
             if (t.BodyCount > 1)
                 diagnostics.Add(new Diagnostic(Diagnostic.MultipleBodies, part.Bodies.Count == 1 ? null : body.Name,
@@ -177,15 +171,21 @@ public sealed class FrepModeler(ModelingSettings settings, RegionCache? cache = 
                 diagnostics.Add(new Diagnostic(Diagnostic.TangentContact, later,
                     Invariant($"{a} and {b} touch within the tolerance near ({at.X:F2}, {at.Y:F2}, {at.Z:F2}), but the pieces they bound are kept apart: a contact of zero thickness")));
             }
-            // A corner on an edge that does not end in it: the body touches itself in a point.
-            if (SelfContacts.Find(built, oriented, Settings.Tolerance, 2 * Settings.CellSize) is { } touch)
+            // A corner on an edge or a face, or two edges that cross: the body touches itself in a point.
+            else if (SelfContacts.Find(built, oriented, body.Field, Settings.Tolerance, 2 * Settings.CellSize) is { } touch)
             {
-                string Name(int f) => string.Join("+", t.Faces[f].Sources);
-                var (corner, edge) = (t.Vertices[touch.Vertex].Faces, t.Edges[touch.Edge]);
-                var later = part.Surfaces[corner.Append(edge.FaceA).Append(edge.FaceB).Max(f => built.FaceOwners[f].Max())].Source.Split('/')[0];
+                static string Of(string[] f) => f.Length switch
+                {
+                    1 => f[0],
+                    2 => $"the edge between {f[0]} and {f[1]}",
+                    _ => $"the corner of {string.Join(", ", f)}",
+                };
+                var (one, other) = touch.One.Length >= touch.Other.Length ? (touch.One, touch.Other) : (touch.Other, touch.One);
+                var how = one.Length == 2 && other.Length == 2 ? "crosses" : other.Length > 2 ? "meets" : "lies on";
+                var later = part.Surfaces[touch.Owners.Max()].Source.Split('/')[0];
                 var at = touch.At;
                 diagnostics.Add(new Diagnostic(Diagnostic.TangentContact, later,
-                    Invariant($"the solid touches itself at ({Round(at.X):G6}, {Round(at.Y):G6}, {Round(at.Z):G6}): the corner of {string.Join(", ", corner.Select(Name))} lies on the edge between {Name(edge.FaceA)} and {Name(edge.FaceB)}, a contact of zero thickness")));
+                    Invariant($"the solid touches itself at ({Round(at.X):G6}, {Round(at.Y):G6}, {Round(at.Z):G6}): {Of(one)} {how} {Of(other)}, a contact of zero thickness")));
             }
             var (v0, f0, e0, c0) = (vertices.Count, faces.Count, edges.Count, corners.Count);
             vertices.AddRange(bodyMesh.Vertices);
@@ -231,14 +231,14 @@ public sealed class FrepModeler(ModelingSettings settings, RegionCache? cache = 
                 Invariant($"{string.Join(", ", owners.Select(o => part.Surfaces[o].Source))} meet in a vertex near ({at.X:F2}, {at.Y:F2}, {at.Z:F2}) that the part does not have: an edge or face between them is below the resolved size of {ResolvedAt(zones, at):G4} mm")));
         }
 
-        // Channels between a lattice's sheets and its skin that the cells fill in: the narrowest of each lattice.
+        // Channels between a lattice's sheets and its skin or region that the cells fill in: the narrowest of each lattice.
         foreach (var g in filled.GroupBy(c => c.Lattice))
         {
             var c = g.MinBy(x => x.Width);
             var (at, resolved) = (c.Middle, ResolvedAt(zones, c.Middle));
             findings.AddRange(g.Select(x => new Finding(Around([x.Sheet, x.Wall]), x.Width, null)));
             diagnostics.Add(new Diagnostic(Diagnostic.BelowResolution, g.Key,
-                Invariant($"the sheets of {g.Key} leave a channel {c.Width:G3} mm wide against its skin near ({at.X:F2}, {at.Y:F2}, {at.Z:F2}) that the cells fill in, {(c.Width < resolved ? "below" : "at")} the resolved size of {resolved:G4} mm; use a CellSize of {c.Width / 2:G3} mm or less")));
+                Invariant($"the sheets of {g.Key} leave a channel {c.Width:G3} mm wide against {c.Against} near ({at.X:F2}, {at.Y:F2}, {at.Z:F2}) that the cells fill in, {(c.Width < resolved ? "below" : "at")} the resolved size of {resolved:G4} mm; use a CellSize of {c.Width / 2:G3} mm or less")));
         }
 
         // Material or a gap the cells lost whole, with nothing of the mesh near it. The latest feature's there.
@@ -285,9 +285,10 @@ public sealed class FrepModeler(ModelingSettings settings, RegionCache? cache = 
     /// <summary>
     /// The pockets of a body's mesh deeper than the tolerance with no polygon nearer than their cell's corner. The
     /// polygons part the grid's nodes as the field does, so the mesh is on the corner's side all round the pocket:
-    /// the material (or gap) there, twice its depth across, is lost whole (a sliver body at a clipped corner).
+    /// the material (or gap) there, twice its depth across, is lost, and lost whole unless it reaches the mesh
+    /// further on (<see cref="Reaches"/>).
     /// </summary>
-    List<Pocket> LostPockets(Mesh mesh)
+    List<Pocket> LostPockets(Mesh mesh, Field field)
     {
         var deep = mesh.Pockets.Where(p => Math.Abs(p.Value) > Settings.Tolerance).ToList();
         if (deep.Count == 0) return deep;
@@ -296,7 +297,7 @@ public sealed class FrepModeler(ModelingSettings settings, RegionCache? cache = 
         var grow = new Vector3D(1, 1, 1) * Settings.CellSize;
         foreach (var p in deep)
         {
-            var r = new Vector3D(1, 1, 1) * p.Corner;
+            var r = new Vector3D(1, 1, 1) * (p.Corner + PocketReach * Settings.CellSize);
             var b = new Box3D(p.Location - r, p.Location + r);
             var k = boxes.FindIndex(x => Overlap(x, new Box3D(b.Min - grow, b.Max + grow)));
             if (k < 0) boxes.Add(b);
@@ -306,12 +307,36 @@ public sealed class FrepModeler(ModelingSettings settings, RegionCache? cache = 
         var near = mesh.Triangles().Where(t => boxes.Any(b => Overlap(b, Around([v[t.A], v[t.B], v[t.C]])))).ToList();
         if (near.Count == 0) return deep;
         var polygons = new TriangleBvh(v, near);
-        return deep.Where(p => polygons.Distance(p.Location) > p.Corner).ToList();
+        return deep.Where(p => polygons.Distance(p.Location) > p.Corner && !Reaches(field, p, polygons, PocketReach * Settings.CellSize)).ToList();
 
         static bool Overlap(Box3D a, Box3D b) =>
             a.Min.X <= b.Max.X && b.Min.X <= a.Max.X && a.Min.Y <= b.Max.Y && b.Min.Y <= a.Max.Y && a.Min.Z <= b.Max.Z && b.Min.Z <= a.Max.Z;
         static Point3D Min(Point3D a, Point3D b) => new(Math.Min(a.X, b.X), Math.Min(a.Y, b.Y), Math.Min(a.Z, b.Z));
         static Point3D Max(Point3D a, Point3D b) => new(Math.Max(a.X, b.X), Math.Max(a.Y, b.Y), Math.Max(a.Z, b.Z));
+    }
+
+    // How far, in cells, a pocket's material or gap is followed to the mesh.
+    const double PocketReach = 2;
+
+    /// <summary>
+    /// Whether the material (or gap) of a pocket reaches the mesh within <paramref name="reach"/>: up the field's
+    /// slope from its deepest point (down for material), in steps of half the depth so the walk stays in it, to a point
+    /// whose depth exceeds its distance to the polygons. The mesh then carries what the cell lost the thin end of, as
+    /// where the crevice between two struts narrows to the curve they meet in, and the cell's loss is the mesh's error
+    /// at an edge, not a piece lost whole. A sliver body, a cap or a void a sheet seals off never gets that deep.
+    /// </summary>
+    static bool Reaches(Field field, Pocket pocket, TriangleBvh polygons, double reach)
+    {
+        var (q, sign, path) = (pocket.Location, Math.Sign(pocket.Value), 0.0);
+        for (var k = 0; k < 64 && path < reach; k++)
+        {
+            var s = field.Sample(q);
+            var depth = sign * s.Value;
+            if (polygons.Distance(q) < depth) return true;
+            q += s.Gradient.Normalized() * (sign * depth / 2);
+            path += depth / 2;
+        }
+        return false;
     }
 
     /// <summary>The surfaces that may bound the body within a pocket's cell corner of it.</summary>
