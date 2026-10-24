@@ -119,10 +119,10 @@ public sealed class Verifier(ModelingSettings settings, int budget = 100_000)
         public const string Diagnostics = "diagnostics";
     }
 
-    /// <summary>A build's bundle against its design, with the build's own diagnostics.</summary>
-    public Verification Verify(BuildResult built, BuildDocument build, PartDocument design, FrepResult regenerated,
-        IReadOnlyList<EdgeFit>? fits = null, Action<string, TimeSpan>? trace = null) =>
-        Verify(build, design, regenerated, built.Bundle, built.Diagnostics, fits, trace);
+    /// <summary>A build's bundle against its design, with the build's own diagnostics and every distinct part's fitted edges.</summary>
+    public Verification Verify(BuildResult built, BuildDocument build, PartDocument design, FrepResult regenerated, Action<string, TimeSpan>? trace = null) =>
+        Verify(build, design, regenerated, built.Bundle, built.Diagnostics,
+            [.. built.Instances.DistinctBy(i => i.Part).SelectMany(i => i.Built.Fits.Select(f => new EdgeFit(i.Part, f.Source, f.Arcs, f.Error)))], trace);
 
     /// <param name="regenerated">The design regenerated with these settings.</param>
     /// <param name="buildDiagnostics">The build's diagnostics, when the bundle came from one.</param>
