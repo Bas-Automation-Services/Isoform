@@ -6,9 +6,10 @@ using Isoform.Interactive;
 namespace Isoform.Server;
 
 /// <summary>
-/// The chat agent's tools: the MCP tool set (<see cref="AgentTools"/>, <see cref="SketchJson"/>) on one working
-/// document instead of a document argument. The read-only tools look at the working text; <c>apply_edits</c>,
-/// <c>sketch</c> and <c>sketch_edit</c> change it, and their edits are kept, in order, for the page to commit as one history entry.
+/// The chat agent's tools: the MCP tool set (<see cref="AgentTools"/>, <see cref="SketchJson"/>, <see cref="BuildTools"/>)
+/// on one working document instead of a document argument (for <c>build</c> and <c>verify</c>, the design). The read-only
+/// tools look at the working text; <c>apply_edits</c>, <c>sketch</c> and <c>sketch_edit</c> change it, and their edits are
+/// kept, in order, for the page to commit as one history entry.
 /// </summary>
 public sealed class ChatTools(string document)
 {
@@ -110,6 +111,30 @@ public sealed class ChatTools(string document)
          "Regenerates the document when it is a bundle (an assembly with its parts): instances with their solved placements, " +
          "free degrees of freedom left by the mates, diagnostics, and clearances or interferences between instances.",
          """{"properties": {"clearances": {"type": "boolean", "description": "Check clearance between instance pairs (default true)."}}}"""),
+        ("build",
+         "Makes the document (the design) of exact plates and tubes by a build document (isoform-build/0, see the format " +
+         "guide) and writes into a folder on this machine: the bundle unpacked (assembly.json, the design, build.json, a " +
+         "document per part), a STEP assembly, a DXF per plate, bom and cut-list (.csv, .md) and the verification report " +
+         "(report.json, report.md). Returns the verdict and each check's, the build's diagnostics, the folder and files, and " +
+         "a markdown summary (checks, bill of materials, cut list): tell the user the verdict, the parts and where the files " +
+         "are. The document is not changed. Takes up to a minute.",
+         """
+         {"properties": {
+           "build": {"type": "object", "description": "The build document (isoform-build/0)."},
+           "folder": {"type": "string", "description": "Where to write (default: a folder in the system's temp folder, named by the document's hash)."}},
+          "required": ["build"]}
+         """),
+        ("verify",
+         "Checks a bundle against the document (the design): parts outside it, the design not covered per face, volumes " +
+         "and masses, contacts, keep-outs, interfaces, walls, diagnostics. Returns the verdict and each check's, and the " +
+         "markdown report (with folder: report.json and report.md written there, the report's head returned).",
+         """
+         {"properties": {
+           "bundle": {"type": "string", "description": "A path to a bundle, or to an assembly.json with its parts beside it (as build writes)."},
+           "build": {"type": "object", "description": "The build document for tolerance, material, keep-outs and interfaces (default: the bundle's own)."},
+           "folder": {"type": "string", "description": "Write report.json and report.md here."}},
+          "required": ["bundle"]}
+         """),
     ];
 
     static readonly JsonSerializerOptions Web = new(JsonSerializerDefaults.Web);
@@ -130,10 +155,17 @@ public sealed class ChatTools(string document)
             "validate" => AgentTools.Validate(Text),
             "query" => AgentTools.Query(Text, (Arg("queries") ?? throw new ToolException("queries is required")).Deserialize<AgentTools.QuerySpec[]>(Web)!),
             "assembly" => AgentTools.Assembly(Text, Arg("clearances")?.GetBoolean() ?? true),
+            "build" => BuildTools.Build(Text, Json(Arg("build") ?? throw new ToolException("build is required")),
+                Arg("folder")?.GetString() ?? Path.Combine(Path.GetTempPath(), "isoform-build", Hash[..12])),
+            "verify" => BuildTools.Verify(Json(Arg("bundle") ?? throw new ToolException("bundle is required")), Text,
+                Arg("build") is { } b ? Json(b) : null, Arg("folder")?.GetString()),
             _ => throw new ToolException($"there is no tool {name}"),
         };
         return result.ToJsonString(AgentTools.Compact);
     }
+
+    // A document argument: a path, or the document itself as an object (or quoted).
+    static string Json(JsonElement e) => e.ValueKind == JsonValueKind.String ? e.GetString()! : e.GetRawText();
 
     JsonObject ApplyEdits(List<JsonNode> edits, bool regenerate)
     {

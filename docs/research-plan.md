@@ -512,6 +512,21 @@ Result: the stand 2.5–2.6 s at 1 mm and 4.2 s at 0.5 mm, mass properties 1.2�
 0.32 s (a sweep's faces end in a sweep node: futile searches) and diamond infill 0.39 → 0.30 s. Not done: the meshing itself (about 2 s of the 2.5), whose cell count is set by the chord tolerance on the
 legs and the keep-outs; exact bounds for oblique cylinders were tried and gained nothing measurable.
 
+**Build methods and the end-to-end demo (2026-10-24, `demo-plan.md`, write-up in `demo.md`).** `Isoform.Build`
+rationalises a design into exact plates and tubes by a build document (`isoform-build/0`: sections bound by face name
+in priority order, material, tolerance, keep-out bodies, interfaces), packs them as a bundle (one document per distinct
+part, instances pinned by hash), writes STEP, DXF, a cut list and a bill of materials, and verifies the bundle against
+the design in a report (JSON and markdown, the same bytes for the same inputs). `build` and `verify` are MCP tools
+and chat tools, native only. On the pump stand (`Examples.PumpStand`, now parametric in `height` and `splay`): three
+parts in nine instances, 23.79 kg; legs Ø48.3 × 3.2 at 609.7/583.6 mm, ends 15.1°; the top's eight blend runs
+fitted by 48 arcs within 0.026 mm. The report proves the contacts (8, no interference), the fits, the pump and socket
+keep-outs, every interface's surface match and the legs' −0.85 mm; it fails nothing, and leaves `unknown` what rests
+on bounds over holes and slabs that do not close at 20,000 boxes (the hose's clearance [3.2, 10], the holes' coverage,
+the plates' excess). Height 600 → 700 and splay 110 → 140 through `apply_edits`: every name still binds, top and feet
+unchanged, legs 718.5/690.3 mm at 16.3°, and `DocumentDiff` between the bundles names exactly that. Time on a loaded
+desktop at 1 mm: 40–46 s for the build tool, of which 30–34 s verification (the design not covered per face, volumes,
+minimum walls) and 4–5 s regenerating the design.
+
 **Review.** An independent read of the K4 code found 15 problems (wrong geometry without a diagnostic in several);
 all fixed, each with a regression test (`ReviewFindingTests`).
 
@@ -529,7 +544,9 @@ agent can edit and verify, and exact output, as an open-source .NET kernel.
    reads it back valid) comes right after K5, not at the end.
 2. *Breadth.* Mature kernels have decades of breadth; ours follows what the build methods of section 12 need.
 3. *Proof by demo.* One end-to-end case should show the point: a frame or bracket design model rationalised into
-   plates and tubes, exported as exact STEP, with a verification report.
+   plates and tubes, exported as exact STEP, with a verification report. *Done (2026-10-24):* the pump stand of
+   `demo.md`, run by MCP or chat, with a design edit re-run; its verdict is "unknown, nothing failed" until the
+   certified bounds over holes and slabs close.
 4. *Oracles.* New operations are checked against analytic answers; K7 adds OCCT cross-checks.
 
 ## 16. Assemblies (planned)

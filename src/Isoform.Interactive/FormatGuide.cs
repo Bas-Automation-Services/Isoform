@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Reflection;
 using System.Text;
 using System.Text.Json.Nodes;
+using Isoform.Build;
 using Isoform.Document;
 using Isoform.Modeling;
 
@@ -160,6 +161,11 @@ public static class FormatGuide
         }),
     });
 
+    /// <summary>A build document: the pump stand's top and legs (<c>Examples.PumpStandBuild</c>, shortened).</summary>
+    public static BuildDocument BuildExample { get; } = new("stand.json",
+        [new PlateSection("top", 12, Face: "cap/face"), new TubeSection("legs", 48.3, 3.2, Along: "leg/a")],
+        Material: new Material("S235", 7.85e-6), Keepouts: [new Keepout("hose", 5)], Interfaces: ["cap/face"]);
+
     /// <summary>The guide as plain text, built once.</summary>
     public static string Text => _text.Value;
 
@@ -242,6 +248,17 @@ public static class FormatGuide
         s.AppendLine(Compact(CanonicalFormat.Write(AssemblyExample)));
         s.AppendLine($"A bundle ({Bundle.FormatVersion}) carries the assembly and its documents in one file:");
         s.AppendLine($"{{\"format\":\"{Bundle.FormatVersion}\",\"units\":\"mm\",\"assembly\":{{...}},\"documents\":{{\"bracket.json\":{{part}},\"pin.json\":{{part}}}}}}");
+        s.AppendLine();
+        s.AppendLine("## Builds (build, verify; native only)");
+        s.AppendLine($"A build document ({BuildDocument.FormatVersion}) makes a design of plates and tubes, bound by face names:");
+        s.AppendLine(Compact(CanonicalFormat.Write(BuildExample)));
+        s.AppendLine("plate: on a flat face (its outer face; thickness into the material) or a plane; near [x,y,z] picks a region. tube:");
+        s.AppendLine("along a cylinder's axis or a line [[x,y,z],[x,y,z]], ends cut by earlier plates. A name covers its pattern copies.");
+        s.AppendLine("Sections are priority: each is cut by the parts before it. Keep-outs are bodies (clearance mm), interfaces faces");
+        s.AppendLine("copied exactly. Edits: sections.<id>.<field>. build writes the bundle, STEP, DXFs, cut list, BOM and report;");
+        s.AppendLine("verify checks any bundle (pass, fail, unknown, reported). A blend acts within k on both sides: run members long,");
+        s.AppendLine("blend them, then trim with plane cuts. Build codes: " + string.Join(", ",
+            BuildDiagnostic.FaceMissing, BuildDiagnostic.RegionEmpty, BuildDiagnostic.TubeMeetsTube, BuildDiagnostic.OpenEnd) + ".");
         s.AppendLine();
         s.AppendLine("## Diagnostics");
         s.AppendLine("Regeneration never fails silently: a problem is a diagnostic {code, feature?, message}. Codes: " + string.Join(", ", DiagnosticCodes()) + ".");

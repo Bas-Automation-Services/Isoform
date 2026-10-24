@@ -49,7 +49,7 @@ public class StdioTests
             await server.StandardInput.WriteLineAsync("""{"jsonrpc":"2.0","method":"notifications/initialized"}""");
 
             var tools = (await Call(2, "tools/list"))["result"]!["tools"]!.AsArray().Select(t => t!["name"]!.GetValue<string>());
-            tools.Should().BeEquivalentTo("regenerate", "apply_edits", "query", "validate", "export_step", "assembly", "sketch", "sketch_edit", "describe_format");
+            tools.Should().BeEquivalentTo("regenerate", "apply_edits", "query", "validate", "export_step", "assembly", "sketch", "sketch_edit", "build", "verify", "describe_format");
 
             var call = await Call(3, "tools/call", new JsonObject
             {

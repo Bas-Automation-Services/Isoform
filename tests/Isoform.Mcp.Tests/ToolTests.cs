@@ -408,4 +408,88 @@ public class ToolTests
         var ellipse = () => IsoformTools.SketchEdit(outlineOnSide, "outline", "project", faces: ["plate/z+", "hole/wall"]);
         ellipse.Should().Throw<McpException>().WithMessage("*projects to an ellipse*");
     }
+
+    // ---- build and verify ----
+
+    // A floor and a ceiling joined by a Ø20 post, a hole in the floor, and a box kept 5 mm clear above.
+    static readonly PartDocument Frame = new(
+    [
+        new Block("floor", BooleanOp.New, [-50, -50, -10], [100, 100, 10]) { Body = "frame" },
+        new Hole("hole", [30, 30], 10),
+        new Extrude("post", BooleanOp.Join, new SketchPlane([0, 0, -8], [1, 0, 0], [0, 0, 1]),
+            new Profile([-10, 0], [new ProfileEdge("a", [10, 0], 1), new ProfileEdge("b", [-10, 0], 1)]), 0, 116),
+        new Block("ceiling", BooleanOp.Join, [-50, -50, 100], [100, 100, 10]),
+        new Block("box", BooleanOp.New, [-50, -50, 120], [100, 100, 20]),
+    ]);
+
+    static readonly BuildDocument FrameBuild = new("frame.json",
+    [
+        new PlateSection("floor", 10, Face: "floor/z-"),
+        new PlateSection("ceiling", 10, Face: "ceiling/z+"),
+        new TubeSection("post", 20, 2, Along: "post/a"),
+    ], Material: new Material("S235", 7.85e-6), Keepouts: [new Keepout("box", 5)], Interfaces: ["floor/z-", "hole/wall"]);
+
+    static string Folder() => Directory.CreateTempSubdirectory("isoform-mcp-").FullName;
+
+    static Dictionary<string, string> Checks(JsonNode r) => r["checks"]!.AsObject().ToDictionary(c => c.Key, c => c.Value!.GetValue<string>());
+
+    [Fact]
+    public void Build_writes_the_bundle_step_dxfs_lists_and_report_and_summarises_them()
+    {
+        var folder = Folder();
+        var r = Parse(IsoformTools.Build(CanonicalFormat.Write(Frame), CanonicalFormat.Write(FrameBuild), folder, cellSize: 2, budget: 2000));
+
+        Strings(r["files"]).Should().Equal("assembly.json", "bom.csv", "bom.md", "build.json", "ceiling.dxf", "ceiling.json", "cut-list.csv", "cut-list.md",
+            "floor.dxf", "floor.json", "frame.json", "frame.step", "post.json", "report.json", "report.md");
+        Strings(r["files"]).Should().OnlyContain(f => File.Exists(Path.Combine(folder, f)));
+        r["diagnostics"]!.AsArray().Should().BeEmpty();
+        var checks = Checks(r);
+        checks.Keys.Should().Equal("outside", "uncovered", "volumes", "contacts", "keepouts", "interfaces", "walls", "fits", "diagnostics");
+        (checks["contacts"], checks["keepouts"], checks["fits"], checks["diagnostics"]).Should().Be(("pass", "pass", "pass", "pass"));
+        r["verdict"]!.GetValue<string>().Should().NotBe("fail");
+        r["summary"]!.GetValue<string>().Should().StartWith("# Verification: ").And.Contain("## Checks").And.Contain("| post | tube | 1 | Tube Ø20 × 2 S235 L 100 |")
+            .And.Contain("## Cut list").And.NotContain("## Parts");
+        File.ReadAllText(Path.Combine(folder, "frame.step")).Should().Contain("NEXT_ASSEMBLY_USAGE_OCCURRENCE");
+        JsonNode.Parse(File.ReadAllText(Path.Combine(folder, "report.json")))!["bundle"]!.GetValue<string>().Should().Be(r["bundle"]!.GetValue<string>());
+    }
+
+    [Fact]
+    public void Verify_checks_a_built_folder_or_a_bundle_against_its_design()
+    {
+        var folder = Folder();
+        var built = Parse(IsoformTools.Build(CanonicalFormat.Write(Frame), CanonicalFormat.Write(FrameBuild), folder, cellSize: 2, budget: 2000));
+
+        // The folder's assembly with its parts, design and build document beside it: the same bundle, fits not known.
+        var r = Parse(IsoformTools.Verify(Path.Combine(folder, "assembly.json"), cellSize: 2, budget: 2000));
+        r["bundle"]!.GetValue<string>().Should().Be(built["bundle"]!.GetValue<string>());
+        (Checks(r)["fits"], Checks(r)["keepouts"]).Should().Be(("not checked", "pass"));
+        r["report"]!.GetValue<string>().Should().Contain("## Keep-outs").And.Contain("## Not checked");
+
+        // A bundle without a build document: the design given, no keep-outs or interfaces; the report written.
+        var assembly = CanonicalFormat.ReadAssembly(File.ReadAllText(Path.Combine(folder, "assembly.json")));
+        var parts = assembly.Components.Select(c => c.Part).Distinct().ToDictionary(p => p, p => File.ReadAllText(Path.Combine(folder, p)));
+        var bundle = CanonicalFormat.Write(new Bundle(assembly, parts));
+        var reports = Folder();
+        var bare = Parse(IsoformTools.Verify(bundle, CanonicalFormat.Write(Frame), outputFolder: reports, cellSize: 2, budget: 2000));
+        Strings(bare["files"]).Should().Equal("report.json", "report.md");
+        bare["summary"]!.GetValue<string>().Should().Contain("## Checks").And.NotContain("## Parts");
+        JsonNode.Parse(File.ReadAllText(Path.Combine(reports, "report.json")))!["keepouts"]!.AsArray().Should().BeEmpty();
+
+        var noDesign = () => IsoformTools.Verify(bundle);
+        noDesign.Should().Throw<McpException>().WithMessage("*give the design*");
+        var assemblyText = () => IsoformTools.Verify(CanonicalFormat.Write(assembly), CanonicalFormat.Write(Frame));
+        assemblyText.Should().Throw<McpException>().WithMessage("*no folder*");
+    }
+
+    [Fact]
+    public void A_build_names_what_it_cannot_bind_and_refuses_what_is_not_a_build_document()
+    {
+        var missing = FrameBuild with { Sections = [.. FrameBuild.Sections, new PlateSection("shelf", 5, Face: "shelf/z+")] };
+
+        var r = Parse(IsoformTools.Build(CanonicalFormat.Write(Frame), CanonicalFormat.Write(missing), Folder(), cellSize: 2, budget: 2000));
+
+        r["diagnostics"]!.AsArray().Select(d => (d!["code"]!.GetValue<string>(), d["feature"]!.GetValue<string>())).Should().Equal(("build-face-missing", "shelf"));
+        var notBuild = () => IsoformTools.Build(CanonicalFormat.Write(Frame), CanonicalFormat.Write(Frame), Folder());
+        notBuild.Should().Throw<McpException>().WithMessage("*Unsupported format*");
+    }
 }

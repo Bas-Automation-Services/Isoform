@@ -246,7 +246,7 @@ public static class AgentTools
 
     static bool LooksLikeText(string document) => document.TrimStart().StartsWith('{');
 
-    static PartDocument Part(string document)
+    internal static PartDocument Part(string document)
     {
         var text = Text(document);
         var format = CanonicalFormat.FormatOf(text);

@@ -186,6 +186,41 @@ public static class IsoformTools
         [Description(ChordHelp)] double chordTolerance = 0.01) =>
         Run(() => AgentTools.Assembly(document, clearances, within, cellSize, chordTolerance));
 
+    const string BuildCellHelp = "Cell size in mm for the design, the plate sections and the checks (default 1).";
+    const string BudgetHelp = "Boxes each certified search may split before it stops with an honest interval (default 20000): more closes more bounds, and takes longer.";
+
+    [McpServerTool(Name = "build", Idempotent = true)]
+    [Description("Rationalises a design into exact plates and tubes by a build document (isoform-build/0, see describe_format) " +
+                 "and writes everything into outputFolder: the bundle unpacked (assembly.json, the design, build.json and one " +
+                 "document per distinct part), <design>.step (one product per distinct part, an occurrence per instance), a DXF " +
+                 "per distinct plate, bom and cut-list (.csv, .md) and the verification report (report.json, report.md). " +
+                 "Returns the verdict and each check's (pass, fail, unknown: a certified bound that does not close; reported, " +
+                 "not checked), the build's diagnostics, the files and a markdown summary: checks, bill of materials, cut list. " +
+                 "Takes seconds to a minute: the design is regenerated and every part searched.")]
+    public static string Build(
+        [Description("The design: " + DocumentHelp)] string design,
+        [Description("The build document (isoform-build/0): its JSON text or a path to a .json file.")] string build,
+        [Description("The folder to write into; created if need be, files of the same name replaced.")] string outputFolder,
+        [Description(BuildCellHelp)] double cellSize = BuildTools.DefaultCellSize,
+        [Description(BudgetHelp)] int budget = BuildTools.DefaultBudget) =>
+        Run(() => BuildTools.Build(design, build, outputFolder, cellSize, budget));
+
+    [McpServerTool(Name = "verify", Idempotent = true)]
+    [Description("Checks any assembly of parts (a bundle, or an assembly file with its parts beside it, such as build writes) " +
+                 "against the design it stands for: parts outside the design, design not covered per face, volumes and " +
+                 "masses, contacts and interference, keep-outs, interfaces, minimum walls and diagnostics, every number with " +
+                 "the faces it comes from. Returns the verdict and each check's, and the markdown report (with outputFolder: " +
+                 "report.json and report.md written there, and the report's head returned). Fitted edges are only checked by build.")]
+    public static string Verify(
+        [Description("A bundle (isoform-bundle/0) as JSON text or a path, or a path to an assembly document whose parts are beside it.")] string bundle,
+        [Description("The design: " + DocumentHelp + " Default: the design the build document names, from the bundle or its folder.")] string? design = null,
+        [Description("The build document (tolerance, material, keep-outs, interfaces): JSON text or a path. Default: the bundle's own, " +
+                     "or build.json beside the assembly; without one, the default tolerance and no keep-outs or interfaces.")] string? build = null,
+        [Description("Write report.json and report.md here.")] string? outputFolder = null,
+        [Description(BuildCellHelp)] double cellSize = BuildTools.DefaultCellSize,
+        [Description(BudgetHelp)] int budget = BuildTools.DefaultBudget) =>
+        Run(() => BuildTools.Verify(bundle, design, build, outputFolder, cellSize, budget));
+
     [McpServerTool(Name = "describe_format", ReadOnly = true, Idempotent = true)]
     [Description("The document format in brief: every feature type with a JSON example and the face names it makes, face naming " +
                  "rules, bodies, edits, assemblies and diagnostic codes. Read this before writing a document.")]

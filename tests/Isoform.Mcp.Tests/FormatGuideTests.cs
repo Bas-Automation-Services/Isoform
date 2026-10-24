@@ -78,7 +78,12 @@ public class FormatGuideTests
         foreach (var e in FormatGuide.Examples) text.Should().Contain(FormatGuide.Feature(e.Feature).ToJsonString(IsoformTools.Compact));
         foreach (var code in FormatGuide.DiagnosticCodes()) text.Should().Contain(code);
         foreach (var edit in FormatGuide.EditExamples.Concat(FormatGuide.AssemblyEditExamples)) text.Should().Contain(edit);
-        text.Should().Contain(PartDocument.FormatVersion).And.Contain(AssemblyDocument.FormatVersion).And.Contain(Bundle.FormatVersion);
+        text.Should().Contain(PartDocument.FormatVersion).And.Contain(AssemblyDocument.FormatVersion).And.Contain(Bundle.FormatVersion)
+            .And.Contain(BuildDocument.FormatVersion).And.Contain(Isoform.Build.BuildDiagnostic.TubeMeetsTube);
+        // The build example is canonical and reads back to itself.
+        var build = CanonicalFormat.Write(FormatGuide.BuildExample);
+        text.Should().Contain(JsonNode.Parse(build)!.ToJsonString(IsoformTools.Compact));
+        CanonicalFormat.Write(CanonicalFormat.ReadBuild(build)).Should().Be(build);
         // Short enough to read once per session (about 4k tokens; sketches and their constraints took it past 12k).
         text.Length.Should().BeLessThan(15_000);
     }

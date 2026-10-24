@@ -102,7 +102,8 @@ A new document, `isoform-build/0`, canonical and hashed like the others:
    {"id": "top",  "plate": {"face": "cap/face"}, "thickness": 12},
    {"id": "feet", "plate": {"face": "foot/z+"},  "thickness": 12},
    {"id": "legs", "tube":  {"along": "leg/a"},   "outside": 48.3, "wall": 3.2}],
- "keepouts": [{"body": "pump", "clearance": 0}, {"body": "hose", "clearance": 5}, {"body": "sockets", "clearance": 0}],
+ "keepouts": [{"body": "pump", "clearance": 0}, {"body": "hose", "clearance": 5}, {"body": "socket-1", "clearance": 0},
+              {"body": "socket-2", "clearance": 0}, {"body": "socket-3", "clearance": 0}, {"body": "socket-4", "clearance": 0}],
  "interfaces": ["cap/face", "mount/wall", "bore/wall", "foot/z-", "anchor/wall"]}
 ```
 
@@ -268,7 +269,7 @@ Each task is about half a day and owns its files.
   diagnostics (4 tasks).
 - **V3** Report as JSON and markdown (2 tasks).
 
-**M: tools and the demo** (`Isoform.Mcp`, `Isoform.Server`, `Isoform.Interactive`, tests)
+**M: tools and the demo** (`Isoform.Mcp`, `Isoform.Server`, `Isoform.Interactive`, tests; done 2026-10-24, see `demo.md`)
 - **M1** `build` and `verify` in MCP and chat, format guide (2 tasks).
 - **M2** The demo as a test: BOM, cut list, report verdicts, the same bundle and report on a repeat; then the design
   edited (height 600 → 700, splay changed) and run again: every binding resolves, the diff names what changed (2 tasks).

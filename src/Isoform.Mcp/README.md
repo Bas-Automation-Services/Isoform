@@ -17,8 +17,11 @@ a path to a `.json` file. Outputs are summaries (names, counts, measures), never
 | `query` | `document`, `queries[]` of `{kind: ray\|distance\|clearance\|wall, origin?, direction?, point?, body?, a?, b?}` | one answer per query, with face names; a query the kernel cannot settle answers `error` |
 | `export_step` | part, assembly or bundle; `outputPath?`, `name?` | exact STEP AP214 to a file or as text: analytic faces (planes, cylinders, cones, spheres, tori), fillets and chamfers (loops too), shell cavities as voids, one solid per body; an assembly as one product per distinct part placed by its instances. `unsupported` names what has no closed form (smooth blends, lattices) |
 | `assembly` | bundle text or path, or an assembly path (parts next to it); `clearances?`, `within?` | `instances` with solved placements, `mates`, `freeDegrees`, `diagnostics`, `clearances` |
+| `build` | `design`, `build` (an `isoform-build/0` document), `outputFolder`, `cellSize?` (1), `budget?` (20000) | writes the bundle unpacked (`assembly.json`, design, `build.json`, a document per distinct part), `<design>.step`, a DXF per plate, `bom` and `cut-list` (`.csv`, `.md`), `report.json` and `report.md`; returns `verdict`, `checks` (each `pass`, `fail`, `unknown`, `reported`, `not checked`), the bundle hash, the build's `diagnostics`, `files` and a markdown `summary` (checks, bill of materials, cut list) |
+| `verify` | `bundle` (bundle, or an assembly path with its parts beside it), `design?`, `build?`, `outputFolder?`, `cellSize?`, `budget?` | `verdict`, `checks`, the bundle hash, and the markdown `report` (with `outputFolder`: `report.json` and `report.md` written, the report's head as `summary`). The design and build document default to the ones the bundle carries |
 
-`cellSize` (default 0.5 mm) is the finest meshing cell: features under 2 × cellSize come back as `below-resolution`.
+`cellSize` (default 0.5 mm; 1 mm for `build` and `verify`) is the finest meshing cell: features under 2 × cellSize come
+back as `below-resolution`. `build` and `verify` take seconds to a minute on a real design: see `docs/demo.md`.
 
 ## Example
 
