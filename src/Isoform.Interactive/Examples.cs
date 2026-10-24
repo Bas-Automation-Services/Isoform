@@ -36,7 +36,8 @@ public static class Examples
     /// <summary>
     /// The design model of a welded pump stand (docs/demo-plan.md §1): a blended top, four anchored feet and four splayed
     /// legs that run long, blend into feet and top and are trimmed by plane cuts; the keep-outs are bodies of their own.
-    /// Native only: too large for the playground's single thread.
+    /// Parameters: <c>height</c>, the top face above the floor, and <c>splay</c>, how far a leg's top end sits in from
+    /// its foot along x and along y (both mm). Native only: too large for the playground's single thread.
     /// </summary>
     public static PartDocument PumpStand { get; } = new(
     [
@@ -48,8 +49,7 @@ public static class Examples
         new Block("foot", BooleanOp.Join, [150, 150, 0], [160, 160, 12]),
         new Hole("anchor", [270, 270], 18),
         new Pattern("feet", ["foot", "anchor"], Four),
-        new Extrude("leg", BooleanOp.Join, new SketchPlane(LegFoot, [Math.Sqrt(0.5), -Math.Sqrt(0.5), 0], [.. LegAxis.Select(x => x / LegLength)]),
-            Circle(0, 0, 25), -60, LegLength + 60, Blend: 10),
+        new Extrude("leg", BooleanOp.Join, new SketchPlane(LegFoot, [Math.Sqrt(0.5), -Math.Sqrt(0.5), 0], LegAxis), Circle(0, 0, 25), -60, LegLength + 60, Blend: 10),
         new Pattern("legs", ["leg"], Four),
         new PlaneCut("floor", [0, 0, 0], [0, 0, -1]),
         new PlaneCut("cap", [0, 0, 600], Up),
@@ -62,7 +62,32 @@ public static class Examples
         new Extrude("hose", BooleanOp.New, At(0), Circle(0, 0, 30), 0, 900),
         .. new[] { (270, 270), (-270, 270), (-270, -270), (270, -270) }.Select((at, k) =>
             new Extrude($"socket-{k + 1}", BooleanOp.New, At(12), Circle(at.Item1, at.Item2, 20), 0, 60)),
-    ]);
+    ])
+    {
+        Parameters = new Dictionary<string, string> { ["height"] = "600", ["splay"] = "110" },
+        Expressions = new Dictionary<string, string>
+        {
+            ["top.plane.origin.2"] = "height - 30", ["lobe.plane.origin.2"] = "height - 30",
+            ["under.point.2"] = "height - 12", ["level.point.2"] = "height",
+            ["leg.plane.normal.0"] = "-splay", ["leg.plane.normal.1"] = "-splay", ["leg.plane.normal.2"] = "height - 24",
+            ["leg.end"] = "sqrt(2 * splay^2 + (height - 24)^2) + 60",
+            ["cap.point.2"] = "height", ["pump.plane.origin.2"] = "height", ["hose.end"] = "height + 300",
+        },
+    };
+
+    /// <summary>
+    /// How the pump stand is built (docs/demo-plan.md §2.1): the top and the feet as 12 mm plates on their faces, the legs
+    /// as Ø48.3 × 3.2 tubes along their cylinders, in S235; the pump, the hose (5 mm clear) and each spanner socket kept
+    /// out of; the pump seat, its bolt holes, the bore, the feet's undersides and the anchor holes as interfaces.
+    /// </summary>
+    public static BuildDocument PumpStandBuild { get; } = new("stand.json",
+    [
+        new PlateSection("top", 12, Face: "cap/face"),
+        new PlateSection("feet", 12, Face: "foot/z+"),
+        new TubeSection("legs", 48.3, 3.2, Along: "leg/a"),
+    ], Material: new Material("S235", 7.85e-6),
+        Keepouts: [new Keepout("pump"), new Keepout("hose", 5), .. Enumerable.Range(1, 4).Select(k => new Keepout($"socket-{k}"))],
+        Interfaces: ["cap/face", "mount/wall", "bore/wall", "foot/z-", "anchor/wall"]);
 
     /// <summary>Assemblies with their documents, as one bundle each.</summary>
     public static IReadOnlyList<(string Name, Bundle Bundle)> Bundles { get; } =

@@ -135,6 +135,27 @@ public class ChatTests(WebApplicationFactory<Program> factory) : IClassFixture<W
     }
 
     [Fact]
+    public void Build_and_verify_run_on_the_document_and_leave_it_as_it_is()
+    {
+        var tools = new ChatTools(CanonicalFormat.Write(new PartDocument([FormatGuide.Plate, new Hole("hole", [30, 25], 10)])));
+        var folder = Directory.CreateTempSubdirectory("isoform-chat-").FullName;
+        var build = """{"format": "isoform-build/0", "units": "mm", "design": "plate.json", "sections": [{"id": "slab", "plate": {"face": "plate/z-"}, "thickness": 10}], "interfaces": ["hole/wall"]}""";
+
+        var built = JsonNode.Parse(tools.Run("build", Input($$"""{"build": {{build}}, "folder": {{JsonSerializer.Serialize(folder)}}}""")))!;
+        var verified = JsonNode.Parse(tools.Run("verify", Input($$"""{"bundle": {{JsonSerializer.Serialize(Path.Combine(folder, "assembly.json"))}}}""")))!;
+
+        built["files"]!.AsArray().Select(n => (string)n!).Should().Contain(["assembly.json", "plate.json", "slab.json", "slab.dxf", "plate.step", "report.md"]);
+        built["diagnostics"]!.AsArray().Should().BeEmpty();
+        ((string)built["checks"]!["contacts"]!, (string)built["checks"]!["fits"]!).Should().Be(("pass", "pass"));
+        ((string)verified["bundle"]!).Should().Be((string)built["bundle"]!);
+        ((string)verified["report"]!).Should().StartWith("# Verification: ");
+        tools.Edits.Should().BeEmpty();
+        ChatTools.Definitions.Select(d => d.Name).Should().Contain(["build", "verify"]);
+        var noBuild = () => tools.Run("build", Input("{}"));
+        noBuild.Should().Throw<ToolException>().WithMessage("build is required");
+    }
+
+    [Fact]
     public async Task Without_a_key_the_chat_says_so()
     {
         var server = factory.WithWebHostBuilder(b => b.ConfigureTestServices(s => s.RemoveAll<IChatModel>()));

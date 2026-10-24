@@ -7,7 +7,7 @@ using Isoform.Meshing;
 using Isoform.Modeling;
 using Isoform.Occt;
 
-// Measurements for K2/K3. Run with: dotnet run -c Release --project src/Isoform.Bench [-- display | stand [cell…] | regen]
+// Measurements for K2/K3. Run with: dotnet run -c Release --project src/Isoform.Bench [-- display | stand [cell…] | demo [folder] | regen]
 var settings = new ModelingSettings();
 Console.WriteLine($"Isoform bench — {Environment.ProcessorCount} logical cores, .NET {Environment.Version}");
 
@@ -63,6 +63,16 @@ if (args is ["stand", ..])
             $"{r.Diagnostics.Count} diagnostics); mass properties {mass:N0} ms (volume {m!.Volume:N0} mm³ with the keep-outs)");
         foreach (var d in r.Diagnostics) Console.WriteLine($"    {d.Code} {d.FeatureId}: {d.Message}");
     }
+    return;
+}
+
+// "demo [folder]": the end-to-end demo (docs/demo.md), the pump stand built and verified as the build tool does it.
+if (args is ["demo", ..])
+{
+    var folder = args.Length > 1 ? args[1] : Path.Combine(Path.GetTempPath(), "isoform-stand");
+    var built = BuildTools.Build(CanonicalFormat.Write(Examples.PumpStand), CanonicalFormat.Write(Examples.PumpStandBuild), folder);
+    Console.WriteLine((string)built["summary"]!);
+    Console.WriteLine($"Written to {built["folder"]}: {string.Join(", ", built["files"]!.AsArray())}; ms {built["ms"]!.ToJsonString()}");
     return;
 }
 

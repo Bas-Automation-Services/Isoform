@@ -17,6 +17,7 @@ vertices while producing exact output, and does it do better at this than a B-re
 | `Isoform.Geometry` | Analytic surfaces (plane, cylinder, sphere, cone, torus), CSG fields with ownership, swept profiles, exact rolling-ball fillets, smooth blends |
 | `Isoform.Meshing` | Adaptive, feature-preserving dual contouring with a resolution guarantee |
 | `Isoform.Modeling` | Regeneration, topology, references, diagnostics: the backend-neutral API |
+| `Isoform.Build` | Build methods: a design made of exact plates and tubes, with STEP, DXF, cut list, bill of materials and a certified verification report ([the demo](docs/demo.md)) |
 | `Isoform.Occt` | OCCT B-rep baseline behind the same API |
 | `Isoform.Playground` | The kernel in the browser (WebAssembly): document editor and 3D view |
 | `Isoform.Server` | The playground with the kernel running natively: a localhost server, the page's worker protocol over WebSocket, and the chat panel's Claude agent |

@@ -3,6 +3,7 @@ using BasAutomation.Geometry;
 using Isoform.Build;
 using Isoform.Document;
 using Isoform.Geometry;
+using Isoform.Interactive;
 using Isoform.Modeling;
 using Xunit.Abstractions;
 
@@ -15,48 +16,13 @@ namespace Isoform.Tests.Build;
 /// </summary>
 public class StandBuildTests(StandBuildTests.Built stand, ITestOutputHelper output) : IClassFixture<StandBuildTests.Built>
 {
-    static readonly double[] Up = [0, 0, 1];
-    static CircularMotion Four => new([0, 0, 0], Up, 4);
-    static SketchPlane At(double z) => new([0, 0, z], [1, 0, 0], Up);
-    static Profile Circle(double cx, double cy, double r) => new([cx - r, cy], [new ProfileEdge("a", [cx + r, cy], 1), new ProfileEdge("b", [cx - r, cy], 1)]);
-
     // A leg's axis, from the foot's top to the top's underside: 15.1° off vertical.
-    static readonly double[] LegFoot = [200, 200, 12], LegAxis = [-110, -110, 576];
     static readonly double LegLength = Math.Sqrt(110 * 110 * 2 + 576 * 576);
 
-    /// <summary>The stand's design model, as the D1 example has it: blended top, anchored feet, splayed legs trimmed by plane cuts, keep-outs.</summary>
-    public static PartDocument Design { get; } = new(
-    [
-        new Extrude("top", BooleanOp.New, At(570), Circle(0, 0, 130), 0, 50) { Body = "stand" },
-        new Extrude("lobe", BooleanOp.Join, At(570), Circle(90, 90, 45), 0, 50, Blend: 20),
-        new Pattern("lobes", ["lobe"], Four),
-        new PlaneCut("under", [0, 0, 588], [0, 0, -1]),
-        new PlaneCut("level", [0, 0, 600], Up),
-        new Block("foot", BooleanOp.Join, [150, 150, 0], [160, 160, 12]),
-        new Hole("anchor", [270, 270], 18),
-        new Pattern("feet", ["foot", "anchor"], Four),
-        new Extrude("leg", BooleanOp.Join, new SketchPlane(LegFoot, [Math.Sqrt(0.5), -Math.Sqrt(0.5), 0], [.. LegAxis.Select(x => x / LegLength)]),
-            Circle(0, 0, 25), -60, LegLength + 60, Blend: 10),
-        new Pattern("legs", ["leg"], Four),
-        new PlaneCut("floor", [0, 0, 0], [0, 0, -1]),
-        new PlaneCut("cap", [0, 0, 600], Up),
-        new Hole("bore", [0, 0], 80),
-        new Hole("mount", [100, 0], 11),
-        new Pattern("mounts", ["mount"], Four),
-        new Extrude("pump", BooleanOp.New, At(600), Circle(0, 0, 150), 0, 300),
-        new Extrude("hose", BooleanOp.New, At(0), Circle(0, 0, 30), 0, 900),
-        .. new[] { (270, 270), (-270, 270), (-270, -270), (270, -270) }.Select((at, k) =>
-            new Extrude($"socket-{k + 1}", BooleanOp.New, At(12), Circle(at.Item1, at.Item2, 20), 0, 60)),
-    ]);
+    /// <summary>The stand's design model, the D1 example: blended top, anchored feet, splayed legs trimmed by plane cuts, keep-outs.</summary>
+    public static PartDocument Design => Examples.PumpStand;
 
-    public static BuildDocument Build { get; } = new("stand.json",
-    [
-        new PlateSection("top", 12, Face: "cap/face"),
-        new PlateSection("feet", 12, Face: "foot/z+"),
-        new TubeSection("legs", 48.3, 3.2, Along: "leg/a"),
-    ], Material: new Material("S235", 7.85e-6),
-        Keepouts: [new Keepout("pump"), new Keepout("hose", 5), .. Enumerable.Range(1, 4).Select(k => new Keepout($"socket-{k}"))],
-        Interfaces: ["cap/face", "mount/wall", "bore/wall", "foot/z-", "anchor/wall"]);
+    public static BuildDocument Build => Examples.PumpStandBuild;
 
     /// <summary>The design regenerated at 1 mm and built once for all the tests.</summary>
     public sealed class Built
