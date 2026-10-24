@@ -181,12 +181,8 @@ public sealed partial class Tape
         return ((aHi - Math.Min(r.C * bLo, r.C * bHi)) / denom, (bHi - Math.Min(r.C * aLo, r.C * aHi)) / denom);
     }
 
-    static Interval BlendBounds(BlendData bl, Interval ia, Interval ib)
-    {
-        var plain = bl.Union ? Interval.Min(ia, ib) : Interval.Max(ia, ib);
-        if (Apart(bl, ia, ib)) return plain;
-        return bl.Union ? new(plain.Lo - bl.K / 4, plain.Hi) : new(plain.Lo, plain.Hi + bl.K / 4);
-    }
+    // As BlendField.Bounds: the smooth min and max rise with both arguments.
+    static Interval BlendBounds(BlendData bl, Interval ia, Interval ib) => new(BlendValue(bl, ia.Lo, ib.Lo), BlendValue(bl, ia.Hi, ib.Hi));
 
     static bool Apart(BlendData bl, Interval a, Interval b) => a.Lo - b.Hi >= bl.K || b.Lo - a.Hi >= bl.K;
 

@@ -514,9 +514,10 @@ public sealed class BlendField(Field a, Field b, double k, Surface blend, bool u
         return new(Blended(sa.Value, sb.Value, h), Blend.Id, sa.Gradient * wa + sb.Gradient * (1 - wa));
     }
 
-    public override double Value(Point3D p)
+    public override double Value(Point3D p) => Smooth(A.Value(p), B.Value(p));
+
+    double Smooth(double a, double b)
     {
-        var (a, b) = (A.Value(p), B.Value(p));
         var h = Math.Max(K - Math.Abs(a - b), 0) / K;
         if (h == 0) return Union ? (b < a ? b : a) : (b > a ? b : a);
         return Blended(a, b, h);
@@ -527,12 +528,14 @@ public sealed class BlendField(Field a, Field b, double k, Surface blend, bool u
     public override FieldSample? SampleSurface(int owner, Point3D p) =>
         owner == Blend.Id ? Sample(p) : A.SampleSurface(owner, p) ?? B.SampleSurface(owner, p);
 
+    /// <summary>
+    /// The smooth min and max rise with both arguments (their partial derivatives are the weights, in [0, 1]), so
+    /// their values at the ends of the two intervals bound them.
+    /// </summary>
     public override Interval Bounds(Box3D box)
     {
         var (ia, ib) = (A.Bounds(box), B.Bounds(box));
-        var plain = Union ? Interval.Min(ia, ib) : Interval.Max(ia, ib);
-        if (Apart(ia, ib)) return plain;
-        return Union ? new(plain.Lo - K / 4, plain.Hi) : new(plain.Lo, plain.Hi + K / 4);
+        return new(Smooth(ia.Lo, ib.Lo), Smooth(ia.Hi, ib.Hi));
     }
 
     // Where the two are certainly k apart there is no blend, only the plain min or max.

@@ -25,6 +25,45 @@ public static class Examples
         new ProfileEdge("collar", [5, 27]), new ProfileEdge("cap", [0, 27]), new ProfileEdge("axis", [0, 0]),
     ])), new Chamfer("lead", ["pin/tip", "pin/shank"], 1)]);
 
+    static readonly double[] Up = [0, 0, 1];
+    static CircularMotion Four => new([0, 0, 0], Up, 4);
+    static SketchPlane At(double z) => new([0, 0, z], [1, 0, 0], Up);
+
+    // A leg's axis, from the foot's top to the top's underside: 15.1° off vertical.
+    static readonly double[] LegFoot = [200, 200, 12], LegAxis = [-110, -110, 576];
+    static readonly double LegLength = Math.Sqrt(110 * 110 * 2 + 576 * 576);
+
+    /// <summary>
+    /// The design model of a welded pump stand (docs/demo-plan.md §1): a blended top, four anchored feet and four splayed
+    /// legs that run long, blend into feet and top and are trimmed by plane cuts; the keep-outs are bodies of their own.
+    /// Native only: too large for the playground's single thread.
+    /// </summary>
+    public static PartDocument PumpStand { get; } = new(
+    [
+        new Extrude("top", BooleanOp.New, At(570), Circle(0, 0, 130), 0, 50) { Body = "stand" },
+        new Extrude("lobe", BooleanOp.Join, At(570), Circle(90, 90, 45), 0, 50, Blend: 20),
+        new Pattern("lobes", ["lobe"], Four),
+        new PlaneCut("under", [0, 0, 588], [0, 0, -1]),
+        new PlaneCut("level", [0, 0, 600], Up),
+        new Block("foot", BooleanOp.Join, [150, 150, 0], [160, 160, 12]),
+        new Hole("anchor", [270, 270], 18),
+        new Pattern("feet", ["foot", "anchor"], Four),
+        new Extrude("leg", BooleanOp.Join, new SketchPlane(LegFoot, [Math.Sqrt(0.5), -Math.Sqrt(0.5), 0], [.. LegAxis.Select(x => x / LegLength)]),
+            Circle(0, 0, 25), -60, LegLength + 60, Blend: 10),
+        new Pattern("legs", ["leg"], Four),
+        new PlaneCut("floor", [0, 0, 0], [0, 0, -1]),
+        new PlaneCut("cap", [0, 0, 600], Up),
+        new Hole("bore", [0, 0], 80),
+        new Hole("mount", [100, 0], 11),
+        new Pattern("mounts", ["mount"], Four),
+        // Keep-outs: the pump on the top face, the hose through the bore, spanner access above each anchor (a body each:
+        // one body in four pieces would be reported as falling apart).
+        new Extrude("pump", BooleanOp.New, At(600), Circle(0, 0, 150), 0, 300),
+        new Extrude("hose", BooleanOp.New, At(0), Circle(0, 0, 30), 0, 900),
+        .. new[] { (270, 270), (-270, 270), (-270, -270), (270, -270) }.Select((at, k) =>
+            new Extrude($"socket-{k + 1}", BooleanOp.New, At(12), Circle(at.Item1, at.Item2, 20), 0, 60)),
+    ]);
+
     /// <summary>Assemblies with their documents, as one bundle each.</summary>
     public static IReadOnlyList<(string Name, Bundle Bundle)> Bundles { get; } =
     [
@@ -115,7 +154,8 @@ public static class Examples
             Plate,
             new Extrude("knob", BooleanOp.Join, Top, Circle(30, 25, 10), 0, 15, Blend: 4),
             new Block("groove", BooleanOp.Cut, [60, -1, 6], [12, 52, 10], Blend: 3),
-            new Shell("shell", 1.5),
+            // At least half the widest blend: a thinner wall leaves a cusp in the cavity's corner along the blend.
+            new Shell("shell", 2),
         ])),
         ("Two bodies: a base and a clamp that cuts its own seat", new(
         [

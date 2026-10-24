@@ -8,7 +8,7 @@ demo needs.
 
 Decisions (2026-10-24): the pump stand; fitted tangent arcs; `Isoform.Build`; MCP and chat first, the playground
 after; certified deviations in the first cut. And a speed task with D1: 41 s at 1 mm is too slow for a demo, so the
-stand is profiled and made fast before the build work leans on it.
+stand is profiled and made fast before the build work leans on it (done: 2.5 s, see Findings).
 
 ## Findings that shape the plan
 
@@ -33,9 +33,13 @@ stand is profiled and made fast before the build work leans on it.
   k/4. A recipe that works: members run long, join with their blend, and are trimmed by plane cuts afterwards (the
   stand of §1 regenerates with 69 faces and no diagnostics). The demo design follows that recipe; the format guide
   should say it.
-- **Regeneration time.** At 1 mm cells (desktop, keep-out bodies included): 41 s for the design of §1, 6.6 s for a
-  variant whose top is not trimmed (16 s at 0.5 mm). `MassProperties.Of` on the variant's mesh took 8 s at 1 mm and
-  23 s at 0.5 mm. The design runs natively (MCP, server), at 1 mm; the playground's single WASM thread is not the place for it.
+- **Regeneration time.** At 1 mm cells (desktop, keep-out bodies included): the probe measured 41 s for the design
+  of §1 and 6.6 s for a variant whose top is not trimmed; `Examples.PumpStand` as committed (D1) took 6.6–7.2 s
+  before the speed task, untrimmed or not, and 11–12 s at 0.5 mm. After it (`research-plan.md` §14): **2.5–2.6 s at
+  1 mm, 4.2 s at 0.5 mm**; `MassProperties.Of` on the whole mesh (1.1 M polygons) 32 s → 1.2–1.4 s at 1 mm, 58 s →
+  2 s at 0.5 mm. What was slow: the lost-piece search running futile searches through blends (half the 1 mm time),
+  and blend bounds k/4 wide, which kept every cell near a blend uncertified. The design runs natively (MCP, server);
+  the playground's single WASM thread is not the place for it.
 - **An oblique tube is exact.** Probe: an extruded annulus Ø48.3 × 3.2 cut by two parallel planes at 15.1° regenerates
   in 1.3 s at 0.5 mm with 4 faces; `ExactBrep` gives line and ellipse edges, STEP carries 4 ellipses, volume equals the
   analytic value.
@@ -63,12 +67,15 @@ in mm, z up, the stand's axis at x = y = 0.
 | Top | An organic outline: disc Ø260 and four lobes Ø90 at (±90, ±90), joined with blend k = 20; extruded taller than needed and trimmed by plane cuts `under` (z = 588) and `level` (z = 600). Bore Ø80 on the axis (hose pass-through), 4 × Ø11 (M10, pump feet) at radius 100 on the axes |
 | Feet | 160 × 160 × 12 at x, y 150–310, circular pattern of 4; anchor hole Ø18 (M16) at (±270, ±270) |
 | Legs | Ø50, axis from (±200, ±200, 12) to (±90, ±90, 588), 15.1° from vertical; run 60 mm past both ends, joined with blend k = 10 into feet and top, pattern of 4; then plane cuts `floor` (z = 0) and `cap` (z = 600) |
-| Keep-outs (own bodies) | `pump` Ø300 × 300 on the top face (z 600–900); `hose` Ø60 on the axis, z 0–900; `sockets` Ø40 × 60 above each anchor (spanner access) |
+| Keep-outs (own bodies) | `pump` Ø300 × 300 on the top face (z 600–900); `hose` Ø60 on the axis, z 0–900; `socket-1`…`socket-4` Ø40 × 60 above each anchor (spanner access; a body each, as one body in four pieces is reported as falling apart) |
 | Interfaces | `cap/face` (pump seat), `mount/wall` and copies, `bore/wall`, `foot/z-` and copies (floor), `anchor/wall` and copies |
 | Load | The pump, 40 kg on the top face. Recorded and reported with mass and centroid; nothing is sized by calculation |
 
 Probed (with the keep-outs): the design regenerates with no diagnostics, the top's underside is one flat face
-(`under/face`), each lobe has its two blend faces and each leg its blend at the top and at its foot.
+(`under/face`), each lobe has its two blend faces and each leg its blend at the top and at its foot. D1 made it
+`Examples.PumpStand` (native only, not in the playground's list), checked by `PumpStandTests` at 1 mm: no diagnostics,
+63 faces on the stand (81 with the keep-outs), every interface face once per copy, the pump and the sockets touching
+without interference, the hose 10 mm clear of the bore.
 
 Why this part: the design model is what a designer means (a stand cast in one piece, legs flowing into the plates)
 and what an implicit kernel builds without failing: four oblique blends into a top whose outline is itself blended,
@@ -296,7 +303,7 @@ certified `Distance` at the worst point) and be certified after: 25 half-days.
   it from the blend's own field, or the fitted run ends off its neighbour's tangent.
 - **Thin slab meshing:** loops closer than a cell (a bore near an edge) must come through as reports, as they do in 3D;
   S1 tests that.
-- **Time:** 7–41 s for the design at 1 mm natively; meshes of A∩D and the certified volume ranges add to it. V2
+- **Time:** 2.5 s for the design at 1 mm natively (4.2 s at 0.5 mm); meshes of A∩D and the certified volume ranges add to it. V2
   measures and may drop the certified ranges to per-part.
 - **Contacts:** every joint is an area contact, the costly case for `Clearances`; with nine instances it is a few dozen
   pairs, under budget, but it is read as contact only through the upper end.

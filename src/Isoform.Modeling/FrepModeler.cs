@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using BasAutomation.Geometry;
 using Isoform.Document;
 using Isoform.Geometry;
@@ -139,12 +140,17 @@ public sealed class FrepModeler(ModelingSettings settings, RegionCache? cache = 
         var pockets = new List<(Pocket Pocket, string Feature)>();
         var filled = new List<LatticeChannels.Channel>();
         var pieces = 0;
-        foreach (var (body, plan, bodyChannels) in part.Bodies.Zip(plans, channels))
+        // A body's mesh and topology depend on the body alone: all bodies at once, so one's serial work overlaps the others.
+        var meshed = new (Mesh Mesh, IReadOnlyList<Surface> Oriented, TopologyBuilder.Result Built)[plans.Length];
+        Parallel.For(0, plans.Length, i =>
         {
-            var bodyMesh = plan.Build(Cache);
+            var (field, mesh) = (part.Bodies[i].Field, plans[i].Build(Cache));
+            var oriented = TopologyBuilder.Oriented(part.Surfaces, field);
+            meshed[i] = (mesh, oriented, TopologyBuilder.Build(mesh, oriented, Settings.Tolerance, field));
+        });
+        foreach (var (body, (bodyMesh, oriented, built), bodyChannels) in part.Bodies.Zip(meshed, channels))
+        {
             filled.AddRange(LatticeChannels.Lost(bodyChannels, bodyMesh));
-            var oriented = TopologyBuilder.Oriented(part.Surfaces, body.Field);
-            var built = TopologyBuilder.Build(bodyMesh, oriented, Settings.Tolerance, body.Field);
             carried.Add(new Carried(bodyMesh.Quads.Select(q => q.Owner).ToHashSet(), oriented, bodyMesh, [.. built.EdgePoints, .. built.VertexPoints]));
             pinched.AddRange(built.Pinches);
             falseEdges.AddRange(FalseEdges.Find(body.Field, oriented, built, Settings.Tolerance, Settings.CellSize));
@@ -425,32 +431,38 @@ public sealed class FrepModeler(ModelingSettings settings, RegionCache? cache = 
             }
             Descend(body.Field, Key(body.Min), Key(body.Max));
             var blocks = keys.Select(k => (Near: Blocks(k, k), Candidates: (List<(int Id, LostFaces.Path Path)>?)null))
-                .Concat(more.OrderBy(m => m.Key).Select(m => (Blocks(m.Key, m.Key), (List<(int Id, LostFaces.Path Path)>?)m.Candidates)));
-            var bvhs = new Dictionary<int, TriangleBvh>();
-            ILookup<int, Triangle>? byOwner = null;
-            TriangleBvh Polygons(int id)
+                .Concat(more.OrderBy(m => m.Key).Select(m => (Blocks(m.Key, m.Key), (List<(int Id, LostFaces.Path Path)>?)m.Candidates))).ToList();
+            var byOwner = new Lazy<ILookup<int, Triangle>>(() => mesh.Triangles().ToLookup(t => t.Owner));
+            var bvhs = new ConcurrentDictionary<int, Lazy<TriangleBvh>>();
+            TriangleBvh Polygons(int id) => bvhs.GetOrAdd(id, _ => new(() =>
             {
-                if (bvhs.TryGetValue(id, out var bvh)) return bvh;
-                byOwner ??= mesh.Triangles().ToLookup(t => t.Owner);
                 var same = owners.Where(o => oriented[o].SameGeometry(oriented[id], Settings.Tolerance)).Append(id).Distinct();
-                return bvhs[id] = new TriangleBvh(mesh.Vertices, same.SelectMany(o => byOwner[o]).ToList());
-            }
-            foreach (var (near, found) in blocks)
+                return new TriangleBvh(mesh.Vertices, same.SelectMany(o => byOwner.Value[o]).ToList());
+            })).Value;
+            // The blocks are searched at once and their faces taken in block order: the first face found for a surface
+            // wins, as when one block is searched after another.
+            var faces = new List<(int Id, LostFaces.Result Result)>[blocks.Count];
+            Parallel.For(0, blocks.Count, k =>
             {
+                var (near, found) = blocks[k];
+                faces[k] = [];
                 // The body as the block sees it: a surface simplified away cannot bound the part there.
                 var candidates = found ?? Candidates(body.Field.Simplify(near), near).All;
                 // A lost piece lies between at least two other faces, which the cells joined instead.
-                if (candidates.Count < 3) continue;
+                if (candidates.Count < 3) return;
                 foreach (var (id, p) in candidates)
                 {
-                    if (result.GetValueOrDefault(id).Verdict == LostFaces.Verdict.Face) continue;
+                    // Only a leaf gives a witness: a search that ends at another node (a blend, a profile) finds no face.
+                    if (p.End is not LeafField || result.GetValueOrDefault(id).Verdict == LostFaces.Verdict.Face) continue;
                     // Built only once a search needs it: most end on the margin alone.
                     TriangleBvh? polygons = null;
                     double Distance(Point3D q) => (polygons ??= Polygons(id)).Distance(q);
                     var r = LostFaces.Search(p, part.Surfaces[id], near, Settings.Tolerance, budget: PieceBudget, carried: (Distance, reach));
-                    if (r.Verdict == LostFaces.Verdict.Face) result[id] = r;
+                    if (r.Verdict == LostFaces.Verdict.Face) faces[k].Add((id, r));
                 }
-            }
+            });
+            foreach (var (id, r) in faces.SelectMany(f => f))
+                if (result.GetValueOrDefault(id).Verdict != LostFaces.Verdict.Face) result[id] = r;
         }
         return result;
     }
@@ -481,9 +493,17 @@ public sealed class FrepModeler(ModelingSettings settings, RegionCache? cache = 
     IEnumerable<Diagnostic> Resolution(PartDocument document, CompiledPart part, Mesh mesh, IReadOnlyList<Diagnostic> earlier, IReadOnlyList<Zone> zones, List<Finding> findings)
     {
         string FeatureOf(int owner) => part.Surfaces[owner].Source.Split('/')[0];
-        // Where each feature's faces are in the mesh: a feature too small there is refined over them.
-        var extent = mesh.Quads.GroupBy(q => FeatureOf(q.Owner))
-            .ToDictionary(g => g.Key, g => Around(g.SelectMany(q => new[] { mesh.Vertices[q.A], mesh.Vertices[q.B], mesh.Vertices[q.C], mesh.Vertices[q.D] })));
+        // Where each feature's faces are in the mesh: a feature too small there is refined over them. Per owner first.
+        var (lows, highs) = (new Point3D?[part.Surfaces.Count], new Point3D?[part.Surfaces.Count]);
+        foreach (var q in mesh.Quads)
+            foreach (var v in (ReadOnlySpan<int>)[q.A, q.B, q.C, q.D])
+            {
+                var p = mesh.Vertices[v];
+                var (lo, hi) = (lows[q.Owner] ?? p, highs[q.Owner] ?? p);
+                (lows[q.Owner], highs[q.Owner]) = (new Point3D(Math.Min(lo.X, p.X), Math.Min(lo.Y, p.Y), Math.Min(lo.Z, p.Z)), new Point3D(Math.Max(hi.X, p.X), Math.Max(hi.Y, p.Y), Math.Max(hi.Z, p.Z)));
+            }
+        var extent = Enumerable.Range(0, lows.Length).Where(o => lows[o] is not null).GroupBy(FeatureOf)
+            .ToDictionary(g => g.Key, g => Around(g.SelectMany(o => new[] { lows[o]!.Value, highs[o]!.Value })));
         foreach (var feature in document.Features)
         {
             var smallest = ResolvedFor(zones, feature.Id);

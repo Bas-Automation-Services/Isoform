@@ -7,7 +7,7 @@ using Isoform.Meshing;
 using Isoform.Modeling;
 using Isoform.Occt;
 
-// Measurements for K2/K3. Run with: dotnet run -c Release --project src/Isoform.Bench [-- display]
+// Measurements for K2/K3. Run with: dotnet run -c Release --project src/Isoform.Bench [-- display | stand [cell…] | regen]
 var settings = new ModelingSettings();
 Console.WriteLine($"Isoform bench — {Environment.ProcessorCount} logical cores, .NET {Environment.Version}");
 
@@ -40,6 +40,39 @@ var parts = new (string Name, PartDocument Doc)[]
 if (args is ["display"])
 {
     Display();
+    return;
+}
+
+double BestOf(int runs, Action run) => Enumerable.Range(0, runs).Min(_ =>
+{
+    var sw = Stopwatch.StartNew();
+    run();
+    return sw.Elapsed.TotalMilliseconds;
+});
+
+// "stand [cell…]": the pump stand of the demo, regenerated (best of 3), and its mass properties.
+if (args is ["stand", ..])
+{
+    foreach (var h in args.Length > 1 ? args[1..].Select(double.Parse) : [1.0, 0.5])
+    {
+        FrepResult? r = null;
+        var regenerate = BestOf(3, () => r = new FrepModeler(new ModelingSettings { CellSize = h }).Regenerate(Examples.PumpStand));
+        MassProperties? m = null;
+        var mass = BestOf(3, () => m = MassProperties.Of(r!.Part.Field!, r.Mesh!));
+        Console.WriteLine($"  stand h={h}: regenerate {regenerate:N0} ms ({r!.Topology!.Faces.Count} faces, {r.Mesh!.Quads.Count:N0} polygons, " +
+            $"{r.Diagnostics.Count} diagnostics); mass properties {mass:N0} ms (volume {m!.Volume:N0} mm³ with the keep-outs)");
+        foreach (var d in r.Diagnostics) Console.WriteLine($"    {d.Code} {d.FeatureId}: {d.Message}");
+    }
+    return;
+}
+
+// "regen": regeneration of the 20-op part and of every playground example (best of 3).
+if (args is ["regen"])
+{
+    foreach (var h in new[] { 0.5, 0.25 })
+        Console.WriteLine($"  20 operations h={h}: {BestOf(3, () => new FrepModeler(new ModelingSettings { CellSize = h }).Regenerate(parts[2].Doc)):N0} ms");
+    foreach (var (name, doc) in Examples.All)
+        Console.WriteLine($"  {name}: {BestOf(3, () => new FrepModeler(settings).Regenerate(doc)):N0} ms");
     return;
 }
 
