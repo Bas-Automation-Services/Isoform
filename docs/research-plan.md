@@ -335,6 +335,28 @@ against analytic answers only; cross-checking them is part of K7.
   round peak still closes only to first order (1e-4 on a ball in 0.6 s). Stand-sized: a Ø50 × 600 leg blended
   (k = 10) into a foot and a top, against a placed Ø48.3 × 3.2 tube cut by two planes: outside 50 ms, all 16 design
   faces 0.7 s at 1e-3, the leg's blend 10.85 (its rim on the foot, k + 0.85 from the tube).
+  *Sketched plates (2026-10-24, after V2):* on the stand as the plate and tube methods build it the verdict was
+  unknown (hole walls and the fitted top never closed; 68 s at 100 000 boxes). Now: a hole loop of a sketch is a
+  bound like a hole feature's wall (a round one holds the solid outside its cylinder; a convex one is never above
+  the complements of its sides), so walls, a pin in a bore and the hose in the top read exact in one box. Each box is
+  cut to a polytope that holds the region (`Queries.RegionHigh`): planes, tangent planes of rods and balls, outside
+  a cylinder the chord the box's width allows (a sag of w²/2r), and a blend's tangent plane moved out by MR²/2 (M its
+  curvature plus 2/k): a solid below a blend, a blend face in a slab round it. Over that a convex field is highest at
+  a corner (exact), a concave one under its tangent plane, a smooth union under the tangent plane of S(a, b) (concave
+  and rising in a and b), a union of two convex parts under their best mix: a fitted outline on a blend closes to
+  second order. A box splits only across what changes (an intersection of planes and of planes, cylinders and
+  profiles along an axis, a union only if all of it is along it), so a plate against a design extruded the same way
+  splits in its plane; there an extrude's bounds are taken in its profile's coordinates (in the queries: the tape
+  stays bit-identical to `Field.Bounds`), and witnesses start from the polytope's middle, then its highest corner.
+  Several faces at once are taken one by one (each face's own surfaces held its points; intersected over several
+  faces they were not sound). The built stand passes with every check settled: the top outside [0.0235, 0.0245] (the
+  fit stands out of the blend), feet 0, hose [10.000, 10.001] (was [3.2, 10]), the hole interfaces 0, every design
+  face settled (leg blend 2.943, lobe blend 0.006). Verify 16–19 s at 20 000 or 100 000 boxes (outside 0.6–0.9 s,
+  uncovered 3.9–5.1 s, keep-outs 0.00 s, interfaces 0.6–1.0 s; was 32 s at 20 000 with 2.1, 9.6, 2.1 and 3.2 s, and
+  68 s at 100 000), the rest being the assembly's meshes, volumes and walls. Checked against analytic
+  answers (a sketched plate's Ø20 hole on a hole feature, a Ø24 one 2 off it, a Ø16 pin 2 from it; the fitted plate
+  against the design's field along its arcs; the chord exact across a hole's wall) and a property test of the box
+  bound over random boxes (K1).
 
 **K6 spike — exact B-rep / STEP (works for the analytic case).** `src/Isoform.Step` writes STEP from Isoform's own
 exact B-rep; OCCT reads every one of 15 parts back as one valid solid with Isoform's face/edge/vertex counts, volume

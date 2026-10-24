@@ -35,8 +35,9 @@ public class VerifierStandTests(ITestOutputHelper output)
         blend.Excess.Lower.Should().BeInRange(2, 5);
         blend.Distance!.Value.Lo.Should().BeGreaterThanOrEqualTo(blend.Excess.Lower - 1e-6);
         v.Outside.Where(o => o.Part == "foot.json").Should().OnlyContain(o => o.Verdict == Verdict.Pass);
-        // The top's outline is the design's own blend, coincident: the search cannot close on it, and says so.
-        v.Outside.Single(o => o.Instance == "top").Verdict.Should().NotBe(Verdict.Fail);
+        // The top's outline is the design's own blend, coincident: the blend's tangent plane bounds it to second order,
+        // well within the tolerance though not to 1e-3 at this budget.
+        v.Outside.Single(o => o.Instance == "top").Verdict.Should().Be(Verdict.Pass);
 
         v.Contacts.Should().HaveCount(8).And.OnlyContain(c => c.Kind == ContactKind.Contact && c.Verdict == Verdict.Pass);
         v.Keepouts.Select(k => (k.Body, k.Verdict)).Should().Equal(("pump", Verdict.Pass), ("hose", Verdict.Pass), ("sockets", Verdict.Pass));
@@ -46,5 +47,27 @@ public class VerifierStandTests(ITestOutputHelper output)
         v.Volumes.PartsOutside.Should().BeApproximately(0, 1e3);
         v.Volumes.PartsMass.Should().BeInRange(20, 30);
         v.Walls.Single(w => w.Part == "foot.json").Thickness.Should().BeApproximately(12, 1e-6);
+    }
+
+    [Fact]
+    public void The_built_stand_passes_with_every_certified_check_settled()
+    {
+        // The stand as the plate and tube methods build it: the top's outline fitted to the design's blends, the plates'
+        // holes loops of their sketches. Every certified check settles within 20 000 boxes, and the stand passes.
+        var settings = new ModelingSettings { CellSize = 2 };
+        var regenerated = new FrepModeler(settings).Regenerate(StandBuildTests.Design);
+        var built = Rationaliser.PlatesAndTubes().Run(StandBuildTests.Build, StandBuildTests.Design, regenerated);
+        var sw = Stopwatch.StartNew();
+        var v = new Verifier(settings, 20_000).Verify(built, StandBuildTests.Build, StandBuildTests.Design, regenerated,
+            (s, t) => output.WriteLine($"  {s}: {t.TotalMilliseconds:F0} ms"));
+        output.WriteLine($"verify: {sw.ElapsedMilliseconds} ms");
+        output.WriteLine(Report.Markdown(v));
+
+        v.Verdict.Should().Be(Verdict.Pass);
+        v.Outside.Should().OnlyContain(o => o.Excess.Settled && o.Verdict == Verdict.Pass);
+        v.Outside.Single(o => o.Instance == "top").Excess.Lower.Should().BeInRange(0, StandBuildTests.Build.Tolerance, "the fitted arcs stand a little out of the blend");
+        v.Uncovered.Should().OnlyContain(f => f.Excess.Settled);
+        v.Keepouts.Single(k => k.Body == "hose").Lower.Should().BeApproximately(10, 1e-3, "the Ø60 hose in the Ø80 bore");
+        v.Interfaces.Should().HaveCount(5).And.OnlyContain(i => i.Verdict == Verdict.Pass && i.Uncovered!.Settled);
     }
 }

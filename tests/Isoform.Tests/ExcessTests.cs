@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using BasAutomation.Geometry;
+using Isoform.Build;
 using Isoform.Document;
 using Isoform.Geometry;
 using Isoform.Modeling;
@@ -185,5 +186,201 @@ public class ExcessTests(ITestOutputHelper output)
         foreach (var side in new[] { "leg/a", "leg/b" })
             Brackets(uncovered.Single(u => u.Face == side).Excess, 0.85, 1e-3);
         uncovered.Should().OnlyContain(u => u.Excess.Settled);
+    }
+
+    // ---- Plates from sketches: holes in the profile, fitted outlines ----
+
+    static Sketch Outline(double r) => new("outline", new SketchPlacement(Xy),
+        new Dictionary<string, double[]> { ["a"] = [0, 0], ["b"] = [100, 0], ["c"] = [100, 60], ["d"] = [0, 60], ["o"] = [30, 30] },
+        [new SketchLine("s", "a", "b"), new SketchLine("e", "b", "c"), new SketchLine("n", "c", "d"), new SketchLine("w", "d", "a"), new SketchCircle("bore", "o", r)], []);
+
+    static CompiledPart Sketched(double r) => Compile(Outline(r), new Extrude("plate", BooleanOp.New, null, null, 0, 10) { Sketch = "outline" });
+
+    static Box3D Around(Point3D min, Point3D max, Frame? frame = null)
+    {
+        var f = frame ?? Frame.Identity;
+        var corners = (from x in new[] { min.X - 1, max.X + 1 } from y in new[] { min.Y - 1, max.Y + 1 } from z in new[] { min.Z - 1, max.Z + 1 }
+                       select f.ToWorld(new Point3D(x, y, z))).ToList();
+        return new(new(corners.Min(p => p.X), corners.Min(p => p.Y), corners.Min(p => p.Z)), new(corners.Max(p => p.X), corners.Max(p => p.Y), corners.Max(p => p.Z)));
+    }
+
+    [Fact]
+    public void A_sketched_plate_holds_its_round_hole_as_the_hole_features_cylinder()
+    {
+        // The design: a 100 × 60 × 10 block with a Ø20 hole. The parts: the same plate sketched, its hole a circle of the
+        // profile (a hole in the region, not a hole feature), and one with a Ø24 hole.
+        var design = Compile(new Block("d", BooleanOp.New, [0, 0, 0], [100, 60, 10]), new Hole("bore", [30, 30], 20));
+        var (plate, wide) = (Sketched(10), Sketched(12));
+        var sw = Stopwatch.StartNew();
+
+        // Flush everywhere, the hole's wall on the design's: exactly 0, in a few boxes.
+        var outside = Queries.Excess(design.Field!, plate.Field!, Around(plate.Min, plate.Max), 1e-9, budget: 2_000);
+        Report("outside", outside, 0);
+        Brackets(outside, 0, 1e-9);
+
+        // The wider hole leaves the design's wall 2 from the plate's all round.
+        var wall = design.Surfaces.Where(s => s.Source == "bore/wall").Select(s => s.Id).ToHashSet();
+        var uncovered = Queries.BoundaryExcess(wide.Field!, design.Field!, Around(design.Min, design.Max), wall, 1e-9, budget: 2_000);
+        Report("bore/wall", uncovered, 2);
+        Brackets(uncovered, 2, 1e-9);
+
+        // A Ø16 pin through the hole is 2 from its wall everywhere: a pin in a coaxial bore, exact at once.
+        var pin = Compile(new Extrude("pin", BooleanOp.New, Xy with { Origin = [30, 30, -20] }, Circle(8), 0, 50));
+        var clearance = Queries.Clearance(plate.Field!, Around(plate.Min, plate.Max), pin.Field!, Around(pin.Min, pin.Max), 1e-9, budget: 2_000);
+        output.WriteLine($"pin: [{clearance.Lower:F12}, {clearance.Upper:F12}], all three {sw.ElapsedMilliseconds} ms");
+        clearance.Lower.Should().BeApproximately(2, 1e-9);
+        clearance.Upper.Should().BeApproximately(2, 1e-9);
+    }
+
+    // A disc and a lobe blended (k = 10), with a bore, cut 10 thick: the pump stand's top at half size.
+    static readonly PartDocument Lobed = new(
+    [
+        new Extrude("disc", BooleanOp.New, Xy with { Origin = [0, 0, -5] }, Circle(65), 0, 20),
+        new Extrude("lobe", BooleanOp.Join, Xy with { Origin = [45, 45, -5] }, Circle(22.5), 0, 20, Blend: 10),
+        new PlaneCut("under", [0, 0, 0], [0, 0, -1]),
+        new PlaneCut("cap", [0, 0, 10], [0, 0, 1]),
+        new Hole("bore", [0, 0], 20),
+    ]);
+
+    /// <summary>The lobed design and the plate the plate method makes of it, placed: the disc's and lobe's arcs and the bore copied, the blend fitted.</summary>
+    static (FrepResult Design, CompiledPart Plate, Frame Frame, BuildInstance Instance) LobedPlate()
+    {
+        var design = new FrepModeler(new ModelingSettings { CellSize = 1 }).Regenerate(Lobed);
+        var built = Rationaliser.PlatesAndTubes().Run(new BuildDocument("design.json", [new PlateSection("plate", 10, Face: "cap/face")]), Lobed, design);
+        var instance = built.Instances.Single();
+        return (design, new Compiler(new ModelingSettings()).Compile(instance.Built.Document), AssemblyModeler.FrameOf(instance.Built.Placement), instance);
+    }
+
+    static IEnumerable<Point2D> Along(OutlineEdge e, int n) => e.Kind == OutlineEdgeKind.Line
+        ? Enumerable.Range(0, n + 1).Select(i => new Point2D(e.From.X + (e.To.X - e.From.X) * i / n, e.From.Y + (e.To.Y - e.From.Y) * i / n))
+        : Enumerable.Range(0, n + 1).Select(i => Math.Atan2(e.From.Y - e.Centre.Y, e.From.X - e.Centre.X) + e.Sweep * i / n)
+            .Select(a => new Point2D(e.Centre.X + e.Radius * Math.Cos(a), e.Centre.Y + e.Radius * Math.Sin(a)));
+
+    [Fact]
+    public void A_plate_with_a_fitted_outline_strays_from_the_blend_by_its_fit()
+    {
+        var (design, part, frame, instance) = LobedPlate();
+        var fits = instance.Built.Fits;
+        fits.Should().NotBeEmpty().And.OnlyContain(f => f.Source == "lobe/blend");
+        var shape = PlateShape.Of(instance.Built.Document)!;
+        var plate = new PlacedField(part.Field!, frame);
+
+        // The answer from the analytic outline: the design's field along every edge of the plate, densely; the slab does
+        // not change through its thickness. The fitted arcs stand a few hundredths out of the blend, within the fit.
+        var field = design.Part.Field!;
+        var sampled = shape.Edges.SelectMany(e => Along(e, 4000)).Max(p => field.Value(frame.ToWorld(new Point3D(p.X, p.Y, 5))));
+        sampled.Should().BePositive().And.BeLessThanOrEqualTo(fits.Max(f => f.Error) + 1e-9);
+
+        var sw = Stopwatch.StartNew();
+        var outside = Queries.Excess(field, plate, Around(part.Min, part.Max, frame), 1e-3, budget: 20_000);
+        output.WriteLine($"outside: [{outside.Lower:F6}, {outside.Upper:F6}] vs {sampled:F6} sampled, fit {fits.Max(f => f.Error):F6}, " +
+            $"settled {outside.Settled}, {sw.ElapsedMilliseconds} ms");
+        outside.Settled.Should().BeTrue();
+        outside.Upper.Should().BeGreaterThanOrEqualTo(sampled - 1e-12);
+        outside.Lower.Should().BeApproximately(sampled, 1e-3);
+        design.Part.Surfaces[outside.FieldOwner].Source.Should().Be("lobe/blend");
+
+        // And the other way: the design's blend face is at most a few hundredths from the plate, settled too.
+        sw.Restart();
+        var blend = design.Part.Surfaces.Where(s => s.Source == "lobe/blend").Select(s => s.Id).ToHashSet();
+        var uncovered = Queries.BoundaryExcess(plate, field, Around(design.Part.Min, design.Part.Max), blend, 1e-3, budget: 20_000);
+        output.WriteLine($"lobe/blend uncovered: [{uncovered.Lower:F6}, {uncovered.Upper:F6}], settled {uncovered.Settled}, {sw.ElapsedMilliseconds} ms");
+        uncovered.Settled.Should().BeTrue();
+        uncovered.Upper.Should().BeLessThanOrEqualTo(fits.Max(f => f.Error) + 1e-3);
+    }
+
+    [Fact]
+    public void A_box_bound_is_never_below_the_field_at_a_point_of_the_region()
+    {
+        // K1 for the bounds the excess searches put on a box (Queries.RegionHigh): holds cut into polytopes (chords, tangent
+        // planes, blend slabs), convex and concave fields at the polytope's corners, a blend's tangent plane, two convex
+        // parts' union. Two pairs: the lobed design and its fitted plate (with holes); a block with a leaning rod blended
+        // in, against a smaller block and a thinner rod unioned; and a sloping plane over each region.
+        var (lobed, part, frame, _) = LobedPlate();
+        var plate = new PlacedField(part.Field!, frame);
+        var theta = 15 * Math.PI / 180;
+        var leaning = Xy with { Origin = [50, 30, -10], X = [1, 0, 0], Normal = [0, Math.Sin(theta), Math.Cos(theta)] };
+        var post = new FrepModeler(new ModelingSettings { CellSize = 1 }).Regenerate(new PartDocument(
+        [
+            new Block("base", BooleanOp.New, [0, 0, 0], [100, 60, 10]),
+            new Extrude("rod", BooleanOp.Join, leaning, Circle(8), 0, 60, Blend: 5),
+            new PlaneCut("floor", [0, 0, 0], [0, 0, -1]),
+        ]));
+        var parts = new MinField([Compile(new Block("b", BooleanOp.New, [0.5, 0.5, 0], [99, 59, 10])).Field!,
+            Compile(new Extrude("r", BooleanOp.New, leaning, Circle(7.5), 0, 60)).Field!]);
+        var slope = new LeafField(new Surface(-1, "", SurfaceKind.Plane, new Point3D(0, 0, 0), new Vector3D(0.6, 0.48, 0.64)));
+        IReadOnlySet<int> Faces(FrepResult r, params string[] names) => r.Part.Surfaces.Where(s => names.Contains(s.Source)).Select(s => s.Id).ToHashSet();
+        (Field Field, Field Solid, IReadOnlySet<int>? Faces, Point3D Min, Point3D Max)[] cases =
+        [
+            (lobed.Part.Field!, plate, null, lobed.Part.Min, lobed.Part.Max),
+            (plate, lobed.Part.Field!, Faces(lobed, "lobe/blend", "bore/wall", "disc/a", "disc/b", "cap/face"), lobed.Part.Min, lobed.Part.Max),
+            (post.Part.Field!, parts, null, post.Part.Min, post.Part.Max),
+            (parts, post.Part.Field!, Faces(post, "rod/blend", "rod/a", "base/z+"), post.Part.Min, post.Part.Max),
+            // A sloping plane rises across the shapes the region is cut to: a cut that left out some of the region shows.
+            (slope, plate, null, lobed.Part.Min, lobed.Part.Max),
+            (slope, plate, null, new Point3D(-12, -12, 1), new Point3D(12, 12, 9)), // round the bore, outside its wall
+            (slope, lobed.Part.Field!, Faces(lobed, "lobe/blend", "bore/wall", "disc/a"), lobed.Part.Min, lobed.Part.Max),
+            (slope, post.Part.Field!, Faces(post, "rod/blend"), post.Part.Min, post.Part.Max),
+        ];
+        var rng = new Random(5);
+        var (checkedPoints, nulls) = (0, 0);
+        for (var k = 0; k < cases.Length; k++)
+            for (var b = 0; b < 600; b++)
+            {
+                var (field, solid, faces, min, max) = cases[k];
+                // A box round a point of the solid's boundary, 0.01 to 5 mm and up to 8 to 1 in its sides.
+                var start = new Point3D(min.X + (max.X - min.X) * rng.NextDouble(), min.Y + (max.Y - min.Y) * rng.NextDouble(), min.Z + (max.Z - min.Z) * rng.NextDouble());
+                if (Project(solid, start) is not { } centre) continue;
+                var size = Math.Pow(10, rng.NextDouble() * 2.7 - 2);
+                var half = new Vector3D(size * (0.125 + rng.NextDouble()), size * (0.125 + rng.NextDouble()), size * (0.125 + rng.NextDouble())) / 2;
+                var box = new Box3D(centre - half, centre + half);
+                var bound = Queries.RegionHigh(field, solid, box, faces);
+                if (bound is null) nulls++;
+                for (var i = 0; i < 200; i++)
+                {
+                    var p = new Point3D(box.Min.X + (box.Max.X - box.Min.X) * rng.NextDouble(), box.Min.Y + (box.Max.Y - box.Min.Y) * rng.NextDouble(),
+                        box.Min.Z + (box.Max.Z - box.Min.Z) * rng.NextDouble());
+                    if (faces is not null)
+                    {
+                        // A boundary point one of the faces owns, inside the box.
+                        if (Project(solid, p) is not { } q || q.X < box.Min.X || q.X > box.Max.X || q.Y < box.Min.Y || q.Y > box.Max.Y || q.Z < box.Min.Z || q.Z > box.Max.Z
+                            || !faces.Contains(solid.Sample(q).Owner)) continue;
+                        p = q;
+                    }
+                    else if (solid.Value(p) > 0) continue;
+                    bound.Should().NotBeNull("the box holds a point of the region");
+                    field.Value(p).Should().BeLessThanOrEqualTo(bound!.Value + 1e-9, $"case {k}, box {box.Min} to {box.Max}, at {p}");
+                    checkedPoints++;
+                }
+            }
+        output.WriteLine($"{checkedPoints} points checked, {nulls} boxes ruled out");
+        checkedPoints.Should().BeGreaterThan(50_000);
+    }
+
+    [Fact]
+    public void Outside_a_cylinder_a_box_is_cut_at_the_chord_its_width_allows()
+    {
+        // The solid outside a Ø20 hole along z; the field −x, highest where the solid comes nearest the axis. In the box
+        // x 9.5 to 10.5, y ±2.5 that is at the box's sides, x = √(10² − 2.5²): exactly where the chord cut lies.
+        var outside = new LeafField(new Surface(0, "hole", SurfaceKind.Cylinder, new Point3D(0, 0, 0), new Vector3D(0, 0, 1), 10), complement: true);
+        var minusX = new LeafField(new Surface(1, "x", SurfaceKind.Plane, new Point3D(0, 0, 0), new Vector3D(-1, 0, 0)));
+        var box = new Box3D(new Point3D(9.5, -2.5, 0), new Point3D(10.5, 2.5, 1));
+
+        var high = Queries.RegionHigh(minusX, outside, box);
+
+        high.Should().BeApproximately(-Math.Sqrt(100 - 2.5 * 2.5), 1e-9);
+    }
+
+    /// <summary>Newton onto the solid's boundary, to 1e-12; null if it does not get there.</summary>
+    static Point3D? Project(Field solid, Point3D p)
+    {
+        for (var i = 0; i < 30; i++)
+        {
+            var s = solid.Sample(p);
+            if (Math.Abs(s.Value) < 1e-12) return p;
+            if (s.Gradient.LengthSquared == 0) return null;
+            p -= s.Gradient * (s.Value / s.Gradient.LengthSquared);
+        }
+        return null;
     }
 }

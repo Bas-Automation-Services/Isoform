@@ -255,6 +255,9 @@ public static partial class Queries
                     break;
                 case MinField m: list.AddRange(SharedPlanes(m, box)); break;
                 case ProfileField p: list.AddRange(Sides(p)); break;
+                // A hole: the solid lies outside its wall, which is the leaf's complement, or a round hole's cylinder.
+                case NegateField { Child: LeafField l }: list.Add(Complement(l)); break;
+                case NegateField { Child: ProfileField p } when Disc(p) is { } wall: list.Add(Complement(wall)); break;
             }
         }
         Collect(f);
@@ -274,6 +277,20 @@ public static partial class Queries
             && e.All(x => Math.Sqrt((x.U0 - arcs[0].Cu) * (x.U0 - arcs[0].Cu) + (x.V0 - arcs[0].Cv) * (x.V0 - arcs[0].Cv)) <= arcs[0].R * (1 + 1e-12));
         return Enumerable.Range(0, e.Count).Where(k => p.EdgeLeaves[k] is not null && (!e[k].IsArc || round)).Select(k => p.EdgeLeaves[k]!);
     }
+
+    /// <summary>
+    /// The cylinder of an extruded profile that is one whole circle (arcs of one circle, turning left): its field is
+    /// that cylinder's, exactly, so a hole cut by it holds the solid outside the cylinder.
+    /// </summary>
+    static LeafField? Disc(ProfileField p)
+    {
+        var e = p.Edges;
+        if (p.Revolved || p.Grown != 0 || e.Any(x => x.Bulge <= 0 || Math.Abs(x.Cu - e[0].Cu) > 1e-12 || Math.Abs(x.Cv - e[0].Cv) > 1e-12 || Math.Abs(x.R - e[0].R) > 1e-12))
+            return null;
+        return p.EdgeLeaves[0];
+    }
+
+    static LeafField Complement(LeafField l) => new(l.Surface, !l.Complement);
 
     /// <summary>The solid cylinder a plane–plane fillet rounds the edge with, if the box lies inside the fillet's sector.</summary>
     static LeafField? Rod(RoundedEdgeField r, Box3D box)
