@@ -165,15 +165,21 @@ public sealed class FrepModeler(ModelingSettings settings, RegionCache? cache = 
                 diagnostics.Add(new Diagnostic(Diagnostic.TangentContact, later,
                     Invariant($"{a} and {b} touch within the tolerance near ({at.X:F2}, {at.Y:F2}, {at.Z:F2}), but the pieces they bound are kept apart: a contact of zero thickness")));
             }
-            // A corner on an edge that does not end in it: the body touches itself in a point.
-            if (SelfContacts.Find(built, oriented, Settings.Tolerance, 2 * Settings.CellSize) is { } touch)
+            // A corner on an edge or a face, or two edges that cross: the body touches itself in a point.
+            else if (SelfContacts.Find(built, oriented, body.Field, Settings.Tolerance, 2 * Settings.CellSize) is { } touch)
             {
-                string Name(int f) => string.Join("+", t.Faces[f].Sources);
-                var (corner, edge) = (t.Vertices[touch.Vertex].Faces, t.Edges[touch.Edge]);
-                var later = part.Surfaces[corner.Append(edge.FaceA).Append(edge.FaceB).Max(f => built.FaceOwners[f].Max())].Source.Split('/')[0];
+                static string Of(string[] f) => f.Length switch
+                {
+                    1 => f[0],
+                    2 => $"the edge between {f[0]} and {f[1]}",
+                    _ => $"the corner of {string.Join(", ", f)}",
+                };
+                var (one, other) = touch.One.Length >= touch.Other.Length ? (touch.One, touch.Other) : (touch.Other, touch.One);
+                var how = one.Length == 2 && other.Length == 2 ? "crosses" : other.Length > 2 ? "meets" : "lies on";
+                var later = part.Surfaces[touch.Owners.Max()].Source.Split('/')[0];
                 var at = touch.At;
                 diagnostics.Add(new Diagnostic(Diagnostic.TangentContact, later,
-                    Invariant($"the solid touches itself at ({Round(at.X):G6}, {Round(at.Y):G6}, {Round(at.Z):G6}): the corner of {string.Join(", ", corner.Select(Name))} lies on the edge between {Name(edge.FaceA)} and {Name(edge.FaceB)}, a contact of zero thickness")));
+                    Invariant($"the solid touches itself at ({Round(at.X):G6}, {Round(at.Y):G6}, {Round(at.Z):G6}): {Of(one)} {how} {Of(other)}, a contact of zero thickness")));
             }
             var (v0, f0, e0, c0) = (vertices.Count, faces.Count, edges.Count, corners.Count);
             vertices.AddRange(bodyMesh.Vertices);

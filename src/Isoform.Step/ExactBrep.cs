@@ -165,7 +165,8 @@ public static class ExactBrep
 
         /// <summary>
         /// Refuses a B-rep a reader would have to mend, each in its own way: an edge not used twice (by two faces, or
-        /// as a seam by one); a corner on another edge of its solid, where the solid touches itself; a loop of a curved
+        /// as a seam by one); a corner on another edge or inside another face of its solid, or two of its edges that
+        /// cross, where the solid touches itself; a loop of a curved
         /// face that does not close in the face's parameters, where the face is not cut open round its axis or tube (a
         /// loop through a pole, where the surface is one point, closes there); or other faces, edges and corners than
         /// the F-rep topology's, but for the edges of no length the mesh can leave where more than three faces meet
@@ -193,6 +194,18 @@ public static class ExactBrep
                     if (t >= e.T0 && t <= e.T1 && (e.Curve.At(t) - p).Length <= settings.Tolerance)
                         throw new NotSupportedException(FormattableString.Invariant($"the solid touches itself at ({p.X:G6}, {p.Y:G6}, {p.Z:G6}), a corner on the edge between {Between(e.Index)}"));
                 }
+                foreach (var f in solid.Faces)
+                {
+                    var own = f.Loops.SelectMany(l => l.Coedges).SelectMany(c => new[] { brep.Edges[c.Edge].Start, brep.Edges[c.Edge].End }).ToHashSet();
+                    foreach (var v in edges.SelectMany(x => new[] { x.Start, x.End }).Distinct().Where(v => !own.Contains(v)))
+                        if (brep.Vertices[v].Point is var p && Math.Abs(f.Surface.Distance(p)) <= settings.Tolerance && Inside(brep, f, p))
+                            throw new NotSupportedException(FormattableString.Invariant($"the solid touches itself at ({p.X:G6}, {p.Y:G6}, {p.Z:G6}), a corner on the face {Name(f.TopologyFace)}"));
+                }
+                for (var i = 0; i < edges.Count; i++)
+                for (var j = i + 1; j < edges.Count; j++)
+                    if (Crossing(edges[i], edges[j], settings.Tolerance) is { } p)
+                        throw new NotSupportedException(FormattableString.Invariant(
+                            $"the solid touches itself at ({p.X:G6}, {p.Y:G6}, {p.Z:G6}), where the edge between {Between(edges[i].Index)} crosses the edge between {Between(edges[j].Index)}"));
             }
 
             var open = new List<int>();
@@ -224,6 +237,83 @@ public static class ExactBrep
             if (faces.Count != topology.Faces.Count || edgeCount > te || vertexCount > tv || te - edgeCount > Math.Max(2, tv - vertexCount))
                 throw new NotSupportedException(FormattableString.Invariant(
                     $"the exact B-rep has {faces.Count} faces, {edgeCount} edges and {vertexCount} corners where the F-rep has {topology.Faces.Count}, {te} and {tv}"));
+        }
+
+        /// <summary>Points along an edge from its start to its end: its ends for a line, 32 pieces for a curve.</summary>
+        static Point3D[] Samples(BrepEdge e, bool forward = true)
+        {
+            var n = e.Curve is Line ? 1 : 32;
+            return [.. Enumerable.Range(0, n + 1).Select(i => e.Curve.At(forward ? e.T0 + (e.T1 - e.T0) * i / n : e.T1 - (e.T1 - e.T0) * i / n))];
+        }
+
+        /// <summary>
+        /// Whether a point of the face's surface lies inside the face: the winding number of its parameters round the
+        /// loops' images, sampled (a point that close to a loop is on an edge, which is checked first), taken round
+        /// every copy of the point a period apart. False where a loop does not close there or runs through a pole.
+        /// </summary>
+        static bool Inside(Brep brep, BrepFace f, Point3D p)
+        {
+            var s = f.Surface;
+            var (pu, pv) = SurfaceParameters.Of(s, p);
+            static double Near(double x, double to) => x + 2 * Math.PI * Math.Round((to - x) / (2 * Math.PI));
+            var winding = 0.0;
+            foreach (var loop in f.Loops)
+            {
+                var uv = new List<(double U, double V)>();
+                foreach (var c in loop.Coedges)
+                foreach (var x in Samples(brep.Edges[c.Edge], c.Forward))
+                {
+                    var (u, v) = SurfaceParameters.Of(s, x);
+                    if (uv.Count > 0 && SurfaceParameters.PeriodicU(s)) u = Near(u, uv[^1].U);
+                    if (uv.Count > 0 && SurfaceParameters.PeriodicV(s)) v = Near(v, uv[^1].V);
+                    uv.Add((u, v));
+                }
+                if (uv.Count == 0) continue;
+                if (uv.Any(x => double.IsNaN(x.U)) || Math.Abs(uv[0].U - uv[^1].U) + Math.Abs(uv[0].V - uv[^1].V) > 1e-6) return false;
+                for (var ku = SurfaceParameters.PeriodicU(s) ? -2 : 0; ku <= (SurfaceParameters.PeriodicU(s) ? 2 : 0); ku++)
+                for (var kv = SurfaceParameters.PeriodicV(s) ? -2 : 0; kv <= (SurfaceParameters.PeriodicV(s) ? 2 : 0); kv++)
+                {
+                    var (qu, qv) = (pu + 2 * Math.PI * ku, pv + 2 * Math.PI * kv);
+                    for (var i = 1; i < uv.Count; i++)
+                        winding += Math.Atan2((uv[i - 1].U - qu) * (uv[i].V - qv) - (uv[i - 1].V - qv) * (uv[i].U - qu),
+                            (uv[i - 1].U - qu) * (uv[i].U - qu) + (uv[i - 1].V - qv) * (uv[i].V - qv));
+                }
+            }
+            return Math.Abs(winding) > Math.PI;
+        }
+
+        /// <summary>
+        /// Where two edges cross away from both of their ends within the tolerance: from their nearest samples by
+        /// Gauss-Newton steps on the two curves' parameters. Null for edges that share a corner.
+        /// </summary>
+        static Point3D? Crossing(BrepEdge a, BrepEdge b, double tolerance)
+        {
+            if (a.Start == b.Start || a.Start == b.End || a.End == b.Start || a.End == b.End) return null;
+            var (sa, sb) = (Samples(a), Samples(b));
+            static (Point3D Lo, Point3D Hi) Box(Point3D[] x) => (new(x.Min(p => p.X), x.Min(p => p.Y), x.Min(p => p.Z)), new(x.Max(p => p.X), x.Max(p => p.Y), x.Max(p => p.Z)));
+            var (ba, bb) = (Box(sa), Box(sb));
+            // A curve strays from its samples by at most its chord's sag; 1 mm covers that for radii up to 400 mm.
+            if (ba.Lo.X > bb.Hi.X + 1 || bb.Lo.X > ba.Hi.X + 1 || ba.Lo.Y > bb.Hi.Y + 1 || bb.Lo.Y > ba.Hi.Y + 1 || ba.Lo.Z > bb.Hi.Z + 1 || bb.Lo.Z > ba.Hi.Z + 1) return null;
+            var (i, j) = Enumerable.Range(0, sa.Length).SelectMany(i => Enumerable.Range(0, sb.Length).Select(j => (i, j))).MinBy(x => (sa[x.i] - sb[x.j]).LengthSquared);
+            var (s, t) = (a.T0 + (a.T1 - a.T0) * i / (sa.Length - 1), b.T0 + (b.T1 - b.T0) * j / (sb.Length - 1));
+            for (var it = 0; it < 30; it++)
+            {
+                var (r, da, db) = (a.Curve.At(s) - b.Curve.At(t), a.Curve.Tangent(s), b.Curve.Tangent(t));
+                var (m11, m12, m22) = (da.Dot(da), -da.Dot(db), db.Dot(db));
+                var det = m11 * m22 - m12 * m12;
+                if (det <= 1e-12 * m11 * m22) return null;
+                var (g1, g2) = (da.Dot(r), -db.Dot(r));
+                var (ds, dt) = ((m22 * g1 - m12 * g2) / det, (m11 * g2 - m12 * g1) / det);
+                (s, t) = (s - ds, t - dt);
+                if (Math.Abs(ds) * Math.Sqrt(m11) + Math.Abs(dt) * Math.Sqrt(m22) <= tolerance / 100) break;
+            }
+            bool Within(BrepEdge e, ref double u)
+            {
+                if (e.Curve is not Line) u = e.T0 + (u - e.T0 - 2 * Math.PI * Math.Floor((u - e.T0) / (2 * Math.PI)));
+                return u > e.T0 && u < e.T1 && (e.Curve.At(u) - e.Curve.At(e.T0)).Length > tolerance && (e.Curve.At(u) - e.Curve.At(e.T1)).Length > tolerance;
+            }
+            var p = a.Curve.At(s);
+            return (p - b.Curve.At(t)).Length <= tolerance && Within(a, ref s) && Within(b, ref t) ? p : null;
         }
 
         /// <summary>

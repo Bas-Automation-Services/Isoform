@@ -305,6 +305,41 @@ public class StepExportTests(ITestOutputHelper output)
         build.Should().Throw<NotSupportedException>().WithMessage("the solid touches itself at (0, 3, 0), a corner on the edge between *pipe/l1:base* and pipe/a2:right");
     }
 
+    [Theory]
+    [InlineData("corner on a face", "(10, 10, 2)", "a corner on the face base/z+")]
+    [InlineData("corner on an edge", "(10, 10, 5)", "a corner on the edge between ridge/c and ridge/b")]
+    [InlineData("corner on an edge by its end", "(10, 0.6, 5)", "a corner on the edge between ridge/c and ridge/b")]
+    [InlineData("corner on a fillet", "(10, 10, 4.17157)", "a corner on the face round/face")]
+    [InlineData("edges crossing", "(10, 10, 5)", "where the edge between ridge/c and ridge/b crosses the edge between bar/d and bar/a")]
+    public void A_body_that_touches_itself_in_a_point_is_named_at_the_same_point(string name, string at, string what)
+    {
+        // OCCT reads each of these back as a valid solid: the export has to refuse them itself.
+        var settings = new ModelingSettings();
+        var frep = new FrepModeler(settings).Regenerate(SelfContactTests.Document(name));
+        frep.Diagnostics.Should().ContainSingle().Which.Message.Should().StartWith($"the solid touches itself at {at}: ");
+
+        var build = () => ExactBrep.Build(frep, settings);
+
+        build.Should().Throw<NotSupportedException>().WithMessage($"the solid touches itself at {at}, {what}");
+    }
+
+    [Theory]
+    [InlineData("corner on a face")]
+    [InlineData("corner on an edge")]
+    [InlineData("corner on a fillet")]
+    [InlineData("edges crossing")]
+    public void Clear_of_the_touch_the_exact_brep_builds(string name)
+    {
+        var settings = new ModelingSettings();
+        var frep = new FrepModeler(settings).Regenerate(SelfContactTests.Document(name, 0.05));
+        frep.Diagnostics.Should().BeEmpty();
+
+        var (_, shape, raw) = RoundTrip(frep, settings, name);
+
+        shape.IsValid.Should().BeTrue();
+        raw.IsValid.Should().BeTrue();
+    }
+
     [Fact]
     public void A_loop_round_a_reflex_corner_is_named()
     {
