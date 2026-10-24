@@ -292,6 +292,65 @@ public class LatticeTests
         Distance(fine.Mesh!, channel.Middle).Should().BeApproximately(channel.Width / 2, 1e-3, "the sheet and the wall each half the width away");
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void A_channel_against_a_regions_faces_is_reported_as_one_against_a_skin(bool feature)
+    {
+        // No skin: the region's faces, with the solid beyond them, are the wall. A region from 1.5 to 6 in a 7.5 mm box
+        // is the skin's cavity above, and its channels are as narrow; the search used to look at skins only.
+        var box = new Block("box", BooleanOp.New, [0, 0, 0], [7.5, 7.5, 7.5]);
+        var doc = feature
+            ? new PartDocument([box, new Block("core", BooleanOp.Join, [1.5, 1.5, 1.5], [4.5, 4.5, 4.5]), new Lattice("infill", "gyroid", 6, 1, Region: new LatticeRegion("core"))])
+            : new PartDocument([box, new Lattice("infill", "gyroid", 6, 1, Region: new LatticeRegion(null, [1.5, 1.5, 1.5], [4.5, 4.5, 4.5]))]);
+        var coarse = new FrepModeler(Settings).Regenerate(doc);
+
+        LatticeChannels.Find(doc, coarse.Part, 2 * Settings.CellSize, Settings.Tolerance)[0].Min(c => c.Width).Should().BeApproximately(0.0852, 1e-4);
+        coarse.Diagnostics.Should().Contain(d => d.Code == Diagnostic.BelowResolution && d.FeatureId == "infill").Which.Message.Should()
+            .StartWith("the sheets of infill leave a channel 0.0852 mm wide against its region near");
+        new FrepModeler(Settings with { Refinement = 4 }).Regenerate(doc).Diagnostics.Should().NotContain(d => d.FeatureId == "infill");
+    }
+
+    [Fact]
+    public void A_channel_over_an_edge_of_the_cavity_is_reported()
+    {
+        // A Schwarz P of 6 mm cells in an 11 mm box passes 0.0445 mm from two of the skin's inner faces at once, over the
+        // cavity's edge. The wall's depth is the nearer face's there, with a crease, so no point of the sheet faces one face
+        // square on: the narrowest place lies on the crease. 0.5 mm cells fill it in; only the lattice's own gap was reported.
+        var doc = new PartDocument([new Block("box", BooleanOp.New, [0, 0, 0], [11, 11, 11]), new Lattice("infill", "schwarz-p", 6, 1, 1.5)]);
+        var result = new FrepModeler(Settings).Regenerate(doc);
+        var channel = LatticeChannels.Find(doc, result.Part, 2 * Settings.CellSize, Settings.Tolerance)[0].MinBy(c => c.Width);
+
+        channel.Width.Should().BeApproximately(0.0445, 1e-4);
+        var depths = new[] { channel.Sheet.X, channel.Sheet.Y, channel.Sheet.Z }.Select(x => x - 1.5).Order().ToArray();
+        (depths[0], depths[1]).Should().Be((channel.Width, channel.Width), "the sheet is as far from both faces");
+        result.Diagnostics.Should().Contain(d => d.Code == Diagnostic.BelowResolution && d.FeatureId == "infill"
+            && d.Message.StartsWith("the sheets of infill leave a channel 0.0445 mm wide against its skin"));
+    }
+
+    [Fact]
+    public void A_channel_over_an_edge_the_cells_carry_is_not_lost()
+    {
+        // A gyroid of 6 mm cells in a 7 mm box leaves a channel 0.316 mm wide over each of three edges of the cavity:
+        // below the resolved size, but 0.5 mm cells carry it.
+        var doc = new PartDocument([new Block("box", BooleanOp.New, [0, 0, 0], [7, 7, 7]), new Lattice("infill", "gyroid", 6, 1, 1.5)]);
+        var body = new Compiler(Settings).Compile(doc).Bodies[0];
+        var channels = LatticeChannels.Find(doc, new Compiler(Settings).Compile(doc), 2 * Settings.CellSize, Settings.Tolerance)[0];
+        var mesh = Isoform.Meshing.DualContouring.Plan(body.Field, body.Min, body.Max, Settings.CellSize, Settings.ChordTolerance).Build();
+
+        channels.Where(c => Math.Abs(c.Width - 0.3156) < 1e-3).Should().HaveCount(3);
+        LatticeChannels.Lost(channels, mesh).Should().OnlyContain(c => c.Width < 0.1);
+    }
+
+    [Fact]
+    public void A_region_that_is_the_body_leaves_no_channel()
+    {
+        // The region's faces are the body's own: beyond them is nothing, so the sheets there are open to the outside.
+        var doc = new PartDocument([new Block("box", BooleanOp.New, [0, 0, 0], [7.5, 7.5, 7.5]), new Lattice("infill", "gyroid", 6, 1, Region: new LatticeRegion("box"))]);
+
+        LatticeChannels.Find(doc, new Compiler(Settings).Compile(doc), 2 * Settings.CellSize, Settings.Tolerance)[0].Should().BeEmpty();
+    }
+
     [Fact]
     public void A_sliver_the_sheets_cut_off_the_cavity_at_an_edge_is_reported()
     {
@@ -302,6 +361,21 @@ public class LatticeTests
 
         result.Diagnostics.Should().ContainSingle(d => d.Code == Diagnostic.BelowResolution && d.FeatureId == "infill").Which.Message.Should()
             .StartWith("infill leaves a gap 0.0127 mm across near (1.51, 6.36, 1.51) that the cells lose whole");
+    }
+
+    [Fact]
+    public void The_crevices_where_struts_meet_are_carried_not_lost()
+    {
+        // Two struts of a bcc meet at 70.5°, and the crevice between them narrows to the curve they meet in. 0.5 mm cells
+        // with no vertex hold its thin end, 0.035 and 0.13 mm across, with no polygon nearer than their corner; but up the
+        // crevice the gap reaches the polygons within 0.3 mm: the mesh carries it, as at any edge, and nothing is lost whole.
+        var doc = new PartDocument([new Block("plate", BooleanOp.New, [0, 0, 0], [100, 50, 10]), new Lattice("infill", "bcc", 10, 2, Region: new LatticeRegion(null, [60, 10, -1], [30, 30, 12]))]);
+        var body = new Compiler(Settings).Compile(doc).Bodies[0];
+        var mesh = Isoform.Meshing.DualContouring.Plan(body.Field, body.Min, body.Max, Settings.CellSize, Settings.ChordTolerance).Build();
+        var polygons = new Isoform.Meshing.TriangleBvh(mesh.Vertices, mesh.Triangles().ToList());
+
+        mesh.Pockets.Where(p => p.Value > 0.01 && polygons.Distance(p.Location) > p.Corner).Should().HaveCountGreaterThan(100);
+        new FrepModeler(Settings).Regenerate(doc).Diagnostics.Should().BeEmpty();
     }
 
     [Fact]

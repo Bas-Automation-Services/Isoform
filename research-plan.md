@@ -378,7 +378,7 @@ but about half are features a finer local mesh would build.
   ∩ or ∪ bound it by their mean, so zero-thickness contacts end at once). The deepest point found is a pocket in the
   region result (cache format 3). Polygons part the grid's nodes as the field does, so where no polygon comes nearer
   than the cell's nearest corner the mesh is on the corner's side all round: the material or gap there, twice the
-  depth across, is lost whole and reported (not where a lattice bounds it: its own sizes judge it). Both skipped repros
+  depth across, is lost and reported, unless it reaches the mesh further on (see lattices, 2026-10-24). Both skipped repros
   and variants (other corners, smaller holes, the cap off the grid's lines) are reported; pockets beside polygons
   (the wedges where a hole runs out through a side) are not. And a cell beside a fillet run's cusp, where no vertex
   fit its crossings' surfaces, kept their mean up to 0.1 mm off the surface: it now takes a real edge of two of its
@@ -406,8 +406,39 @@ but about half are features a finer local mesh would build.
   refinement level meshes the 0.085 mm ones right. Pockets that a lattice and another face bound (the sheet cutting a
   sliver off an edge of the cavity, 0.01–0.07 mm) are now reported too; the bracket example's skin went from 1.5 to
   1.6 mm, where it has none. Cost: the search 6–35 ms on a 20 mm cube and 40–60 ms on the bracket (1–3% of the
-  regeneration), the mesh check under 10 ms a pass. Still silent: channels against a region's faces (no skin) and a
-  sheet grazing an edge or a corner of the cavity, where the depth is not smooth.
+  regeneration), the mesh check under 10 ms a pass. Channels against a region and over the cavity's edges: below.
+- *What lattices still left silent (2026-10-24):* the wall a sheet faces is now the part with the sheets taken out
+  (+∞ for them in the tree, so a skin's child becomes the solid and a region's complement stays): a skin's inner faces,
+  a region's faces with the solid beyond, or both. A region from 1.5 to 18.5 mm with no skin leaves the skin repro's
+  0.0852 mm channels, now reported as "against its region" and resolved by one more level; a region that is the body
+  leaves none (nothing is beyond its faces: the sheet's point must be on the part's boundary and the wall material).
+  Where two faces of the wall meet the depth has a crease, and a channel over it is narrowest on the crease: Newton on
+  the sheet's value, the two faces' depth difference and the sheet's normal in the plane of theirs, from each seed and
+  each pair of the depth's pieces near it (∩/∪ children, a shell's inside, a profile's edges), kept where the sheet
+  faces in between. A Schwarz P of 6 mm cells in an 11 mm box passes 0.0445 mm from two inner faces at once; only the
+  lattice's own gap was reported, now the channel is. Over about 220 shifted boxes and brackets (gyroid, diamond, Schwarz P)
+  crease channels of 0.004–0.3 mm were found, the cells filling those below about 0.25 mm, but no document was silent
+  before: each had another report (often the pocket search, which takes a crease channel for a gap lost whole); those
+  the cells carry are not reported (0.316 mm over a 7 mm box's edges). A corner of the cavity, three faces, is a dome
+  the sheet seals, not a channel: the pocket search's. Lost pockets inside a strut lattice's junctions (the bcc of the
+  format guide: 117 of them, 0.035 and 0.134 mm across) are real void, the field being the exact distance to the
+  struts: the thin end of the crevice where two struts meet at 70.5°. They are not lost whole: up the field's slope
+  from the pocket, in steps of half the depth, the gap reaches a point deeper than its distance to the polygons within
+  0.15–0.27 mm, so the mesh carries the crevice and lost only its tip, as at any edge. Every pocket now gets this test
+  instead of the lattice's exemption; the sliver bodies, the ball's cap and the sheet's sliver at the cavity's edge
+  never reach the mesh on walks of 1–10 mm, and stay reported; the format guide's bcc is clean as it was. Lattice
+  regenerations got 1.6–3.6× faster (the gyroid cube 4.2 → 1.2 s, the bracket 2.9 → 1.8 s, the diamond cylinder 1.8 →
+  0.5 s, the bcc example 1.4 → 0.4 s): the old code named the surfaces round every lattice pocket before dropping it.
+  The channel search is 80–130 ms on the gyroid cube and the bracket (from 35–45; 10–20 ms of it the creases), 15–20 ms
+  on the cylinder; 20-op unchanged (0.5/0.6/1.4–1.5 s at 0.5/0.25/0.1 mm, no lattice). The pocket search's budget of 32
+  boxes is not sound and cannot be made so with these bounds: it runs out in 70% of the cells without a vertex in the
+  smooth-blend example, and in a near-tangent sphere-on-plane cell the bound stays at 0.09 mm after 200,000 boxes, so a
+  "not searched fully" report would fire on most blended parts. Measured instead: on 600 random documents, 13 example
+  parts and 50 slivers and caps 0.1–10 µm thick at five grid offsets, 2000 boxes changed no result from silent to
+  reported or back (in 8 only the pocket or size named); in the lattice examples 163 pockets of 1.6–2.9 µm depth are
+  missed by 32 boxes and found by 5000, none lost whole. A thin piece lost whole spans several cells, and the deepest
+  find in any of them reports it. Still silent: a pocket small in every direction, thinner than a cell's bound can
+  resolve in 32 boxes, alone in its cell; a crease inside a field the search does not take apart (a blend, a sweep's section).
 - *Seeds 0–2149, both sets, F-rep side (2026-10-24):* three crashes. Two (F-rep only 1495, 1867) were a surface
   component the cells flattened to nothing: its enclosed volume, −1.5e-15, made it a void, no body's box held it,
   and it got a body number past the last (`PieceContacts` indexed by it). A surface no body holds is now a body of its
