@@ -410,6 +410,26 @@ but about half are features a finer local mesh would build.
   through the corner where it starts) into a report; on 3000 random documents (F-rep only and common, seeds 0–1499)
   it reports nothing. Cost: about 2 ms on the 20-op part. Still silent: a corner on a face's inside, and two edges
   that cross in a point.
+  *Generalised (2026-10-24):* the points tried are every corner and every pair of edges of a piece whose chains come
+  within two cells (Gauss-Newton on their three or four surfaces). At a point on them within the tolerance, every
+  surface through it stands for its tangent plane: the planes' great circles cut the sphere of directions into cells,
+  each probed once in the field 1e-4 mm out (from beside every crossing of two circles, so none is missed), and cells
+  of one kind that share an arc are one piece. Two pieces of material, or of space, that meet only in the point are a
+  contact. No heuristics about split faces, tangent junctions, merged coincident faces or edge ends are needed; it says
+  nothing where a blend or lattice, or a surface not through the point, comes within 2e-4 mm, or two planes are within
+  about 1° without being one. Repros (`SelfContactTests`; each moved 0.05 mm either way is not reported): a cube on its
+  corner touching a flat face, an edge, the same edge 0.6 mm from its end (silent before), a fillet's face (its
+  distance from its field), and two edges crossing. The exact B-rep now also refuses a corner inside another face of
+  its solid (winding number in the face's parameters) and two edges that cross (Gauss-Newton on the curves'
+  parameters), naming the same point; OCCT reads all three back as valid solids. Seeds 0–2149, both sets: nine new
+  reports, all line contacts (two blocks meeting edge to edge, two of them within 1e-7 mm), silent before; nothing
+  else changed. K7 labels: 158 and 1812 add tangent-contact to a below-resolution refusal, 945 is refused for the
+  contact instead, and 639 (two blocks meeting edge to edge, F-rep built, "OCCT topology differs") is now refused as a
+  tangent-contact. Cost: 5–10 ms of the 20-op part's 0.3–1.4 s at 0.5 to 0.1 mm cells (was 2–4 ms). Still silent: an
+  edge touching a face in a point (a circle's edge on a plane), smooth surfaces touching (a ball on a plate, two
+  cylinders along a line), contacts on blends and lattices; the exact B-rep still writes a line contact (639, 168:
+  the topology ends both edges at the contact's corner); and the crossing edges run 0.05 mm into each other lose the
+  overlap with nothing reported (below the cells).
 - *Lattice channels (2026-10-23):* where a TPMS sheet comes within a cell of its skin's inner face, facing it, the
   void between them is a channel: at a saddle of the wall's depth on the sheet a lens 0.07–0.09 mm thick and about
   1 mm wide joining two voids (gyroid and diamond of 6 mm cells in a 1.5 mm skin 0.0852 mm, Schwarz P of 10 mm 0.0843,
