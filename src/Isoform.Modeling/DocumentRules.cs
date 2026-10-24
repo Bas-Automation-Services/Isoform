@@ -116,7 +116,7 @@ public static class DocumentRules
         {
             var f = earlier.FirstOrDefault(x => x.Id == id);
             if (f is null) return $"a pattern can only copy earlier features; '{id}' is not one";
-            if (f is not (Block or Hole or PlaneCut or Extrude or Revolve)) return $"'{id}' is a {f.GetType().Name.ToLowerInvariant()}, which cannot be patterned";
+            if (f is not (Block or Hole or PlaneCut or Extrude or Revolve or Sweep)) return $"'{id}' is a {f.GetType().Name.ToLowerInvariant()}, which cannot be patterned";
         }
         return p.Motion switch
         {
@@ -143,8 +143,8 @@ public static class DocumentRules
             return Invariant($"a {l.Kind} lattice of cell {l.Cell} mm closes its voids at thickness {l.Thickness} mm; keep the thickness below {LatticeField.MaxThickness(kind, l.Cell):G4} mm");
         return l.Region switch
         {
-            { Feature: { } id } when earlier.FirstOrDefault(f => f.Id == id) is not (Block or Extrude or Revolve) =>
-                $"a lattice region is a box or an earlier block, extrude or revolve; '{id}' is not one",
+            { Feature: { } id } when earlier.FirstOrDefault(f => f.Id == id) is not (Block or Extrude or Revolve or Sweep) =>
+                $"a lattice region is a box or an earlier block, extrude, revolve or sweep; '{id}' is not one",
             { Feature: null, Origin: var o, Size: var s } when o?.Length != 3 || s?.Length != 3 || s.Any(x => x <= tolerance) =>
                 "a lattice region box needs an origin and a positive size",
             _ => null,

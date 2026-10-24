@@ -169,7 +169,7 @@ public sealed record Sketch(string Id, SketchPlacement On, IReadOnlyDictionary<s
 /// </summary>
 public sealed record Offset(string Id, double Distance) : Feature(Id);
 
-/// <summary>Where a lattice goes: an axis-aligned box, or the solid of an earlier block, extrude or revolve (by id).</summary>
+/// <summary>Where a lattice goes: an axis-aligned box, or the solid of an earlier block, extrude, revolve or sweep (by id).</summary>
 public sealed record LatticeRegion(string? Feature = null, double[]? Origin = null, double[]? Size = null);
 
 /// <summary>
@@ -207,9 +207,9 @@ public sealed record CircularMotion(double[] Origin, double[] Axis, int Count, d
 public sealed record MirrorMotion(double[] Point, double[] Normal) : PatternMotion;
 
 /// <summary>
-/// Copies of earlier features (blocks, holes, plane cuts, extrudes, revolves), applied at the pattern's place in the
-/// history. Copy k of source <c>hole/wall</c> is named <c>id/k:hole/wall</c>, so copies keep their names when the
-/// count grows.
+/// Copies of earlier features (blocks, holes, plane cuts, extrudes, revolves, sweeps), applied at the pattern's place
+/// in the history. Copy k of source <c>hole/wall</c> is named <c>id/k:hole/wall</c>, so copies keep their names when
+/// the count grows.
 /// </summary>
 public sealed record Pattern(string Id, string[] Features, PatternMotion Motion) : Feature(Id);
 

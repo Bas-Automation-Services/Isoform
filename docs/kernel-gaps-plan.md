@@ -6,6 +6,25 @@ sketch tools. Everything stays inside the exactness boundary; what would cross i
 
 Decisions (2026-10-23): these four come before the demo. Plan first.
 
+## Status (2026-10-24)
+
+**Done:** R1–R4, T1–T6, X1, F1–F11, S1–S12 (details in `research-plan.md` §14). Merged after them on 2026-10-23/24:
+a body touching itself in a point is reported (`SelfContacts`), corners are checked on their faces' own surfaces
+(false vertices), lattice channels against a skin are found and refined (`LatticeChannels`), a horn torus's split apex
+is one vertex, fillets and chamfers follow a side's whole tangent run, and the crashes of seeds 0–2149 are fixed.
+Then sweeps: they can be patterned (copies `row/k:pipe/…`, exact in STEP) and be a lattice's region; a fillet or
+chamfer on a cap edge is exact (also where a short first or last leg puts the bend's term over the cap), one on a
+profile corner rounds the whole path (cylinders along lines, tori round arcs), and an inside fillet where a straight
+piece meets a face across it is exact. Every other sweep edge is refused: along the path against another face, a cap
+or face across a bend, the rim of a swept cut.
+
+**Open:**
+- S13, the tapered extrude (optional).
+- §5, approximated faces: its own milestone, after the demo.
+- Known silent gaps: a corner touching another face's inside, and two edges crossing in a point (`SelfContacts` sees
+  only a corner on an edge); lattice channels without a skin (against a region's faces) or at the cavity's edges and
+  corners; pockets in the junctions of strut lattices.
+
 ## Findings that shape the plan
 
 - **Silent failure, seed in `RobustnessReproTests`:** a 0.012 × 0.009 mm sliver body at a plate corner just outside
