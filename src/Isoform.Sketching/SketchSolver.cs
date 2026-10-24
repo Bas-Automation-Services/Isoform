@@ -52,6 +52,11 @@ public static class SketchSolver
         var model = new Model(sketch, carriers);
         var x = model.Start();
         var all = Enumerable.Range(0, sketch.Constraints.Count).ToArray();
+        // Nothing to solve: no constraints, nothing projected, every arc's ends already at one radius (a sketch written
+        // from geometry, as a section's outline). The points stand, all free; each arc's own radius row takes one degree.
+        if (all.Length == 0 && drag is null && sketch.Entities.All(e => e.Project is null) && Norm(model.Residuals(all, x)) is var held && held <= Tolerance)
+            return new SketchSolution(model.Points(x), model.Radii(x), model.Unknowns - model.Rows(all),
+                new HashSet<string>([.. model.PointIndex.Keys, .. model.RadiusIndex.Keys]), held, []);
         if (drag is { } d && model.PointIndex.TryGetValue(d.Point, out var at))
         {
             // From the target, with a weak pull towards it: the constraints win, and the point stays as near as they let it.
