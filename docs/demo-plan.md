@@ -63,12 +63,15 @@ in mm, z up, the stand's axis at x = y = 0.
 | Top | An organic outline: disc Ø260 and four lobes Ø90 at (±90, ±90), joined with blend k = 20; extruded taller than needed and trimmed by plane cuts `under` (z = 588) and `level` (z = 600). Bore Ø80 on the axis (hose pass-through), 4 × Ø11 (M10, pump feet) at radius 100 on the axes |
 | Feet | 160 × 160 × 12 at x, y 150–310, circular pattern of 4; anchor hole Ø18 (M16) at (±270, ±270) |
 | Legs | Ø50, axis from (±200, ±200, 12) to (±90, ±90, 588), 15.1° from vertical; run 60 mm past both ends, joined with blend k = 10 into feet and top, pattern of 4; then plane cuts `floor` (z = 0) and `cap` (z = 600) |
-| Keep-outs (own bodies) | `pump` Ø300 × 300 on the top face (z 600–900); `hose` Ø60 on the axis, z 0–900; `sockets` Ø40 × 60 above each anchor (spanner access) |
+| Keep-outs (own bodies) | `pump` Ø300 × 300 on the top face (z 600–900); `hose` Ø60 on the axis, z 0–900; `socket-1`…`socket-4` Ø40 × 60 above each anchor (spanner access; a body each, as one body in four pieces is reported as falling apart) |
 | Interfaces | `cap/face` (pump seat), `mount/wall` and copies, `bore/wall`, `foot/z-` and copies (floor), `anchor/wall` and copies |
 | Load | The pump, 40 kg on the top face. Recorded and reported with mass and centroid; nothing is sized by calculation |
 
 Probed (with the keep-outs): the design regenerates with no diagnostics, the top's underside is one flat face
-(`under/face`), each lobe has its two blend faces and each leg its blend at the top and at its foot.
+(`under/face`), each lobe has its two blend faces and each leg its blend at the top and at its foot. D1 made it
+`Examples.PumpStand` (native only, not in the playground's list), checked by `PumpStandTests` at 1 mm: no diagnostics,
+63 faces on the stand (81 with the keep-outs), every interface face once per copy, the pump and the sockets touching
+without interference, the hose 10 mm clear of the bore.
 
 Why this part: the design model is what a designer means (a stand cast in one piece, legs flowing into the plates)
 and what an implicit kernel builds without failing: four oblique blends into a top whose outline is itself blended,

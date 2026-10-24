@@ -18,16 +18,59 @@ public sealed record MassProperties(double Volume, double Area, double Mass, Poi
     /// 1/cos θ. Flat faces are exact; on curved ones the chord error (~ChordTolerance) drops to higher order. A midpoint
     /// where another surface decides the field (a chord across a rim) counts as no gap; the volume there is the curved
     /// face's correction, and the area loses the circular segment the flat triangle covers beyond the rim. An estimate,
-    /// not a bound: see <see cref="VolumeBounds"/>.
+    /// not a bound: see <see cref="VolumeBounds"/>. Runs of triangles are summed in parallel, each with the field
+    /// simplified round it, and the sums added in order: the same result every time.
     /// </summary>
     public static MassProperties Of(Field field, Mesh mesh, double density = 1)
     {
         var v = mesh.Vertices;
         var o = v.Count > 0 ? v[0] : new Point3D(0, 0, 0); // integrate about a vertex: smaller numbers, less cancellation
+        var triangles = mesh.Triangles().ToArray();
+        // Per run: the ten surface integrals, the ten sliver corrections and the area.
+        var runs = new double[(triangles.Length + Run - 1) / Run][];
+        Parallel.For(0, runs.Length, r => runs[r] = Sums(field, v, o, triangles.AsSpan(r * Run, Math.Min(Run, triangles.Length - r * Run))));
         var s = new double[10];
         var c = new double[10];
         var area = 0.0;
-        foreach (var t in mesh.Triangles())
+        foreach (var run in runs)
+        {
+            for (var k = 0; k < 10; k++) (s[k], c[k]) = (s[k] + run[k], c[k] + run[10 + k]);
+            area += run[20];
+        }
+        double[] scale = [1.0 / 6, 1.0 / 24, 1.0 / 24, 1.0 / 24, 1.0 / 60, 1.0 / 60, 1.0 / 60, 1.0 / 120, 1.0 / 120, 1.0 / 120];
+        var i = new double[10];
+        for (var k = 0; k < 10; k++) i[k] = s[k] * scale[k] + c[k];
+
+        var volume = i[0];
+        var (x, y, z) = (i[1] / volume, i[2] / volume, i[3] / volume);
+        var inertia = new InertiaTensor(
+            density * (i[5] + i[6] - volume * (y * y + z * z)),
+            density * (i[4] + i[6] - volume * (z * z + x * x)),
+            density * (i[4] + i[5] - volume * (x * x + y * y)),
+            -density * (i[7] - volume * x * y),
+            -density * (i[8] - volume * y * z),
+            -density * (i[9] - volume * z * x));
+        return new(volume, area, density * volume, new Point3D(o.X + x, o.Y + y, o.Z + z), inertia);
+    }
+
+    // Triangles per parallel run: the mesh's order keeps a run in one small part of the part.
+    const int Run = 4096;
+
+    /// <summary>The sums of <see cref="Of"/> over a run of triangles.</summary>
+    static double[] Sums(Field whole, IReadOnlyList<Point3D> v, Point3D o, ReadOnlySpan<Triangle> triangles)
+    {
+        var (lo, hi) = (v[triangles[0].A], v[triangles[0].A]);
+        foreach (var t in triangles)
+            foreach (var p in (ReadOnlySpan<Point3D>)[v[t.A], v[t.B], v[t.C]])
+                (lo, hi) = (new(Math.Min(lo.X, p.X), Math.Min(lo.Y, p.Y), Math.Min(lo.Z, p.Z)), new(Math.Max(hi.X, p.X), Math.Max(hi.Y, p.Y), Math.Max(hi.Z, p.Z)));
+        // Exact at every edge midpoint of the run, which lies in the box of its corners (grown against rounding). A
+        // surface is looked up in the whole field: the simplified one may have dropped the place its owner is found at.
+        var pad = new Vector3D(1e-6, 1e-6, 1e-6);
+        var field = whole.Simplify(new Box3D(lo - pad, hi + pad));
+        var s = new double[10];
+        var c = new double[10];
+        var area = 0.0;
+        foreach (var t in triangles)
         {
             Vector3D a = v[t.A] - o, b = v[t.B] - o, d = v[t.C] - o;
             var n = (b - a).Cross(d - a);
@@ -50,7 +93,7 @@ public sealed record MassProperties(double Volume, double Area, double Mass, Poi
                 var m = o + (p + q) / 2;
                 var here = field.Sample(m);
                 // The triangle's own surface must decide the field there; a twin surface of the same shape may tie it.
-                if (field.SampleSurface(t.Owner, m) is not { } sample || sample.Value != here.Value)
+                if (whole.SampleSurface(t.Owner, m) is not { } sample || sample.Value != here.Value)
                 {
                     // A chord across a curved rim in the triangle's plane: the triangle covers a segment of about
                     // 2/3 · chord · sagitta beyond it (or falls short by one).
@@ -71,20 +114,7 @@ public sealed record MassProperties(double Volume, double Area, double Mass, Poi
             c[4] += dv * g.X * g.X; c[5] += dv * g.Y * g.Y; c[6] += dv * g.Z * g.Z;
             c[7] += dv * g.X * g.Y; c[8] += dv * g.Y * g.Z; c[9] += dv * g.Z * g.X;
         }
-        double[] scale = [1.0 / 6, 1.0 / 24, 1.0 / 24, 1.0 / 24, 1.0 / 60, 1.0 / 60, 1.0 / 60, 1.0 / 120, 1.0 / 120, 1.0 / 120];
-        var i = new double[10];
-        for (var k = 0; k < 10; k++) i[k] = s[k] * scale[k] + c[k];
-
-        var volume = i[0];
-        var (x, y, z) = (i[1] / volume, i[2] / volume, i[3] / volume);
-        var inertia = new InertiaTensor(
-            density * (i[5] + i[6] - volume * (y * y + z * z)),
-            density * (i[4] + i[6] - volume * (z * z + x * x)),
-            density * (i[4] + i[5] - volume * (x * x + y * y)),
-            -density * (i[7] - volume * x * y),
-            -density * (i[8] - volume * y * z),
-            -density * (i[9] - volume * z * x));
-        return new(volume, area, density * volume, new Point3D(o.X + x, o.Y + y, o.Z + z), inertia);
+        return [.. s, .. c, area];
     }
 
     /// <summary>

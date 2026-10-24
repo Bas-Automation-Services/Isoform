@@ -20,7 +20,31 @@ public class IntervalTests
             new Block("tab", BooleanOp.Join, [-20, 10, 0], [30, 30, 10]),
             new Block("slot", BooleanOp.Cut, [60, 30, -1], [10, 30, 12]),
         ]),
+        // Blends inside blends, as the pump stand's top and legs have them.
+        new(
+        [
+            new Block("plate", BooleanOp.New, [0, 0, 0], [100, 50, 10]),
+            new Extrude("knob", BooleanOp.Join, new SketchPlane([0, 0, 10], [1, 0, 0], [0, 0, 1]), Circle(30, 25, 10), 0, 15, Blend: 4),
+            new Extrude("lobe", BooleanOp.Join, new SketchPlane([0, 0, 10], [1, 0, 0], [0, 0, 1]), Circle(42, 25, 7), 0, 12, Blend: 6),
+            new Block("groove", BooleanOp.Cut, [60, -1, 6], [12, 52, 10], Blend: 3),
+        ]),
     ];
+
+    static Profile Circle(double cx, double cy, double r) => new([cx - r, cy], [new ProfileEdge("a", [cx + r, cy], 1), new ProfileEdge("b", [cx - r, cy], 1)]);
+
+    [Fact]
+    public void Blend_bounds_are_the_blend_of_the_bounds()
+    {
+        // The smooth min rises with both arguments: over a box its lowest and highest are at the corners where both are.
+        Surface Plane(int id, Vector3D normal) => new(id, $"p{id}", SurfaceKind.Plane, new Point3D(0, 0, 0), normal);
+        var blend = new BlendField(new LeafField(Plane(0, new Vector3D(0, 0, 1))), new LeafField(Plane(1, new Vector3D(1, 0, 0))), 10, Plane(2, new Vector3D(0, 1, 0)), union: true);
+
+        var bounds = blend.Bounds(new Box3D(new Point3D(5, 0, 0.3), new Point3D(6, 1, 1.3)));
+
+        bounds.Lo.Should().BeApproximately(blend.Value(new Point3D(5, 0, 0.3)), 1e-12);
+        bounds.Hi.Should().BeApproximately(blend.Value(new Point3D(6, 0, 1.3)), 1e-12);
+        bounds.Lo.Should().BeApproximately(0.3 - 5.3 * 5.3 / 40, 1e-12, "k/4 below the plain min would be −2.2");
+    }
 
     [Fact]
     public void Bounds_contain_every_value_inside_the_box()
