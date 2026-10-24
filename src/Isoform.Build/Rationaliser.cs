@@ -10,6 +10,9 @@ namespace Isoform.Build;
 /// </summary>
 public sealed class Rationaliser(IBuildMethod plates, IBuildMethod tubes)
 {
+    /// <summary>Plates by <see cref="PlateMethod"/> (sections of <paramref name="cellSize"/> mm cells) and tubes by <see cref="TubeMethod"/>.</summary>
+    public static Rationaliser PlatesAndTubes(double cellSize = 1) => new(new PlateMethod(cellSize), new TubeMethod());
+
     /// <param name="design">The design part; it goes into the bundle under the build's <see cref="BuildDocument.Design"/> path.</param>
     /// <param name="regenerated">The design regenerated: its faces bind the build's names.</param>
     /// <param name="buildPath">Where the build document goes in the bundle.</param>
@@ -47,13 +50,12 @@ public sealed class Rationaliser(IBuildMethod plates, IBuildMethod tubes)
         return Pack(build, design, buildPath, built, diagnostics);
     }
 
-    // Distinct parts by content hash, in the order they first appear; an instance is named by its section, numbered
-    // when the section made several.
+    // Distinct parts by congruence (SameParts), in the order they first appear, each instance placed so the part written
+    // first lands where it goes; an instance is named by its section, numbered when the section made several.
     static BuildResult Pack(BuildDocument build, PartDocument design, string buildPath, List<(BuildSection Section, BuiltPart Part)> built, List<Diagnostic> diagnostics)
     {
         var documents = new Dictionary<string, string> { [build.Design] = CanonicalFormat.Write(design), [buildPath] = CanonicalFormat.Write(build) };
         var parts = new Dictionary<string, PartDocument>();
-        var pathOf = new Dictionary<string, string>();
         var (components, instances) = (new List<Component>(), new List<BuildInstance>());
         foreach (var group in built.GroupBy(b => b.Section))
         {
@@ -61,23 +63,27 @@ public sealed class Rationaliser(IBuildMethod plates, IBuildMethod tubes)
             for (var i = 0; i < members.Count; i++)
             {
                 var part = members[i].Part;
-                var hash = CanonicalFormat.Hash(part.Document);
-                if (!pathOf.TryGetValue(hash, out var path))
+                var (path, placement) = parts.Select(p => (p.Key, At: SameParts.Match(part.Document, part.Placement, p.Value))).FirstOrDefault(p => p.At is not null);
+                if (placement is null)
                 {
                     path = Enumerable.Range(1, int.MaxValue).Select(n => n == 1 ? $"{part.Name}.json" : $"{part.Name}-{n}.json").First(p => !documents.ContainsKey(p));
-                    (pathOf[hash], documents[path], parts[path]) = (path, CanonicalFormat.Write(part.Document), part.Document);
+                    (documents[path], parts[path], placement) = (CanonicalFormat.Write(part.Document), part.Document, part.Placement);
                 }
                 var id = members.Count == 1 ? group.Key.Id : $"{group.Key.Id}-{i + 1}";
-                components.Add(new Component(id, path, part.Placement, hash));
-                instances.Add(new BuildInstance(id, group.Key.Id, path));
+                components.Add(new Component(id, path!, placement, CanonicalFormat.Hash(parts[path!])));
+                instances.Add(new BuildInstance(id, group.Key.Id, path!, part));
             }
         }
         return new BuildResult(new Bundle(new AssemblyDocument(components), documents), parts, instances, diagnostics);
     }
 }
 
-/// <summary>A placed part of the build: its component id in the bundle, the section that made it and its document's path.</summary>
-public sealed record BuildInstance(string Id, string Section, string Part);
+/// <summary>
+/// A placed part of the build: its component id in the bundle, the section that made it, the path of the document it
+/// is placed as (a congruent part's, written once), and the part as its method made it (own document and placement,
+/// hull, fits).
+/// </summary>
+public sealed record BuildInstance(string Id, string Section, string Part, BuiltPart Built);
 
 /// <summary>
 /// What a build gives: the bundle (assembly of the parts, with the design, the build document and every distinct part
