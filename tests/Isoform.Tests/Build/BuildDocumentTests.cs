@@ -130,6 +130,62 @@ public class BuildDocumentTests
     }
 
     [Fact]
+    public void Beams_name_their_profile_and_round_trip_with_lines_up_and_anchor()
+    {
+        var build = new BuildDocument("frame.json",
+        [
+            new BeamSection("posts", "SHS100x100x5", Along: "post/a"),
+            new BeamSection("frame", "RHS100x50x4", Lines: [[[0, 0, 0], [1000, -0.0, 0]], [[1000, 0, 0], [1000, 600, 0]]], Up: [0, 0, 1], Anchor: "top-left"),
+        ]);
+
+        var text = Text(build);
+        var back = CanonicalFormat.ReadBuild(text);
+
+        Text(back).Should().Be(text);
+        back.Sections.Should().BeEquivalentTo(build.Sections, o => o.RespectingRuntimeTypes());
+        text.Should().Contain("""
+                {
+                  "id": "posts",
+                  "beam": {
+                    "along": "post/a"
+                  },
+                  "profile": "SHS100x100x5"
+                },
+            """.ReplaceLineEndings("\n")).And.NotContain("-0");
+        ((BeamSection)back.Sections[1]).Lines![0][1].Should().Equal(1000, 0, 0);
+        // The centre is where a beam's line runs by default: written as nothing.
+        var centred = CanonicalFormat.ReadBuild(text.Replace("\"top-left\"", "\"center\""));
+        ((BeamSection)centred.Sections[1]).Anchor.Should().BeNull();
+        Text(centred).Should().Be(Text(build with { Sections = [build.Sections[0], (BeamSection)build.Sections[1] with { Anchor = null }] }));
+    }
+
+    [Fact]
+    public void A_beam_is_edited_and_diffed_like_the_other_sections()
+    {
+        var frame = new BuildDocument("frame.json", [new PlateSection("base", 10, Face: "base/z-"), new BeamSection("frame", "RHS100x50x4", Lines: [[[0, 0, 0], [1000, 0, 0]]])]);
+
+        var edited = DocumentEdits.Apply(frame, Edits("""
+            [
+              { "set": "sections.frame.profile", "value": "SHS100x100x5" },
+              { "set": "sections.frame.beam.up", "value": [0, 1, 0] },
+              { "set": "sections.frame.beam.anchor", "value": "bottom" },
+              { "set": "sections.frame.beam.lines", "value": [[[0, 0, 0], [1000, 0, 0]], [[1000, 0, 0], [1000, 600, 0]]] },
+              { "insert": { "id": "posts", "beam": { "along": "post/a" }, "profile": "CHS48.3x2.9" }, "before": "frame" }
+            ]
+            """));
+
+        edited.Sections.Select(s => s.Id).Should().Equal("base", "posts", "frame");
+        edited.Sections[1].Should().Be(new BeamSection("posts", "CHS48.3x2.9", Along: "post/a"));
+        var beam = (BeamSection)edited.Sections[2];
+        (beam.Profile, beam.Anchor).Should().Be(("SHS100x100x5", "bottom"));
+        beam.Up.Should().Equal(0, 1, 0);
+        beam.Lines.Should().HaveCount(2);
+        DocumentEdits.Apply(Text(frame), DocumentDiff.Between(frame, edited)).Should().Be(Text(edited));
+        Problem(Text(frame), """[{ "set": "sections.frame.beam.anchor", "value": "middle" }]""").Should().Contain("Section 'frame': the anchor 'middle'");
+        Problem(Text(frame), """[{ "remove": "sections.frame.profile" }]""").Should().Contain("Section 'frame': a beam needs its profile id");
+    }
+
+    [Fact]
     public void Hash_of_the_stand_is_stable()
     {
         // Golden value: if this changes, every stored build document's identity changes with it.
@@ -221,7 +277,15 @@ public class BuildDocumentTests
     [InlineData("""{"format": "isoform-build/0", "units": "mm", "design": "d.json", "sections": [], "keepouts": [{"body": "pump", "clearance": -1}]}""", "Keep-out 'pump'")]
     [InlineData("""{"format": "isoform-build/0", "units": "mm", "design": "d.json", "sections": [{"id": "a", "plate": {"face": "f"}, "thickness": 1}, {"id": "a", "plate": {"face": "g"}, "thickness": 1}]}""", "'a' is used twice")]
     [InlineData("""{"format": "isoform-build/0", "units": "mm", "design": "d.json", "sections": [{"id": "a.b", "plate": {"face": "f"}, "thickness": 1}]}""", "without '.' or '/'")]
-    [InlineData("""{"format": "isoform-build/0", "units": "mm", "design": "d.json", "sections": [{"id": "a", "thickness": 1}]}""", "Section 'a': a section is a plate or a tube")]
+    [InlineData("""{"format": "isoform-build/0", "units": "mm", "design": "d.json", "sections": [{"id": "a", "thickness": 1}]}""", "Section 'a': a section is a plate, a tube or a beam")]
+    [InlineData("""{"format": "isoform-build/0", "units": "mm", "design": "d.json", "sections": [{"id": "a", "plate": {"face": "f"}, "beam": {"along": "f"}, "thickness": 1, "profile": "IPE200"}]}""", "Section 'a': a section is a plate, a tube or a beam, one of the three")]
+    [InlineData("""{"format": "isoform-build/0", "units": "mm", "design": "d.json", "sections": [{"id": "a", "beam": {"along": "f", "lines": [[[0, 0, 0], [0, 0, 1]]]}, "profile": "IPE200"}]}""", "Section 'a': a beam runs along a cylinder or lines")]
+    [InlineData("""{"format": "isoform-build/0", "units": "mm", "design": "d.json", "sections": [{"id": "a", "beam": {"lines": []}, "profile": "IPE200"}]}""", "Section 'a': a beam's lines are one or more, each two points")]
+    [InlineData("""{"format": "isoform-build/0", "units": "mm", "design": "d.json", "sections": [{"id": "a", "beam": {"lines": [[[0, 0, 0]]]}, "profile": "IPE200"}]}""", "Section 'a': a beam's lines are one or more, each two points")]
+    [InlineData("""{"format": "isoform-build/0", "units": "mm", "design": "d.json", "sections": [{"id": "a", "beam": {"along": "f"}}]}""", "Section 'a': a beam needs its profile id")]
+    [InlineData("""{"format": "isoform-build/0", "units": "mm", "design": "d.json", "sections": [{"id": "a", "beam": {"along": "f"}, "profile": ""}]}""", "Section 'a': a beam needs its profile id")]
+    [InlineData("""{"format": "isoform-build/0", "units": "mm", "design": "d.json", "sections": [{"id": "a", "beam": {"along": "f", "up": [0, 0, 0]}, "profile": "IPE200"}]}""", "Section 'a': the up direction must not be zero")]
+    [InlineData("""{"format": "isoform-build/0", "units": "mm", "design": "d.json", "sections": [{"id": "a", "beam": {"along": "f", "anchor": "middle"}, "profile": "IPE200"}]}""", "Section 'a': the anchor 'middle' is not one of center, top")]
     [InlineData("""{"format": "isoform-build/0", "units": "mm", "design": "d.json", "sections": [{"id": "a", "plate": {}, "thickness": 1}]}""", "Section 'a': a plate is on a face or on a plane")]
     [InlineData("""{"format": "isoform-build/0", "units": "mm", "design": "d.json", "sections": [{"id": "a", "plate": {"face": "f"}}]}""", "Section 'a': a plate needs a thickness")]
     [InlineData("""{"format": "isoform-build/0", "units": "mm", "design": "d.json", "sections": [{"id": "a", "plate": {"face": "f"}, "thickness": 0}]}""", "Section 'a': the thickness must be positive")]
@@ -244,7 +308,7 @@ public class BuildDocumentTests
         Problem(stand, """[{ "set": "sections.legs.wal", "value": 4 }]""").Should().Contain("'sections.legs.wal' is not a field");
         Problem(stand, """[{ "set": "tolerence", "value": 0.1 }]""").Should().Contain("'tolerence' is not a field of a build document");
         Problem(stand, """[{ "set": "sections.legs.wall", "value": 30 }]""").Should().Contain("Section 'legs': the wall must be positive");
-        Problem(stand, """[{ "set": "sections.top.tube", "value": { "along": "leg/a" } }]""").Should().Contain("a plate or a tube, one of the two");
+        Problem(stand, """[{ "set": "sections.top.tube", "value": { "along": "leg/a" } }]""").Should().Contain("a plate, a tube or a beam, one of the three");
         Problem(stand, """[{ "insert": { "id": "top", "plate": { "face": "x" }, "thickness": 1 } }]""").Should().Contain("'top' is used twice");
         Problem(stand, """[{ "insert": { "plate": { "face": "x" }, "thickness": 1 } }]""").Should().Contain("with an id");
         Problem(stand, """[{ "insert": { "id": "x", "plate": { "face": "x" }, "thickness": 1 }, "before": "arms" }]""").Should().Contain("'arms' is not a section id");
@@ -258,9 +322,10 @@ public class BuildDocumentTests
         var rng = new Random(11);
         var stand = Text(Stand);
         string[] heads = ["sections", "sections.top", "sections.legs", "sections.nope", "design", "material", "tolerance", "keepouts", "interfaces", "", "units", "x"];
-        string[] tails = ["plate", "tube", "face", "along", "line", "thickness", "outside", "wall", "near", "0", "1", "7", "name", "density", "clearance", "id"];
-        JsonNode?[] values = [null, 0, 1, -5, 1e300, "abc", "leg/a", true, new JsonArray(1, 2), new JsonArray(1, 2, 3), new JsonObject(), new JsonObject { ["id"] = "q" },
-            new JsonObject { ["id"] = "q", ["plate"] = new JsonObject { ["face"] = "f" }, ["thickness"] = 3 }, new JsonArray()];
+        string[] tails = ["plate", "tube", "beam", "face", "along", "line", "lines", "thickness", "outside", "wall", "profile", "up", "anchor", "near", "0", "1", "7", "name", "density", "clearance", "id"];
+        JsonNode?[] values = [null, 0, 1, -5, 1e300, "abc", "leg/a", "top", true, new JsonArray(1, 2), new JsonArray(1, 2, 3), new JsonObject(), new JsonObject { ["id"] = "q" },
+            new JsonObject { ["id"] = "q", ["plate"] = new JsonObject { ["face"] = "f" }, ["thickness"] = 3 },
+            new JsonObject { ["id"] = "q", ["beam"] = new JsonObject { ["along"] = "f" }, ["profile"] = "IPE200" }, new JsonArray()];
 
         for (var k = 0; k < 2000; k++)
         {

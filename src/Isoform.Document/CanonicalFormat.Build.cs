@@ -9,8 +9,9 @@ public static partial class CanonicalFormat
 {
     /// <summary>
     /// A build document's text: format, units, design, material, tolerance, sections in priority order, keep-outs and
-    /// interfaces. A section is its id, its method (<c>"plate": {"face": …}</c> or <c>"tube": {"along": …}</c>) and its
-    /// sizes; material, keep-outs and interfaces are only written when given.
+    /// interfaces. A section is its id, its method (<c>"plate": {"face": …}</c>, <c>"tube": {"along": …}</c> or
+    /// <c>"beam": {"lines": …}</c>) and its sizes (a beam's are its profile id); material, keep-outs, interfaces and a
+    /// beam's up and anchor are only written when given.
     /// </summary>
     public static string Write(BuildDocument build) => Text(w =>
     {
@@ -99,6 +100,30 @@ public static partial class CanonicalFormat
                 Number(w, "outside", t.Outside);
                 Number(w, "wall", t.Wall);
                 break;
+            case BeamSection b:
+                w.WriteStartObject("beam");
+                if (b.Along is { } on) w.WriteString("along", on);
+                else
+                {
+                    w.WriteStartArray("lines");
+                    foreach (var line in b.Lines!)
+                    {
+                        w.WriteStartArray();
+                        foreach (var point in line)
+                        {
+                            w.WriteStartArray();
+                            foreach (var v in point) w.WriteNumberValue(Normalize(v));
+                            w.WriteEndArray();
+                        }
+                        w.WriteEndArray();
+                    }
+                    w.WriteEndArray();
+                }
+                if (b.Up is { } up) Numbers(w, "up", up);
+                if (b.Anchor is { } anchor) w.WriteString("anchor", anchor);
+                w.WriteEndObject();
+                w.WriteString("profile", b.Profile);
+                break;
             default:
                 throw new NotSupportedException(section.GetType().Name);
         }
@@ -110,16 +135,16 @@ public static partial class CanonicalFormat
         var id = Required(n, "id", "A section");
         if (id.Length == 0 || id.Contains('.') || id.Contains('/')) throw new FormatException($"Section id '{id}' must be non-empty, without '.' or '/'.");
         string Problem(string what) => $"Section '{id}': {what}.";
-        switch (n["plate"], n["tube"])
+        switch (n["plate"], n["tube"], n["beam"])
         {
-            case ({ } plate, null):
+            case ({ } plate, null, null):
                 var face = (string?)plate["face"];
                 if ((face is null) == (plate["plane"] is null)) throw new FormatException(Problem("a plate is on a face or on a plane, one of the two"));
                 var thickness = (double?)n["thickness"] ?? throw new FormatException(Problem("a plate needs a thickness"));
                 if (!(thickness > 0)) throw new FormatException(Problem("the thickness must be positive"));
                 return new PlateSection(id, thickness, face, plate["plane"] is { } plane ? ReadPlane(plane) : null,
                     plate["near"] is { } near ? Arr(near, 3) : null);
-            case (null, { } tube):
+            case (null, { } tube, null):
                 var along = (string?)tube["along"];
                 if ((along is null) == (tube["line"] is null)) throw new FormatException(Problem("a tube runs along a cylinder or a line, one of the two"));
                 var line = tube["line"]?.AsArray().Select(p => Arr(p, 3)).ToArray();
@@ -128,8 +153,21 @@ public static partial class CanonicalFormat
                 if (outside is null || wall is null) throw new FormatException(Problem("a tube needs its outside diameter and wall"));
                 if (!(wall > 0 && 2 * wall <= outside)) throw new FormatException(Problem("the wall must be positive and at most half the outside diameter"));
                 return new TubeSection(id, outside.Value, wall.Value, along, line);
+            case (null, null, { } beam):
+                var axis = (string?)beam["along"];
+                if ((axis is null) == (beam["lines"] is null)) throw new FormatException(Problem("a beam runs along a cylinder or lines, one of the two"));
+                var lines = beam["lines"]?.AsArray().Select(l => l!.AsArray().Select(p => Arr(p, 3)).ToArray()).ToArray();
+                if (lines is not null && (lines.Length == 0 || lines.Any(l => l.Length != 2))) throw new FormatException(Problem("a beam's lines are one or more, each two points"));
+                if (n["profile"] is not JsonValue profile || profile.GetValueKind() != JsonValueKind.String || ((string)profile!).Length == 0)
+                    throw new FormatException(Problem("a beam needs its profile id"));
+                var up = beam["up"] is { } u ? Arr(u, 3) : null;
+                if (up is not null && up.All(v => v == 0)) throw new FormatException(Problem("the up direction must not be zero"));
+                var anchor = (string?)beam["anchor"];
+                if (anchor is not null && !BeamSection.Anchors.Contains(anchor))
+                    throw new FormatException(Problem($"the anchor '{anchor}' is not one of {string.Join(", ", BeamSection.Anchors)}"));
+                return new BeamSection(id, (string)profile!, axis, lines, up, anchor == "center" ? null : anchor);
             default:
-                throw new FormatException(Problem("a section is a plate or a tube, one of the two"));
+                throw new FormatException(Problem("a section is a plate, a tube or a beam, one of the three"));
         }
     }
 
