@@ -141,7 +141,7 @@ The axis comes from the named cylinder (or the line). From the middle of the run
 face of an earlier part's hull that the axis meets (a plane: the tube's end is cut by it, exact, an ellipse edge where
 oblique), or else where the axis leaves the design (cut square). The part is an extruded annulus along z in the tube's
 own frame, cut by two `PlaneCut`s. An end that meets another tube is refused (`build-tube-meets-tube`). On the stand
-each leg is Ø48.3 × 3.2, 603.1 mm at the long point and 590.1 at the short one, both ends 15.1° off square, cuts
+each leg is Ø48.3 × 3.2, 609.7 mm at the long point and 583.6 at the short one, both ends 15.1° off square, cuts
 parallel.
 
 Bent tubes along line-and-arc skeletons (sweeps, exact) are E2.
@@ -185,7 +185,7 @@ end. The part is written once; each instance gets the matching placement. On the
 - **Cut list:** per distinct tube: size, quantity, long-point and short-point length, each end's angle off square and
   the turn between the two cut planes, material. CSV and markdown.
 - **Bill of materials:** part, kind, quantity, description (`Plate 12 S235 160 × 160`, `Tube Ø48.3 × 3.2 S235
-  L 603.1`), mass each and in all. CSV and markdown.
+  L 609.7`), mass each and in all. CSV and markdown.
 
 ## 4. Verification report
 
