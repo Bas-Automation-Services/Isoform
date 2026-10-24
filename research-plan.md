@@ -318,6 +318,19 @@ against analytic answers only; cross-checking them is part of K7.
   knife edge where `cut3/x+` runs through hole `h6`.
 - *Mass properties:* volume, area, centroid, inertia from the mesh with curvature correction (errors 1e-10 to
   5e-7), plus a certified volume range.
+- *Excess (2026-10-24, demo plan V1):* the largest value of one field over another's solid (`Queries.Excess`: how
+  far parts stray outside a design) or over the boundary points a face owns (`BoundaryExcess`, `ExcessByFace`: how
+  far each design face is from the parts), certified [lower, upper] with the witness point and both faces, and a flag
+  when the budget stopped it first. Branch and bound, highest box first: the upper end from the field's structure
+  over the convex shapes the region lies in (a plane's highest point over planes, balls and rods by duality; a
+  cylinder within a rod round a near-coaxial axis; a sphere round a ball), the lower end from points of the region
+  climbed up the gradient. Faces a constant distance apart settle in one box: a Ø48.3 tube in a Ø50 leg reads −0.85
+  outside and 0.85 uncovered exactly, as do a box poking 1 mm out, a tilted plate's top edge and an offset ball. Face
+  ownership follows the tree (ties to the first child, a flush plane cut never shows a blend's rim), blends get bounds
+  that close on their face (the plain ones stay k/4 wide), and a smooth union's face keeps both sides within k. A
+  round peak still closes only to first order (1e-4 on a ball in 0.6 s). Stand-sized: a Ø50 × 600 leg blended
+  (k = 10) into a foot and a top, against a placed Ø48.3 × 3.2 tube cut by two planes: outside 50 ms, all 16 design
+  faces 0.7 s at 1e-3, the leg's blend 10.85 (its rim on the foot, k + 0.85 from the tube).
 
 **K6 spike — exact B-rep / STEP (works for the analytic case).** `src/Isoform.Step` writes STEP from Isoform's own
 exact B-rep; OCCT reads every one of 15 parts back as one valid solid with Isoform's face/edge/vertex counts, volume

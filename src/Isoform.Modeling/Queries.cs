@@ -254,10 +254,25 @@ public static partial class Queries
                         list.Add(new LeafField(l.Surface with { Origin = p.Placement.ToWorld(l.Surface.Origin), Axis = p.Placement.ToWorld(l.Surface.Axis) }, l.Complement));
                     break;
                 case MinField m: list.AddRange(SharedPlanes(m, box)); break;
+                case ProfileField p: list.AddRange(Sides(p)); break;
             }
         }
         Collect(f);
         return list;
+    }
+
+    /// <summary>
+    /// The edge surfaces a convex extruded profile lies inside: every line's, and the circle's when all its arcs lie on
+    /// one circle and every corner is inside it (a disc, a disc cut by chords). A tube's rod, a plate's sides.
+    /// </summary>
+    static IEnumerable<LeafField> Sides(ProfileField p)
+    {
+        var e = p.Edges;
+        if (p.Revolved || p.Grown != 0 || Enumerable.Range(0, e.Count).Any(k => p.Turn(k) < 0 || e[k].Bulge < 0)) return [];
+        var arcs = e.Where(x => x.IsArc).ToList();
+        var round = arcs.Count > 0 && arcs.All(a => Math.Abs(a.Cu - arcs[0].Cu) < 1e-12 && Math.Abs(a.Cv - arcs[0].Cv) < 1e-12 && Math.Abs(a.R - arcs[0].R) < 1e-12)
+            && e.All(x => Math.Sqrt((x.U0 - arcs[0].Cu) * (x.U0 - arcs[0].Cu) + (x.V0 - arcs[0].Cv) * (x.V0 - arcs[0].Cv)) <= arcs[0].R * (1 + 1e-12));
+        return Enumerable.Range(0, e.Count).Where(k => p.EdgeLeaves[k] is not null && (!e[k].IsArc || round)).Select(k => p.EdgeLeaves[k]!);
     }
 
     /// <summary>The solid cylinder a plane–plane fillet rounds the edge with, if the box lies inside the fillet's sector.</summary>
