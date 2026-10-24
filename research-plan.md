@@ -254,7 +254,7 @@ face (`FaceSimplifier`; topology, diagnostics and export keep the octree mesh): 
 boundary loops, collinear vertices on plane–plane edges dropped from both faces, curved faces reduced by edge collapse
 within the chord of their own surface; watertight, every triangle on its face, vertices the mesh's own. On 20-op
 59.6 k → 3.7 k triangles at 0.5 mm (0.08 s), 172 k → 10.8 k at 0.25 mm (0.26 s), 785 k → 15.9 k at 0.1 mm (1.3 s;
-OCCT 5.2 k); smooth blends and a shell 138 k → 14 k, gyroid in a skin 119 k → 69 k. Still open: boundary vertices stay
+OCCT 5.2 k); smooth blends and a shell 138 k → 14 k, gyroid in a skin 115 k → 66 k. Still open: boundary vertices stay
 where the finest cells put them (the rest of the gap to OCCT), and strut lattices at 0.5 mm are meshed coarser than
 the chord, so nothing there collapses (93 k → 92 k). Peak working set at 0.1 mm on 20-op is ~670 MB.
 
