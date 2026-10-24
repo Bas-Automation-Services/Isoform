@@ -27,8 +27,13 @@ public sealed record MassProperties(double Volume, double Area, double Mass, Poi
         var s = new double[10];
         var c = new double[10];
         var area = 0.0;
-        foreach (var t in mesh.Triangles())
+        var triangles = mesh.Triangles().ToArray();
+        // The field is sampled per triangle in parallel (the costly part); the sums run in order, so the result is the same.
+        var corrections = new (double Gap, double Slant, double Rim)[triangles.Length];
+        Parallel.For(0, triangles.Length, k => corrections[k] = Correction(field, v, o, triangles[k]));
+        for (var k = 0; k < triangles.Length; k++)
         {
+            var t = triangles[k];
             Vector3D a = v[t.A] - o, b = v[t.B] - o, d = v[t.C] - o;
             var n = (b - a).Cross(d - a);
             var (f1x, f2x, f3x, g0x, g1x, g2x) = Terms(a.X, b.X, d.X);
@@ -43,25 +48,7 @@ public sealed record MassProperties(double Volume, double Area, double Mass, Poi
 
             var triangle = n.Length / 2;
             if (triangle == 0) continue;
-            var normal = n / (2 * triangle);
-            double gap = 0, slant = 0, rim = 0;
-            foreach (var (p, q) in new[] { (a, b), (b, d), (d, a) })
-            {
-                var m = o + (p + q) / 2;
-                var here = field.Sample(m);
-                // The triangle's own surface must decide the field there; a twin surface of the same shape may tie it.
-                if (field.SampleSurface(t.Owner, m) is not { } sample || sample.Value != here.Value)
-                {
-                    // A chord across a curved rim in the triangle's plane: the triangle covers a segment of about
-                    // 2/3 · chord · sagitta beyond it (or falls short by one).
-                    if (Math.Abs(normal.Dot(here.Gradient)) < 0.5) rim -= 2.0 / 3 * (q - p).Length * here.Value;
-                    continue;
-                }
-                var cos = normal.Dot(sample.Gradient) / sample.Gradient.Length;
-                if (cos < 0.5) continue;
-                gap -= sample.Value / cos;
-                slant += 1 / cos - 1;
-            }
+            var (gap, slant, rim) = corrections[k];
             area += triangle * (1 + slant / 3) + rim;
             // The sliver's volume, placed at the triangle's centroid.
             var dv = triangle * gap / 3;
@@ -85,6 +72,35 @@ public sealed record MassProperties(double Volume, double Area, double Mass, Poi
             -density * (i[8] - volume * y * z),
             -density * (i[9] - volume * z * x));
         return new(volume, area, density * volume, new Point3D(o.X + x, o.Y + y, o.Z + z), inertia);
+    }
+
+    /// <summary>The field at a triangle's edge midpoints: the gap to its surface, the slant and the rim's segment.</summary>
+    static (double Gap, double Slant, double Rim) Correction(Field field, IReadOnlyList<Point3D> v, Point3D o, Triangle t)
+    {
+        Vector3D a = v[t.A] - o, b = v[t.B] - o, d = v[t.C] - o;
+        var n = (b - a).Cross(d - a);
+        var triangle = n.Length / 2;
+        if (triangle == 0) return default;
+        var normal = n / (2 * triangle);
+        double gap = 0, slant = 0, rim = 0;
+        foreach (var (p, q) in new[] { (a, b), (b, d), (d, a) })
+        {
+            var m = o + (p + q) / 2;
+            var here = field.Sample(m);
+            // The triangle's own surface must decide the field there; a twin surface of the same shape may tie it.
+            if (field.SampleSurface(t.Owner, m) is not { } sample || sample.Value != here.Value)
+            {
+                // A chord across a curved rim in the triangle's plane: the triangle covers a segment of about
+                // 2/3 · chord · sagitta beyond it (or falls short by one).
+                if (Math.Abs(normal.Dot(here.Gradient)) < 0.5) rim -= 2.0 / 3 * (q - p).Length * here.Value;
+                continue;
+            }
+            var cos = normal.Dot(sample.Gradient) / sample.Gradient.Length;
+            if (cos < 0.5) continue;
+            gap -= sample.Value / cos;
+            slant += 1 / cos - 1;
+        }
+        return (gap, slant, rim);
     }
 
     /// <summary>

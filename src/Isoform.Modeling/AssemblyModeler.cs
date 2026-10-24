@@ -51,7 +51,7 @@ public sealed class AssemblyResult(IReadOnlyList<Instance> instances, IReadOnlyL
     }
 
     /// <summary>The part's box moved into place, grown a little so the search has room round the solid.</summary>
-    static Box3D WorldBox(Instance i)
+    public static Box3D WorldBox(Instance i)
     {
         var (min, max) = (i.Result.Part.Min, i.Result.Part.Max);
         var (lo, hi) = (new Point3D(double.MaxValue, double.MaxValue, double.MaxValue), new Point3D(double.MinValue, double.MinValue, double.MinValue));
