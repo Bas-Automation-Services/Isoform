@@ -486,6 +486,32 @@ but about half are features a finer local mesh would build.
   are gone from the field simplified round it (plain analytic faces meeting at more than 6°). Of the 4300 documents
   this changed one result, 1673, from silent to reported.
 
+**Speed on a large blended part (2026-10-24).** The demo's pump stand (`Examples.PumpStand`: nine blends in nested
+chains, four oblique legs, four keep-out bodies; 1.1 M polygons at 1 mm) took 6.6–6.8 s at 1 mm cells and 11.4–11.8 s
+at 0.5 mm, `MassProperties.Of` on its mesh 32 s and 58 s. Profiled (Release, stage timers and sampling): at 1 mm half
+the time went to the lost-piece search, the rest to meshing (about 1 M surface cells for the stand alone, 40% of them
+without a vertex at 0.5 mm) and serial topology; mass properties sampled the whole tree three times per triangle on
+one thread. Four changes, none loosening a guarantee:
+- The piece search skips a surface whose path ends in a blend, a profile or another node: only a leaf gives a witness,
+  so those searches could only end without a face (85% of the search time). Its blocks are searched in parallel and
+  their faces taken in block order, as before. Mesh and diagnostics unchanged.
+- A blend's bounds are the blend of its children's bounds: the smooth min and max rise with both arguments, so their
+  values at the intervals' ends bound them, where the bounds were k/4 wide wherever the blend was active and no cell
+  within k/4 of a blend was ever certified. Strictly tighter, so the octree round blends is smaller (cache format 5)
+  and the mesh changes where a cell now simplifies to one patch (1,126,197 → 1,122,583 polygons on the stand). The
+  pocket search, which runs on these bounds, now finds a cusp that a shell thinner than half a blend's width leaves in
+  its cavity (0.05 mm, 0.12 mm long, in the smooth-blends example, silent before); that example's shell went from 1.5
+  to 2 mm, where it has none.
+- Bodies are meshed and given topology at once, so the keep-outs and the stand's serial topology overlap.
+- `MassProperties.Of` sums runs of 4096 triangles in parallel, each with the field simplified round it (exact there),
+  and adds the runs in order: deterministic, the same per-triangle terms.
+
+Result: the stand 2.5–2.6 s at 1 mm and 4.2 s at 0.5 mm, mass properties 1.2–1.4 s and 2 s. Nothing else slower
+(interleaved runs on a loaded machine, best of 3): 20-op 0.45–0.6 → 0.36–0.41 s at 0.5 mm, 0.51–0.56 → 0.48–0.6 s at
+0.25 mm; the examples the same within the noise (±40 ms) except smooth blends 0.52 → 0.21 s, the pipe bend 0.9–1.0 →
+0.32 s (a sweep's faces end in a sweep node: futile searches) and diamond infill 0.39 → 0.30 s. Not done: the meshing itself (about 2 s of the 2.5), whose cell count is set by the chord tolerance on the
+legs and the keep-outs; exact bounds for oblique cylinders were tried and gained nothing measurable.
+
 **Review.** An independent read of the K4 code found 15 problems (wrong geometry without a diagnostic in several);
 all fixed, each with a regression test (`ReviewFindingTests`).
 

@@ -98,7 +98,7 @@ public static partial class DualContouring
         var reach = neighbours.Count == 0 ? 0 : neighbours.Max(n => n.Size);
 
         var f = new Fingerprint();
-        f.Add(4); // format version
+        f.Add(5); // format version
         f.Add(g.H);
         f.Add(ctx.ChordTolerance);
         f.Add(g.Origin);
