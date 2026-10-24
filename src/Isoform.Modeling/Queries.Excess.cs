@@ -22,16 +22,18 @@ public static partial class Queries
     /// Branch and bound over boxes, highest first. A box holds none of the solid when the solid's bounds there are above
     /// zero. Otherwise the field is no higher there than its bounds over the box, nor than its structure allows inside
     /// the convex shapes the solid's faces hold it in (<see cref="High"/>): a face of the field parallel to a face of
-    /// the solid, a cylinder coaxial with a rod of it, a sphere round a ball of it. Those make a face lying a constant
-    /// distance from the other (a tube in a larger bore, a plate on a face) exact in one box, where boxes alone could
-    /// only close on it cell by cell. The lower end is the field at points of the solid, each climbed from a box
-    /// centre up the field's gradient and back into the solid. Stops after <paramref name="budget"/> boxes.
+    /// the solid, a cylinder coaxial with a rod of it, a sphere round a ball of it, a hole's wall round the same hole.
+    /// Those make a face lying a constant distance from the other (a tube in a larger bore, a plate on a face) exact in
+    /// one box, where boxes alone could only close on it cell by cell. Nor is it higher than its shape allows over a
+    /// polytope cut close round the solid in the box (<see cref="Upper"/>), which closes on a face that only nearly
+    /// follows the other (a fitted outline on a blend) to second order. A box is halved only across what changes:
+    /// a plate against a design extruded the same way splits in its plane. The lower end is the field at points of the
+    /// solid, each climbed from a box centre up the field's gradient and back into the solid. Stops after
+    /// <paramref name="budget"/> boxes.
     /// </para>
     /// </summary>
     public static ExcessResult Excess(Field field, Field solid, Box3D box, double tolerance = 1e-3, int budget = 100_000) =>
-        Search(field, solid, box, tolerance, budget,
-            (b, s) => Enclose(s, b).Lo > 0 ? null : Conjuncts(s, b),
-            p => Into(solid, p));
+        Search(field, solid, box, tolerance, budget, null, p => Into(solid, p));
 
     /// <summary>
     /// The largest value of <paramref name="field"/> over the boundary points of <paramref name="solid"/> owned by one
@@ -41,19 +43,41 @@ public static partial class Queries
     /// over boxes where the face may own a boundary point (<see cref="Owned"/>: which child of an intersection, union or
     /// blend can decide there, ties going to the first). The face's points lie inside the solid's convex shapes, on
     /// the face's own surface where it has one, and on a smooth union's face both sides are between 0 and k: a leg's
-    /// blend never runs farther than k from the leg. Witnesses are boundary points the face owns, found by Newton onto
-    /// its surface (on the boundary to 1e-9).
+    /// blend never runs farther than k from the leg, and a blend face lies on its own field's zero. Witnesses are
+    /// boundary points the face owns, found by Newton onto its surface (on the boundary to 1e-9).
     /// </summary>
     public static ExcessResult BoundaryExcess(Field field, Field solid, Box3D box, IReadOnlySet<int> faces, double tolerance = 1e-3, int budget = 100_000) =>
-        Search(field, solid, box, tolerance, budget,
-            (b, s) =>
-            {
-                if (Owned(s, b, faces) is not { } owned || !MayHoldBoundary(owned)) return null;
-                var holds = Conjuncts(s, b);
-                FaceLeaves(s, faces, holds);
-                return holds;
-            },
-            p => OnFace(solid, faces, p));
+        Search(field, solid, box, tolerance, budget, faces, p => OnFace(solid, faces, p));
+
+    /// <summary>
+    /// The upper bound <see cref="Excess(Field, Field, Box3D, double, int)"/> (or, with <paramref name="faces"/>,
+    /// <see cref="BoundaryExcess"/>) puts on <paramref name="field"/> over the region within one box: no point of the
+    /// solid in the box (or boundary point one of the faces owns) has the field above it. Null when the box certainly
+    /// holds none; −∞ when the shapes holding the region miss the box.
+    /// </summary>
+    public static double? RegionHigh(Field field, Field solid, Box3D box, IReadOnlySet<int>? faces = null) =>
+        BoxHigh(field.Simplify(box), solid.Simplify(box), box, faces)?.High;
+
+    /// <summary>
+    /// <see cref="RegionHigh"/> on fields already simplified for the box, and points to seek a witness from: the middle
+    /// of the polytope holding the region and its corner where the field is highest (drawn 0.01 towards the middle,
+    /// off the edges where faces tie), within the solid's caps where a box is not split along them (a rod's
+    /// end, where a tube's flush end meets it).
+    /// </summary>
+    static (double High, Point3D[] Starts)? BoxHigh(Field f, Field s, Box3D box, IReadOnlySet<int>? faces)
+    {
+        // A face's points lie on its own surfaces, not on the others': several faces are taken one by one.
+        if (faces is { Count: > 1 })
+            return faces.Select(o => BoxHigh(f, s, box, new HashSet<int> { o })).Where(h => h is not null).MaxBy(h => h!.Value.High);
+        if (faces is null ? Enclose(s, box).Lo > 0 : Owned(s, box, faces) is not { } owned || !MayHoldBoundary(owned)) return null;
+        var (holds, smooth) = (Conjuncts(s, box), Smooth(s, []));
+        if (faces is not null) FaceLeaves(s, faces, holds, smooth);
+        var corners = Corners(box, holds, smooth);
+        if (corners.Length == 0) return (double.NegativeInfinity, [box.Center]);
+        var (middle, corner) = (Centroid(corners), corners.MaxBy(f.Value));
+        var inward = middle - corner;
+        return (Upper(f, box, corners, holds), [middle, corner + inward * Math.Min(1.0 / 16, 0.01 / Math.Max(inward.Length, 1e-300))]);
+    }
 
     /// <summary>
     /// <see cref="BoundaryExcess"/> per face name of <paramref name="surfaces"/> (pattern copies are faces of their own),
@@ -76,19 +100,18 @@ public static partial class Queries
     public static IReadOnlyList<(string Face, ExcessResult Excess)> ExcessByFace(CompiledPart parts, CompiledPart design, double tolerance = 1e-3) =>
         ExcessByFace(parts.Field!, design.Field!, Box(design), design.Surfaces, tolerance);
 
-    static ExcessResult Search(Field field, Field solid, Box3D box, double tolerance, int budget,
-        Func<Box3D, Field, List<LeafField>?> region, Func<Point3D, Point3D?> onto)
+    static ExcessResult Search(Field field, Field solid, Box3D box, double tolerance, int budget, IReadOnlySet<int>? faces, Func<Point3D, Point3D?> onto)
     {
         var (best, at) = (double.NegativeInfinity, box.Center);
         var pruned = double.NegativeInfinity; // highest bound of a box set aside
         var top = double.NegativeInfinity; // highest bound of the boxes left when the search stopped
-        var queue = new PriorityQueue<(Box3D Box, Field F, Field S), double>();
+        var small = 0;
+        var queue = new PriorityQueue<(Box3D Box, Field F, Field S, Point3D[] Starts), double>();
         void Push(Box3D b, Field f, Field s)
         {
-            if (region(b, s) is not { } holds) return;
-            var hi = High(f, b, holds);
+            if (BoxHigh(f, s, b, faces) is not var (hi, starts)) return;
             if (hi <= best + tolerance) pruned = Math.Max(pruned, hi);
-            else queue.Enqueue((b, f, s), -hi);
+            else queue.Enqueue((b, f, s, starts), -hi);
         }
         Push(box, field.Simplify(box), solid.Simplify(box));
         while (queue.TryDequeue(out var item, out var priority))
@@ -99,18 +122,34 @@ public static partial class Queries
                 pruned = Math.Max(pruned, hi); // the rest are no higher
                 break;
             }
-            if (budget-- <= 0 || HalfDiagonal(item.Box) < tolerance / 4)
+            if (budget-- <= 0)
             {
                 top = hi;
                 break;
             }
-            // A sample that beats the best is climbed from; most do not, and cost one projection.
-            if (onto(item.Box.Center) is { } start && field.Value(start) > best)
+            // Halved only across what changes, a box is small when it is small that way. A small one is set aside with
+            // its bound, as others may yet give a witness (a face tied with another owns no point of many a box); after
+            // a few dozen the rest are left too.
+            var across = Across(item.F, item.S);
+            if (Reach(item.Box, across) < tolerance / 4)
             {
-                var (x, v) = Climb(field, onto, start, HalfDiagonal(item.Box), tolerance);
-                (best, at) = (v, x);
+                if (++small > 64)
+                {
+                    top = hi;
+                    break;
+                }
+                pruned = Math.Max(pruned, hi);
+                continue;
             }
-            foreach (var child in Split(item.Box)) Push(child, item.F.Simplify(child), item.S.Simplify(child));
+            // A sample that beats the best is climbed from; most do not, and cost a projection. The polytope's highest
+            // corner only when its middle falls short of the box's bound.
+            foreach (var p in item.Starts.TakeWhile(_ => best < hi - tolerance))
+                if (onto(p) is { } start && field.Value(start) > best)
+                {
+                    var (x, v) = Climb(field, onto, start, HalfDiagonal(item.Box), tolerance);
+                    (best, at) = (v, x);
+                }
+            foreach (var child in Split(item.Box, across)) Push(child, item.F.Simplify(child), item.S.Simplify(child));
         }
         var upper = Math.Max(best, Math.Max(pruned, top));
         var settled = upper == best || upper - best <= tolerance;
@@ -208,7 +247,7 @@ public static partial class Queries
             case PlacedField p:
                 return Owned(p.Child, p.LocalBox(box), faces);
             default:
-                return faces.Any(o => f.SampleSurface(o, box.Center) is not null) ? f.Bounds(box) : null;
+                return faces.Any(o => f.SampleSurface(o, box.Center) is not null) ? Enclose(f, box) : null;
         }
     }
 
@@ -216,7 +255,7 @@ public static partial class Queries
     /// The leaves of the faces in the field: a boundary point a leaf owns lies on its surface, so both the leaf and its
     /// complement hold it. Only through nodes that hand on a child's sample unchanged where it owns the point.
     /// </summary>
-    static void FaceLeaves(Field f, IReadOnlySet<int> faces, List<LeafField> holds)
+    static void FaceLeaves(Field f, IReadOnlySet<int> faces, List<LeafField> holds, List<(Field Field, bool Zero)> smooth)
     {
         switch (f)
         {
@@ -224,11 +263,13 @@ public static partial class Queries
                 holds.Add(l);
                 holds.Add(new LeafField(l.Surface, !l.Complement));
                 break;
-            case MaxField m: foreach (var c in m.Children) FaceLeaves(c, faces, holds); break;
-            case MinField m: foreach (var c in m.Children) FaceLeaves(c, faces, holds); break;
-            case NegateField n: FaceLeaves(n.Child, faces, holds); break;
+            case MaxField m: foreach (var c in m.Children) FaceLeaves(c, faces, holds, smooth); break;
+            case MinField m: foreach (var c in m.Children) FaceLeaves(c, faces, holds, smooth); break;
+            case NegateField n: FaceLeaves(n.Child, faces, holds, smooth); break;
             case BlendField b:
                 if (faces.Contains(b.Blend.Id))
+                {
+                    smooth.Add((b, true)); // the blend's own field is zero on its face
                     foreach (var side in new[] { b.A, b.B })
                     {
                         // On a smooth union's face both sides lie between 0 and k (the min sinks by h²k/4 where they
@@ -239,14 +280,16 @@ public static partial class Queries
                                 holds.Add(new LeafField(l.Surface.Offset(l.Surface.Id, l.Surface.Source, l.Complement ? -b.K : b.K), l.Complement));
                         if (b.Union && side is LeafField leaf) holds.Add(new LeafField(leaf.Surface, !leaf.Complement));
                     }
-                FaceLeaves(b.A, faces, holds);
-                FaceLeaves(b.B, faces, holds);
+                }
+                FaceLeaves(b.A, faces, holds, smooth);
+                FaceLeaves(b.B, faces, holds, smooth);
                 break;
-            case ProfileField p: foreach (var l in p.Leaves) FaceLeaves(l, faces, holds); break;
+            case ProfileField p: foreach (var l in p.Leaves) FaceLeaves(l, faces, holds, smooth); break;
             case PlacedField p:
-                var local = new List<LeafField>();
-                FaceLeaves(p.Child, faces, local);
+                var (local, bent) = (new List<LeafField>(), new List<(Field Field, bool Zero)>());
+                FaceLeaves(p.Child, faces, local, bent);
                 holds.AddRange(local.Select(l => Moved(l, p.Placement, toWorld: true)));
+                smooth.AddRange(bent.Select(z => ((Field)new PlacedField(z.Field, p.Placement), z.Zero)));
                 break;
         }
     }
@@ -256,7 +299,9 @@ public static partial class Queries
     /// is no higher than its highest part, a union (smooth or not: the smooth min never exceeds the min) than its lowest,
     /// a smooth intersection than its highest part plus k/4. An extruded profile without convex corners is never above
     /// its highest edge's surface (inside, the nearest edge is no nearer than its surface; outside, the nearest point is
-    /// inside an edge or at a tangent junction, where the surface is exact). A placed field takes the holds along.
+    /// inside an edge or at a tangent junction, where the surface is exact). A hole cut by a convex profile is never
+    /// above the complement of a side the profile lies inside (the profile's field is never below that side's), a round
+    /// hole's wall exactly. A placed field takes the holds along.
     /// </summary>
     static double High(Field f, Box3D box, List<LeafField> holds) => f switch
     {
@@ -266,16 +311,21 @@ public static partial class Queries
         BlendField { Union: true } b => Math.Min(High(b.A, box, holds), High(b.B, box, holds)) - Sink(b, box),
         BlendField b => Math.Min(Enclose(b, box).Hi, Math.Max(High(b.A, box, holds), High(b.B, box, holds)) + b.K / 4),
         ProfileField p when !p.Revolved && p.Grown == 0 && Enumerable.Range(0, p.Edges.Count).All(k => p.Turn(k) <= 0) =>
-            Math.Min(p.Bounds(box).Hi, p.Leaves.Max(l => High(l, box, holds))),
+            Math.Min(Enclose(p, box).Hi, p.Leaves.Max(l => High(l, box, holds))),
         PlacedField p => High(p.Child, p.LocalBox(box), holds.Select(l => Moved(l, p.Placement, toWorld: false)).ToList()),
-        _ => f.Bounds(box).Hi,
+        NegateField { Child: LeafField l } => High(Complement(l), box, holds),
+        NegateField { Child: ProfileField p } when Sides(p).ToList() is { Count: > 0 } sides =>
+            Math.Min(-Enclose(p, box).Lo, sides.Min(l => LeafHigh(Complement(l), box, holds))),
+        _ => Enclose(f, box).Hi,
     };
 
     /// <summary>
     /// Bounds of the field over the box, as <see cref="Field.Bounds"/> but closer round a smooth blend: the quadratic
     /// smooth min is min(a, b) − h²k/4 with h = (k − |a − b|)/k, so it sinks by no more than |a − b| at its least
     /// allows and by no less than at its most. Near the blend's face that is first-order tight, where the plain
-    /// bounds stay k/4 wide however small the box.
+    /// bounds stay k/4 wide however small the box. An extruded profile does not change along the extrude, so it is
+    /// 1-Lipschitz in the profile's coordinates over the box's shadow there: a box long that way (one only split
+    /// across a plate) is as close as a square one.
     /// </summary>
     static Interval Enclose(Field f, Box3D box)
     {
@@ -305,6 +355,15 @@ public static partial class Queries
                 var most = Math.Max(0, b.K - near) / b.K;
                 var sink = (most * most * b.K / 4, Sink(b, box));
                 return b.Union ? new(plain.Lo - sink.Item1, plain.Hi - sink.Item2) : new(plain.Lo + sink.Item2, plain.Hi + sink.Item1);
+            }
+            case ProfileField { Revolved: false } p:
+            {
+                var (o, x, y) = (p.Frame.Origin, p.Frame.X, p.Frame.Y);
+                var (u0, u1) = (-Support(box, -x) - x.Dot(o.AsVector()), Support(box, x) - x.Dot(o.AsVector()));
+                var (v0, v1) = (-Support(box, -y) - y.Dot(o.AsVector()), Support(box, y) - y.Dot(o.AsVector()));
+                var v = p.Value(p.Frame.ToWorld(new Point3D((u0 + u1) / 2, (v0 + v1) / 2, 0)));
+                var reach = Math.Sqrt((u1 - u0) * (u1 - u0) + (v1 - v0) * (v1 - v0)) / 2;
+                return p.Bounds(box).Intersect(new Interval(v - reach, v + reach));
             }
             default:
                 return f.Bounds(box);
