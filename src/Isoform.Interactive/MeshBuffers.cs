@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using BasAutomation.Geometry;
 using Isoform.Meshing;
 using Isoform.Modeling;
@@ -72,7 +73,16 @@ public sealed class MeshBuffers
         return Of(new Mesh(vertices, quads), faceOf);
     }
 
-    static (Mesh, int[]) Simplified(FrepResult r, double chord) => FaceSimplifier.Simplify(r.Mesh!, r.FaceOfQuad, r.Part.Surfaces, r.Part.Field!, chord);
+    // Per result, its last simplification: a part the cache kept (PartCache) is not simplified again.
+    static readonly ConditionalWeakTable<FrepResult, Tuple<double, Mesh, int[]>> Kept = [];
+
+    static (Mesh, int[]) Simplified(FrepResult r, double chord)
+    {
+        if (Kept.TryGetValue(r, out var kept) && kept.Item1 == chord) return (kept.Item2, kept.Item3);
+        var (mesh, faces) = FaceSimplifier.Simplify(r.Mesh!, r.FaceOfQuad, r.Part.Surfaces, r.Part.Field!, chord);
+        Kept.AddOrUpdate(r, Tuple.Create(chord, mesh, faces));
+        return (mesh, faces);
+    }
 
     // Plain arrays, integer keys and no closures: in WebAssembly, arrays of structs read through IReadOnlyList and
     // tuple keys are many times slower.

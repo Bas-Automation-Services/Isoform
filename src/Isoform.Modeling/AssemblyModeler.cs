@@ -87,14 +87,15 @@ public sealed class AssemblyResult(IReadOnlyList<Instance> instances, IReadOnlyL
 /// resolved), and places it. Sub-assemblies nest their placements.
 /// </summary>
 /// <param name="cache">Region results kept across regenerations (see <see cref="FrepModeler"/>).</param>
-public sealed class AssemblyModeler(ModelingSettings settings, RegionCache? cache = null)
+/// <param name="parts">Whole part results kept across regenerations (see <see cref="FrepModeler"/>).</param>
+public sealed class AssemblyModeler(ModelingSettings settings, RegionCache? cache = null, PartCache? parts = null)
 {
     /// <param name="load">The text of the document at a path, or null when there is none.</param>
     public AssemblyResult Regenerate(AssemblyDocument assembly, Func<string, string?> load)
     {
         var diagnostics = new List<Diagnostic>();
-        var parts = new Dictionary<string, FrepResult>();
-        var modeler = new FrepModeler(settings, cache);
+        var distinct = new Dictionary<string, FrepResult>();
+        var modeler = new FrepModeler(settings, cache, parts);
         // Instances keep their pose inside their top-level component; mates move whole top-level components.
         var found = new List<(int Top, string Id, string Part, string Hash, Frame Inner, FrepResult Result)>();
 
@@ -135,9 +136,9 @@ public sealed class AssemblyModeler(ModelingSettings settings, RegionCache? cach
             // resolve is regenerated as it is, which reports why.
             doc = Parametric.TryResolve(doc) ?? doc;
             var hash = CanonicalFormat.Hash(doc);
-            if (!parts.TryGetValue(hash, out var result))
+            if (!distinct.TryGetValue(hash, out var result))
             {
-                result = parts[hash] = modeler.Regenerate(doc);
+                result = distinct[hash] = modeler.Regenerate(doc);
                 diagnostics.AddRange(result.Diagnostics.Select(d => d with { FeatureId = $"{c.Part}:{d.FeatureId}" }));
             }
             found.Add((top, id, c.Part, hash, inner, result));

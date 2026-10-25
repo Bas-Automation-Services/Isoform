@@ -207,4 +207,34 @@ public class SessionTests
         r.Reused.Should().Be(0, "every region was meshed for this regeneration, by one session or the other");
         r.Meshed.Should().BePositive();
     }
+
+    [Fact]
+    public void An_unchanged_part_is_not_regenerated_again()
+    {
+        var session = new Session();
+        var document = CanonicalFormat.Write(Examples.Bundles[0].Bundle);
+        var first = session.Regenerate(document, "[]", Settings);
+
+        var again = session.Regenerate(document, "[]", Settings);
+
+        again.View!.Assembly!.Instances.Select(i => i.Result).Should().Equal(first.View!.Assembly!.Instances.Select(i => i.Result),
+            ReferenceEquals, "each part's result is the one kept from the first regeneration");
+        again.Meshed.Should().Be(0);
+        again.Reused.Should().Be(first.Meshed, "a kept part counts its regions as reused");
+        again.Buffers.Positions.Should().Equal(first.Buffers.Positions);
+        again.Buffers.Faces.Should().Equal(first.Buffers.Faces);
+    }
+
+    [Fact]
+    public void A_kept_part_keeps_its_regions_for_a_later_edit()
+    {
+        var session = new Session();
+        var document = Text(Examples.All[0].Name);
+        var first = session.Regenerate(document, "[]", Settings);
+        for (var k = 0; k < 3; k++) session.Regenerate(document, "[]", Settings);
+
+        var edited = session.Regenerate(document, """[{"set": "hole.diameter", "value": 12}]""", Settings);
+
+        edited.Meshed.Should().BePositive().And.BeLessThan(first.Meshed, "regions away from the hole are still in the cache");
+    }
 }

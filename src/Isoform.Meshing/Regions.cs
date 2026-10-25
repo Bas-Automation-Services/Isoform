@@ -172,6 +172,12 @@ public sealed class RegionCache
         return entry.Mesh;
     }
 
+    /// <summary>Marks these entries used by this regeneration without reading them, and counts them as reused.</summary>
+    public void Touch(IEnumerable<UInt128> keys)
+    {
+        foreach (var key in keys) TryGet(key);
+    }
+
     /// <summary>A result just meshed; kept unless it is not <see cref="RegionMesh.Cacheable"/>.</summary>
     public void Add(UInt128 key, RegionMesh mesh)
     {
