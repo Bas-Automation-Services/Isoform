@@ -4,43 +4,11 @@ namespace Isoform.Meshing;
 
 public static partial class FaceSimplifier
 {
-    // A vertex this close to the line through its two neighbours on an edge is on it: vertices lie on both planes to
-    // ~1e-15, so this only keeps the corners.
+    // Points this close to the line through two others are on it, for the triangulation.
     const double Straight = 1e-9;
 
     sealed partial class Work
     {
-        /// <summary>
-        /// The vertices on a straight edge between two planar faces that are not corners: each on its two faces only,
-        /// passed once by a loop of each (the two loops running opposite ways through it), on the line through its
-        /// neighbours and between them. They go from both faces at once.
-        /// </summary>
-        public bool[] Removable(bool[] planar, List<int[]>?[] loops, bool[] kept)
-        {
-            var (seen, prev, next, first) = (new int[V.Length], new int[V.Length], new int[V.Length], new int[V.Length]);
-            for (var f = 0; f < FaceCount; f++)
-            {
-                if (!planar[f] || kept[f]) continue;
-                foreach (var loop in loops[f]!)
-                    for (var i = 0; i < loop.Length; i++)
-                    {
-                        var (v, p, n) = (loop[i], loop[(i + loop.Length - 1) % loop.Length], loop[(i + 1) % loop.Length]);
-                        if (seen[v] == 0) (seen[v], prev[v], next[v], first[v]) = (1, p, n, f);
-                        else seen[v] = seen[v] == 1 && first[v] != f && prev[v] == n && next[v] == p ? 2 : 3;
-                    }
-            }
-            var removable = new bool[V.Length];
-            for (var v = 0; v < V.Length; v++)
-            {
-                if (seen[v] != 2 || FacesOf(v).Length != 2) continue;
-                var (u, w) = (V[prev[v]], V[next[v]]);
-                var along = w - u;
-                var (s, length) = ((V[v] - u).Dot(along), along.LengthSquared);
-                removable[v] = s > 0 && s < length && (V[v] - u).Cross(along).Length <= Straight * Math.Sqrt(length);
-            }
-            return removable;
-        }
-
         /// <summary>
         /// A planar face from its boundary loops alone, less the removable vertices, triangulated in its plane; null when
         /// that fails.

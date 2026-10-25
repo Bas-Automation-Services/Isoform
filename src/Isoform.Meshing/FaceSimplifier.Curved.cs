@@ -14,13 +14,15 @@ public static partial class FaceSimplifier
     sealed partial class Work
     {
         /// <summary>
-        /// A curved face with fewer interior vertices: each in turn, in vertex order, moves onto the nearest neighbour
-        /// it can (a half-edge collapse, so every vertex left is one of the mesh's), until none can. A collapse is taken
-        /// when the face stays a manifold patch with the same boundary (the link condition, and no new edge between two
-        /// boundary vertices that another face also has) and every new triangle fits the face's surface: its edge
-        /// midpoints and centroid within the chord, its normal within 60° of the surface's.
+        /// A curved face with fewer vertices: each interior vertex, and each <paramref name="removable"/> one on its
+        /// boundary, in turn, in vertex order, moves onto the nearest neighbour it can (a half-edge collapse, so every
+        /// vertex left is one of the mesh's), until none can; a boundary vertex only along the boundary. A collapse is
+        /// taken when the face stays a manifold patch with the same boundary less the removable vertices (the link
+        /// condition, and no new edge between two boundary vertices that another face also has, but the one that closes
+        /// the boundary over a removed vertex) and every new triangle fits the face's surface: its edge midpoints and
+        /// centroid within the chord, its normal within 60° of the surface's.
         /// </summary>
-        public int[] Collapse(int face)
+        public int[] Collapse(int face, bool[] removable)
         {
             var tris = TrianglesOf(face);
             var s = SurfaceOf(face);
@@ -43,6 +45,7 @@ public static partial class FaceSimplifier
             for (var l = 0; l < n; l++) inc[l] = new List<int>(6);
             for (var i = 0; i < c.Length; i++) inc[c[i]].Add(i / 3);
             var edge = global.Select(OnBoundary).ToArray();
+            var movable = global.Select(g => removable[g]).ToArray();
             var dead = new bool[tris.Length];
             var mark = new int[n];
             var stamp = 0;
@@ -97,7 +100,14 @@ public static partial class FaceSimplifier
                         if (shared++ == 0) x0 = Third(t, a, b);
                         else x1 = Third(t, a, b);
                     }
-                if (shared != 2) return false;
+                // An interior vertex across an inner edge; a boundary one along the boundary, keeping its other
+                // neighbour there (p) to close the boundary over it.
+                if (shared != (edge[a] ? 1 : 2)) return false;
+                var p = -1;
+                if (edge[a])
+                    foreach (var t in inc[a])
+                        for (var k = 0; k < 3; k++)
+                            if (c[3 * t + k] is var x && x != a && x != b && x != x0 && inc[a].Count(u => Has(u, x)) == 1) p = x;
                 stamp++;
                 foreach (var t in inc[b])
                     for (var k = 0; k < 3; k++) mark[c[3 * t + k]] = stamp;
@@ -109,7 +119,7 @@ public static partial class FaceSimplifier
                         var x = c[3 * t + k];
                         if (x == a || x == x0 || x == x1) continue;
                         // An edge b–x already there, or one another face may draw as well.
-                        if (mark[x] == stamp || (edge[b] && edge[x] && ShareOther(global[b], global[x]))) return false;
+                        if (mark[x] == stamp || (x != p && edge[b] && edge[x] && ShareOther(global[b], global[x]))) return false;
                     }
                     // (a, x0, x1) would become a triangle that is there already.
                     if (Has(t, x0) && Has(t, x1))
@@ -138,7 +148,7 @@ public static partial class FaceSimplifier
 
             // Every interior vertex once, then again each one whose neighbourhood a collapse changed, in vertex order.
             var (queued, pending) = (new bool[n], new bool[n]);
-            var queue = Enumerable.Range(0, n).Where(l => !edge[l]).OrderBy(l => global[l]).ToList();
+            var queue = Enumerable.Range(0, n).Where(l => !edge[l] || movable[l]).OrderBy(l => global[l]).ToList();
             foreach (var a in queue) queued[a] = true;
             var near = new List<(double Distance, int Id, int Local)>();
             while (queue.Count > 0)
@@ -167,7 +177,7 @@ public static partial class FaceSimplifier
                             for (var k = 0; k < 3; k++)
                             {
                                 var x = c[3 * t + k];
-                                if (edge[x] || queued[x] || pending[x]) continue;
+                                if ((edge[x] && !movable[x]) || queued[x] || pending[x]) continue;
                                 pending[x] = true;
                                 again.Add(x);
                             }

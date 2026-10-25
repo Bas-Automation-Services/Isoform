@@ -104,6 +104,38 @@ public class FaceSimplifierTests(ITestOutputHelper output)
     }
 
     [Fact]
+    public void A_curved_edge_keeps_only_the_points_its_chord_needs()
+    {
+        // A Ø20 hole through a 10 mm plate: each rim is a circle where a plane meets the hole's wall.
+        var doc = new PartDocument([new Block("plate", BooleanOp.New, [-20, -20, 0], [40, 40, 10]), new Hole("hole", [0, 0], 20)]);
+        var settings = Settings with { ChordTolerance = 0.05 }; // the page's
+        var (r, mesh, _, _) = Simplified(doc, settings);
+        var octree = r.Mesh!;
+        output.WriteLine($"{octree.Vertices.Count:N0} → {mesh.Vertices.Count:N0} vertices");
+
+        mesh.IsWatertight().Should().BeTrue();
+        // A chord of length c strays c²/8r from a circle of radius r: about 32 points a rim at 0.05 mm (a few more, as
+        // they are the octree's), where the octree has 160.
+        var rim = mesh.Vertices.Where(p => Math.Abs(Math.Sqrt(p.X * p.X + p.Y * p.Y) - 10) < 1e-6 && (p.Z < 1e-6 || p.Z > 10 - 1e-6)).ToList();
+        rim.Count.Should().BeLessThan(2 * 60);
+        // Every point the octree had on a rim stays within the chord of the rim that is left.
+        foreach (var z in new[] { 0.0, 10.0 })
+        {
+            var kept = rim.Where(p => Math.Abs(p.Z - z) < 1e-6).OrderBy(p => Math.Atan2(p.Y, p.X)).ToList();
+            kept.Count.Should().BeGreaterThan(8);
+            foreach (var p in octree.Vertices.Where(p => Math.Abs(Math.Sqrt(p.X * p.X + p.Y * p.Y) - 10) < 1e-6 && Math.Abs(p.Z - z) < 1e-6))
+                Enumerable.Range(0, kept.Count).Min(i => ToSegment(p, kept[i], kept[(i + 1) % kept.Count])).Should().BeLessThanOrEqualTo(settings.ChordTolerance);
+        }
+    }
+
+    static double ToSegment(Point3D p, Point3D a, Point3D b)
+    {
+        var ab = b - a;
+        var t = Math.Clamp((p - a).Dot(ab) / ab.LengthSquared, 0, 1);
+        return (p - (a + ab * t)).Length;
+    }
+
+    [Fact]
     public void A_repeat_gives_the_bit_identical_mesh()
     {
         var (_, a, fa, _) = Simplified(TapeTests.Twenty, Settings);

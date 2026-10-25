@@ -8,9 +8,10 @@ namespace Isoform.Meshing;
 /// boundary shared with its neighbours, so the result stays watertight and every triangle keeps its face:
 /// <list type="bullet">
 /// <item>a planar face loses its interior vertices and is triangulated from its boundary loops in its plane;</item>
-/// <item>vertices along a straight edge between two planar faces go from both faces at once;</item>
-/// <item>a curved face loses interior vertices by edge collapse, its boundary locked, while every new triangle stays
-/// within the chord of the face's own surface and none flips.</item>
+/// <item>each edge between two faces is thinned once to the chord (a straight one to its ends), and the vertices it
+/// loses go from both faces at once;</item>
+/// <item>a curved face loses those along its edges and its interior vertices by edge collapse, while every new triangle
+/// stays within the chord of the face's own surface and none flips.</item>
 /// </list>
 /// The vertices are a subset of the mesh's, so they stay on their surfaces. A face whose result would not close up
 /// with its neighbours keeps its own triangles. Deterministic: faces are independent, each simplified in a fixed order.
@@ -29,38 +30,47 @@ public static partial class FaceSimplifier
         var result = new int[faces][];
         var planar = new bool[faces];
         var loops = new List<int[]>?[faces];
-        Parallel.For(0, faces, f =>
-        {
-            if (m.Planar(f)) (planar[f], loops[f]) = (true, m.Loops(f));
-            else result[f] = m.Collapse(f);
-        });
+        Parallel.For(0, faces, f => (planar[f], loops[f]) = (m.Planar(f), m.Loops(f)));
 
-        // Planar faces: vertices on straight edges between two of them go; a face that does not triangulate, or does
-        // not close up with its neighbours, keeps its own triangles and locks its boundary for them.
+        // A planar face that does not close into loops keeps its own triangles. The vertices that thin each edge go from
+        // both its faces; a face that cannot lose one (a planar face that does not triangulate or close up with its
+        // neighbours, a curved one where the collapse does not fit) puts it back for both faces, which are done again.
         var kept = new bool[faces];
         for (var f = 0; f < faces; f++)
             if (planar[f] && loops[f] is null) (kept[f], result[f]) = (true, m.Own(f));
-        var removable = m.Removable(planar, loops, kept);
-        var dirty = Enumerable.Range(0, faces).Where(f => planar[f] && !kept[f]).ToList();
+        var removable = m.Removable(loops, kept);
+        var dirty = Enumerable.Range(0, faces).Where(f => !kept[f]).ToList();
+        var used = new bool[m.V.Length];
         while (true)
         {
-            // Null where a face did not triangulate.
-            Parallel.ForEach(dirty, f => result[f] = m.Triangulate(f, loops[f]!, removable, planar)!);
-            List<int> reverted = [.. dirty.Where(f => result[f] is null)];
-            if (reverted.Count == 0) reverted = m.Open(result, kept);
-            if (reverted.Count == 0) break;
+            // Null where a planar face did not triangulate.
+            Parallel.ForEach(dirty, f => result[f] = planar[f] ? m.Triangulate(f, loops[f]!, removable, planar)! : m.Collapse(f, removable));
             var touched = new SortedSet<int>();
-            foreach (var f in reverted)
+            // A vertex put back: done again are only the faces that let it go, as the others have it already.
+            void Keep(int v)
             {
-                (kept[f], result[f]) = (true, m.Own(f));
-                if (loops[f] is { } own)
-                    foreach (var loop in own)
+                removable[v] = false;
+                foreach (var g in m.FacesOf(v))
+                    if (result[g] is not { } c || Array.IndexOf(c, v) < 0) touched.Add(g);
+            }
+            Array.Clear(used);
+            foreach (var c in result)
+                if (c is not null)
+                    foreach (var v in c) used[v] = true;
+            for (var v = 0; v < used.Length; v++)
+                if (removable[v] && used[v]) Keep(v);
+            if (touched.Count == 0)
+            {
+                List<int> reverted = [.. Enumerable.Range(0, faces).Where(f => result[f] is null)];
+                if (reverted.Count == 0) reverted = m.Open(result, kept);
+                if (reverted.Count == 0) break;
+                foreach (var f in reverted)
+                {
+                    (kept[f], result[f]) = (true, m.Own(f));
+                    foreach (var loop in loops[f] ?? [])
                         foreach (var v in loop)
-                            if (removable[v])
-                            {
-                                removable[v] = false;
-                                foreach (var g in m.FacesOf(v)) touched.Add(g);
-                            }
+                            if (removable[v]) Keep(v);
+                }
             }
             dirty = [.. touched.Where(g => !kept[g])];
         }
