@@ -1,0 +1,12 @@
+<Project>
+  <!--
+    Build against a BasAutomation.Geometry source checkout instead of the NuGet package, for work that needs a
+    version not yet released:  dotnet build -p:BasAutomationGeometryProject=<path to BasAutomation.Geometry.csproj>
+    (or set BasAutomationGeometryProject as an environment variable). Every project that references the package
+    switches, so no build mixes the two.
+  -->
+  <ItemGroup Condition="'$(BasAutomationGeometryProject)' != '' and '@(PackageReference->AnyHaveMetadataValue('Identity', 'BasAutomation.Geometry'))' == 'true'">
+    <PackageReference Remove="BasAutomation.Geometry" />
+    <ProjectReference Include="$(BasAutomationGeometryProject)" />
+  </ItemGroup>
+</Project>

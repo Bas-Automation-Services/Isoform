@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- The managed B-rep kernel. Depends on BasAutomation.Geometry only: no Isoform document, modeling, STEP or F-rep code. -->
+  <PropertyGroup>
+    <IsAotCompatible>true</IsAotCompatible>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="BasAutomation.Geometry" />
+  </ItemGroup>
+
+</Project>
