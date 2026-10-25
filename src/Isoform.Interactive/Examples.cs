@@ -98,7 +98,16 @@ public static class Examples
             new Component("upper", "bracket.json", new Placement([0, 20, 15], [1, 0, 0], [0, 0, -1])),
             new Component("pin", "pin.json", new Placement([10, 10, -9], [1, 0, 0], [0, 0, 1])),
         ]), new Dictionary<string, string> { ["bracket.json"] = CanonicalFormat.Write(Bracket), ["pin.json"] = CanonicalFormat.Write(Pin) })),
+        // The pump stand as the build tool makes it: the top and four feet as plates, four legs as tubes. Stored, as a
+        // build takes too long for the page (StandBuildTests keeps it equal to a fresh build).
+        ("Assembly: the pump stand, as built", CanonicalFormat.ReadBundle(Resource("pump-stand.json"))),
     ];
+
+    static string Resource(string name)
+    {
+        using var reader = new StreamReader(typeof(Examples).Assembly.GetManifestResourceStream(name)!);
+        return reader.ReadToEnd();
+    }
 
     public static IReadOnlyList<(string Name, PartDocument Doc)> All { get; } =
     [
