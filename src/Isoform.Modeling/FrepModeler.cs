@@ -12,11 +12,14 @@ namespace Isoform.Modeling;
 /// with a <paramref name="cache"/> a regeneration reuses every region whose content did not change.
 /// </summary>
 /// <param name="cache">Region results kept across regenerations; the caller sweeps it after each one.</param>
-public sealed class FrepModeler(ModelingSettings settings, RegionCache? cache = null) : IModeler
+/// <param name="parts">Whole results kept across regenerations, by document; the caller sweeps it after each one.</param>
+public sealed class FrepModeler(ModelingSettings settings, RegionCache? cache = null, PartCache? parts = null) : IModeler
 {
     public ModelingSettings Settings { get; } = settings;
 
     public RegionCache? Cache { get; } = cache;
+
+    public PartCache? Parts { get; } = parts;
 
     ModelResult IModeler.Regenerate(PartDocument document) => Regenerate(document);
 
@@ -58,8 +61,17 @@ public sealed class FrepModeler(ModelingSettings settings, RegionCache? cache = 
 
     public FrepResult Regenerate(PartDocument document)
     {
+        var hash = Parts is null ? null : CanonicalFormat.Hash(document);
+        if (hash is not null && Parts!.TryGet(hash, Settings, Cache) is { } kept) return kept;
+        var (result, plans) = Run(document);
+        if (hash is not null) Parts!.Add(hash, Settings, result, [.. plans.SelectMany(p => p.Regions.Select(r => r.Key))]);
+        return result;
+    }
+
+    (FrepResult, MeshPlan[]) Run(PartDocument document)
+    {
         var (_, part, plans) = Prepare(document);
-        if (part.Field is null) return new FrepResult(part.Diagnostics, null, part, null, [], []);
+        if (part.Field is null) return (new FrepResult(part.Diagnostics, null, part, null, [], []), plans);
         document = Parametric.Resolve(document);
 
         var zones = new List<Zone>();
@@ -77,7 +89,7 @@ public sealed class FrepModeler(ModelingSettings settings, RegionCache? cache = 
             findings.Clear();
             result = Pass(document, part, plans, zones, findings, channels);
         }
-        return result;
+        return (result, plans);
     }
 
     /// <summary>

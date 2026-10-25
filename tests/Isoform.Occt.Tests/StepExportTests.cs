@@ -364,7 +364,7 @@ public class StepExportTests(ITestOutputHelper output)
     public void Assembly_reads_back_with_its_product_structure()
     {
         var settings = new ModelingSettings { CellSize = 0.5 };
-        var (_, bundle) = Isoform.Interactive.Examples.Bundles.Single();
+        var (_, bundle) = Isoform.Interactive.Examples.Bundles[0];
         var assembly = new AssemblyModeler(settings).Regenerate(bundle.Assembly, p => bundle.Documents.GetValueOrDefault(p));
         assembly.Diagnostics.Should().BeEmpty();
         var path = Path.Combine(Path.GetTempPath(), $"isoform-{Guid.NewGuid():N}.step");

@@ -21,7 +21,7 @@ public class ExportJsonTests
         part["text"]!.GetValue<string>().Should().StartWith("ISO-10303-21;").And.Contain("PRODUCT('plate'");
         ((int)part["solids"]!, (int)part["faces"]!).Should().Be((1, 7));
 
-        var (_, bundle) = Examples.Bundles.Single();
+        var (_, bundle) = Examples.Bundles[0];
         var assembly = JsonNode.Parse(ExportJson.Step(new Session().Regenerate(CanonicalFormat.Write(bundle), "[]", Settings), "brackets"))!;
         ((int)assembly["instances"]!).Should().Be(3);
 

@@ -221,4 +221,15 @@ public class StandBuildTests(StandBuildTests.Built stand, ITestOutputHelper outp
         Outputs.Csv(Outputs.Bom(again, Build.Material)).Should().Be(Outputs.Csv(Outputs.Bom(Result, Build.Material)));
         Outputs.Dxf(again).Should().Equal(Outputs.Dxf(Result));
     }
+
+    [Fact]
+    public void The_playground_example_is_this_build()
+    {
+        // The stored bundle the page lists: the assembly and its three parts (no design or build document to mesh).
+        var parts = Result.Bundle.Assembly.Components.Select(c => c.Part).Distinct().ToDictionary(p => p, p => Result.Bundle.Documents[p]);
+        var stored = Examples.Bundles.Single(b => b.Name == "Assembly: the pump stand, as built").Bundle;
+
+        CanonicalFormat.Write(stored).Should().Be(CanonicalFormat.Write(new Bundle(Result.Bundle.Assembly, parts)),
+            "src/Isoform.Interactive/Examples/pump-stand.json is regenerated when the build changes");
+    }
 }

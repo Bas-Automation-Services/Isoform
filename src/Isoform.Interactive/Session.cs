@@ -25,6 +25,7 @@ public sealed class Session
     public const string Preview = "preview";
 
     readonly RegionCache _cache = new();
+    readonly PartCache _parts = new();
     readonly Dictionary<string, Regeneration> _slots = [];
     FrepModeler? _modeler;
     int _pooled; // regions the pool meshed for this regeneration outside Regenerate: own share and imports
@@ -37,7 +38,7 @@ public sealed class Session
 
     /// <summary>One modeler per settings, so the coordinator regenerates from the plans its share already made.</summary>
     FrepModeler Modeler(ModelingSettings settings) =>
-        _modeler is { } m && m.Settings == settings ? m : _modeler = new FrepModeler(settings, _cache);
+        _modeler is { } m && m.Settings == settings ? m : _modeler = new FrepModeler(settings, _cache, _parts);
 
     /// <summary>
     /// Applies <paramref name="edits"/> (a JSON array of edits, or one; <c>[]</c> for none) to a part or bundle and
@@ -58,7 +59,7 @@ public sealed class Session
                 if (format == Bundle.FormatVersion)
                 {
                     var bundle = CanonicalFormat.ReadBundle(text);
-                    view = View.Of(new AssemblyModeler(settings, _cache).Regenerate(bundle.Assembly, path => bundle.Documents.GetValueOrDefault(path)));
+                    view = View.Of(new AssemblyModeler(settings, _cache, _parts).Regenerate(bundle.Assembly, path => bundle.Documents.GetValueOrDefault(path)));
                 }
                 else view = View.Of(Modeler(settings).Regenerate(CanonicalFormat.Read(text)));
             }
@@ -66,6 +67,7 @@ public sealed class Session
         }
         var regenerateMs = clock.Elapsed.TotalMilliseconds - editMs;
         var (reused, meshed) = _cache.Sweep();
+        _parts.Sweep();
         (reused, meshed, _pooled) = (reused - _pooled, meshed + _pooled, 0);
         if (view is null)
         {
