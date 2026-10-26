@@ -268,7 +268,16 @@ public static class Booleans
                     uses.Add(use);
                     uses.Add(use.Reversed());
                 }
-                foreach (var loops in Arrangement.Faces(face.Surface, uses))
+                List<List<IReadOnlyList<Use>>> faces;
+                try
+                {
+                    faces = Arrangement.Faces(face.Surface, uses);
+                }
+                catch (BooleanFailure failure)
+                {
+                    throw new BooleanFailure($"{failure.Message} (face {f} of the {(index == 0 ? "first" : "second")} solid, a {face.Surface.GetType().Name.ToLowerInvariant()}, {cuts[f].Count} cuts)");
+                }
+                foreach (var loops in faces)
                     yield return new Patch(face.Surface, face.SameSense, [.. loops.Select(l => Arrangement.Sensed(l, face.SameSense))],
                         new HashSet<Origin> { new(index, new FaceId(f)) });
             }

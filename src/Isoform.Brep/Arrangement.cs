@@ -38,6 +38,9 @@ internal static class Arrangement
 {
     const double Same = 1e-9;
 
+    // Directions closer than this at a node are one direction (tangent uses), told apart by curvature.
+    const double Tangent = 1e-7;
+
     /// <summary>A loop run as given, or reversed (order and direction) when <paramref name="sense"/> is false.</summary>
     public static IReadOnlyList<Use> Sensed(IReadOnlyList<Use> loop, bool sense) =>
         sense ? loop : [.. loop.Reverse().Select(u => u.Reversed())];
@@ -74,22 +77,27 @@ internal static class Arrangement
                 cycle.Add(h);
                 h = Next(h);
             }
-            if (h != first) throw new BooleanFailure("a face's edges do not close into loops");
+            if (h != first) throw new BooleanFailure($"a face's edges do not close into loops (at {flat[cycle[^1]].End} in its parameters)");
             cycles.Add(cycle);
         }
 
+        // The first use clockwise from the way back. Uses leaving in one direction (tangent, as a fillet's arc runs off
+        // a straight edge) are told apart by curvature: the one bending more to the left is met first. One leaving
+        // the way back comes first if it bends right of it, last if left, and the use back itself very last.
         int Next(int h)
         {
             var (backAngle, backCurvature) = Direction(flat[h], atEnd: true);
             var best = -1;
-            var bestTurn = double.MaxValue;
+            var (bestTurn, bestCurvature) = (double.MaxValue, 0.0);
             foreach (var c in leaving[to[h]])
             {
                 var (angle, curvature) = Direction(flat[c], atEnd: false);
                 var turn = Intersections.Wrap(backAngle - angle);
-                if (turn < Same || turn > 2 * Math.PI - Same)
-                    turn = curvature < backCurvature - Same ? Same : curvature > backCurvature + Same ? 2 * Math.PI - Same : 2 * Math.PI;
-                if (turn < bestTurn) (best, bestTurn) = (c, turn);
+                if (turn > 2 * Math.PI - Tangent) turn -= 2 * Math.PI;
+                if (Math.Abs(turn) < Tangent)
+                    turn = curvature < backCurvature - Same ? 0 : curvature > backCurvature + Same ? 2 * Math.PI : 4 * Math.PI;
+                var better = best < 0 || turn < bestTurn - Tangent || (Math.Abs(turn - bestTurn) <= Tangent && curvature > bestCurvature);
+                if (better) (best, bestTurn, bestCurvature) = (c, turn, curvature);
             }
             return best >= 0 ? best : throw new BooleanFailure("a face's edges do not close into loops");
         }

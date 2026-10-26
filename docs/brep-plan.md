@@ -180,16 +180,49 @@ All 33 documents match the F-rep core, agree with `ExactBrep` (ellipse edges inc
 back in OCCT valid without healing. Tests: `tests/Isoform.Brep.Tests` 151 (`BooleanTests` 15), `BrepKernelStepTests`
 33.
 
-## Experiment 5: candidates (to decide)
+## Experiment 5: fillets and chamfers between flat faces (done, 2026-10-26)
 
-1. **Inventor as a second STEP reader:** import the 33 STEP files in Inventor and check solids, face counts and
-   volumes. It is the reader the parts end up in, and the STEP conventions above were only tested against OCCT.
-   Interactive, so it is a checked report, not a unit test.
-2. **Fillets and chamfers between planes:** constant-radius fillets between two planes are cylinders, and chamfers
-   are planes. The work is in edge selection by face names, the set-back faces, and the ends where a fillet meets
-   other faces. Fillets against a perpendicular cylinder need a torus carrier.
-3. **Two cylinders at an angle:** cross bores. Their intersection is a quartic, so the first curve without a closed
-   form, traced numerically or held as a B-spline.
-4. **Revolve:** cones, spheres and tori as carriers.
+Decided 2026-10-26: the Inventor check (importing the STEP files there as a second reader) waits until later.
 
-Recommended: 1 (small, and it settles the open STEP question), then 2.
+**Kernel (`Blends`):** rounds or chamfers the straight edge between two flat faces.
+- *Convex edge:* the body loses the prism between the edge and the ball rolled along it (a triangle for a
+  chamfer). The prism runs past the edge's ends, so the faces the edge ends on cut the new face off there: an arc on a
+  square end face, an ellipse on an angled one.
+- *Concave edge:* the body gains the prism, which stops exactly on the end faces (so those must be square to the
+  edge).
+- *Guard:* every face other than the two and those at the edge's ends must come through unchanged in area.
+  Otherwise the blend is refused: a radius too large for a face, or an edge that ends inside the material.
+- *Fixes on the way:*
+  - A plane tangent to a cylinder now meets it in its touching line (a fillet's cylinder on its own faces), where it
+    had been refused.
+  - Tracing tells apart uses that leave a node in one direction (a fillet's arc running tangentially off a straight
+    edge) by curvature, between candidates as well as against the way back.
+
+**Adapter:** `Fillet` and `Chamfer` on an edge (`Edge = [face, face]`) work on the solid that has both faces. The
+new face is `id/face`, as in the F-rep core. Loop fillets and chamfers are refused.
+
+**Results:** 7 more documents:
+- a rounded top edge, a chamfered front edge and a rounded vertical corner of the block;
+- an L bracket's inside fillet (concave);
+- a rounded edge beside a hole;
+- a rounded edge ending on a 45° face (an ellipse arc);
+- a chamfer and a fillet on two separate edges.
+
+All 40 documents match the F-rep core, agree with `ExactBrep`, have exact volumes and read back in OCCT without
+healing. Tests: `tests/Isoform.Brep.Tests` 177 (`BlendTests` 6), `BrepKernelStepTests` 40.
+
+**Refused, named:** fillets that meet at a corner (the F-rep core mitres them; here the second fillet's cylinder meets
+the first's at right angles, a quartic), fillets against a cylinder (they need a torus), loop fillets.
+
+## Experiment 6: candidates (to decide)
+
+1. **Fillets meeting at a corner (mitres):** two fillets sharing a face meet in the plane bisecting the corner. The
+   F-rep core mitres them; here the second fillet would end on that plane instead of on the first fillet.
+2. **Tori:** fillets between a plane and a cylinder square to it (a hole's rim, a boss's foot) are tori, and tori
+   meet planes in circles. This needs the carrier, its p-curves and its intersections with planes and cylinders.
+3. **Loop fillets and chamfers:** every edge round one face, which needs 1 (mitres at convex corners) and 2 (arcs
+   in the loop).
+4. **Inventor as a second STEP reader**, parked above.
+5. **Two cylinders at an angle (cross bores)**, a quartic.
+
+Recommended: 1, then 2; together they make 3 possible, which is what most fillets in parts are.

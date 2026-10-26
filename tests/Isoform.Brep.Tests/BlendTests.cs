@@ -1,0 +1,65 @@
+using BasAutomation.Geometry;
+using Xunit.Abstractions;
+using static Isoform.Brep.Tests.Shapes;
+
+namespace Isoform.Brep.Tests;
+
+/// <summary>Fillets and chamfers on the kernel alone, checked by their exact volume.</summary>
+public class BlendTests(ITestOutputHelper output)
+{
+    static Body Block() => Extrusion.Extrude(new Region(Rectangle(0, 0, 100, 50)), RigidTransform3D.Identity, 0, 10).Result!.Body;
+
+    static double Spandrel(double r) => r * r * (1 - Math.PI / 4);
+
+    // The face of a body whose plane has this outward normal and passes through p.
+    static FaceId Face(Body body, Vector3D normal, Point3D p) => new(Enumerable.Range(0, body.Faces.Length).Single(f =>
+        body.Faces[f].Surface is Plane pl && (pl.Frame.ZAxis * (body.Faces[f].SameSense ? 1 : -1)).Dot(normal) > 0.999 && Math.Abs((p - pl.Frame.Origin).Dot(pl.Frame.ZAxis)) < 1e-9));
+
+    [Theory]
+    [InlineData(BlendKind.Fillet, 2)]
+    [InlineData(BlendKind.Chamfer, 3)]
+    public void A_top_edge(BlendKind kind, double size)
+    {
+        var body = Block();
+        var (r, _, problem) = Blends.Apply(body, Face(body, new Vector3D(0, 0, 1), new Point3D(0, 0, 10)), Face(body, new Vector3D(1, 0, 0), new Point3D(100, 0, 0)), size, kind);
+        output.WriteLine(problem ?? "");
+        problem.Should().BeNull();
+        var removed = kind == BlendKind.Fillet ? Spandrel(size) : size * size / 2;
+        MassProperties.Volume(r!.Body).Should().BeApproximately(50000 - removed * 50, 1e-9);
+        r.Body.Faces.Should().HaveCount(7);
+    }
+
+    [Fact]
+    public void An_inside_corner()
+    {
+        var l = new ProfileLoop([new LineSegment(P(0, 0), P(40, 0)), new LineSegment(P(40, 0), P(40, 5)), new LineSegment(P(40, 5), P(5, 5)),
+            new LineSegment(P(5, 5), P(5, 30)), new LineSegment(P(5, 30), P(0, 30)), new LineSegment(P(0, 30), P(0, 0))]);
+        var body = Extrusion.Extrude(new Region(l), RigidTransform3D.Identity, 0, 20).Result!.Body;
+        var (r, _, problem) = Blends.Apply(body, Face(body, new Vector3D(0, 1, 0), new Point3D(20, 5, 0)), Face(body, new Vector3D(1, 0, 0), new Point3D(5, 20, 0)), 3, BlendKind.Fillet);
+        output.WriteLine(problem ?? "");
+        problem.Should().BeNull();
+        MassProperties.Volume(r!.Body).Should().BeApproximately((40 * 5 + 5 * 25 + Spandrel(3)) * 20, 1e-9);
+        r.Body.Faces.Should().HaveCount(9);
+    }
+
+    [Fact]
+    public void A_radius_too_large_for_the_plate_is_refused()
+    {
+        var body = Block();
+        var (r, _, problem) = Blends.Apply(body, Face(body, new Vector3D(0, 0, 1), new Point3D(0, 0, 10)), Face(body, new Vector3D(1, 0, 0), new Point3D(100, 0, 0)), 20, BlendKind.Fillet);
+        r.Should().BeNull();
+        problem.Should().Contain("reaches other faces");
+    }
+
+    [Fact]
+    public void A_fillet_meeting_another_at_a_corner_is_refused()
+    {
+        var body = Block();
+        var top = Face(body, new Vector3D(0, 0, 1), new Point3D(0, 0, 10));
+        var (first, _, _) = Blends.Apply(body, top, Face(body, new Vector3D(1, 0, 0), new Point3D(100, 0, 0)), 2, BlendKind.Fillet);
+        var b = first!.Body;
+        var (r, _, problem) = Blends.Apply(b, Face(b, new Vector3D(0, 0, 1), new Point3D(0, 0, 10)), Face(b, new Vector3D(0, 1, 0), new Point3D(0, 50, 0)), 2, BlendKind.Fillet);
+        r.Should().BeNull();
+        problem.Should().Contain("not parallel");
+    }
+}

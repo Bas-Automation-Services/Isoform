@@ -73,9 +73,10 @@ internal static class Intersections
         }
         var s = n.Dot(c.Frame.Origin - p.Frame.Origin);
         if (Math.Abs(s) > c.Radius + Snap) return SurfaceMeeting.Nothing;
-        if (Math.Abs(s) > c.Radius - Snap) return SurfaceMeeting.Refused("a plane tangent to a cylinder");
-        var w = Math.Sqrt(c.Radius * c.Radius - s * s);
         var foot = c.Frame.Origin - n * s;
+        // Tangent (a fillet's cylinder on its faces): the one line they touch along.
+        if (Math.Abs(s) > c.Radius - Snap) return SurfaceMeeting.Along(new Line3(foot, a));
+        var w = Math.Sqrt(c.Radius * c.Radius - s * s);
         var e = a.Cross(n);
         return SurfaceMeeting.Along(new Line3(foot + e * w, a), new Line3(foot - e * w, a));
     }

@@ -8,7 +8,8 @@ namespace Isoform.Brep.Modeling;
 /// <summary>
 /// Isoform documents on the managed B-rep kernel: blocks, plain extrudes (an inline profile, or the regions of a
 /// sketch on a plane or on a flat face of the part), holes (through, or blind with a floor; along Z, into a face, or
-/// at a sketch's points) and plane cuts (face <c>id/face</c>). Each starts a body, joins it or cuts it, working on the current body as Isoform's
+/// at a sketch's points), plane cuts (face <c>id/face</c>), and fillets and chamfers on the edge between two flat
+/// faces (face <c>id/face</c>). Each starts a body, joins it or cuts it, working on the current body as Isoform's
 /// <see cref="Feature.Body"/> says. Faces carry Isoform's names: sides after their profile edge, caps <c>id/start</c>
 /// and <c>id/end</c>, blocks <c>id/x-</c> … <c>id/z+</c>, holes <c>id/wall</c> and <c>id/floor</c>, faces merged on
 /// one surface named by all their sources. Anything else is refused with <see cref="Diagnostic.BackendFailed"/>.
@@ -37,6 +38,12 @@ public sealed class BrepModeler(ModelingSettings settings) : IModeler
             }
             if (DocumentRules.StartsBody(feature)) current = feature.Body ?? feature.Id;
             else if (feature.Body is { } named) current = named;
+
+            if (feature is Fillet { Loop: null } or Chamfer { Loop: null })
+            {
+                if (Blend(feature, solids) is { } problemBlending) return Failed(problemBlending);
+                continue;
+            }
 
             var (tools, op, failed) = feature switch
             {
@@ -189,6 +196,37 @@ public sealed class BrepModeler(ModelingSettings settings) : IModeler
             new LineSegment(Q(reach, reach), Q(-reach, reach)), new LineSegment(Q(-reach, reach), Q(-reach, -reach))]);
         return Swept(c.Id, new Region(square), frame, 0, reach, [["beyond-1", "beyond-2", "beyond-3", "beyond-4"]], "face", "beyond");
     }
+
+    // A fillet or chamfer on the edge between two named faces, on the solid that has them (whichever body that is).
+    static Diagnostic? Blend(Feature feature, List<(NamedBody Solid, string Body)> solids)
+    {
+        var (edge, size, kind) = feature switch
+        {
+            Fillet f => (f.Edge, f.Radius, BlendKind.Fillet),
+            Chamfer c => (c.Edge, c.Distance, BlendKind.Chamfer),
+            _ => throw new NotSupportedException(feature.GetType().Name),
+        };
+        var what = kind == BlendKind.Fillet ? "rounded" : "chamfered";
+        for (var i = 0; i < solids.Count; i++)
+        {
+            var (solid, body) = solids[i];
+            IEnumerable<FaceId> Called(string name) => Enumerable.Range(0, solid.Body.Faces.Length).Select(f => new FaceId(f)).Where(f => solid.Names[f].Contains(name));
+            var pairs = (from a in Called(edge[0]) from b in Called(edge[1]) where Adjacent(solid.Body, a, b) select (a, b)).ToList();
+            if (pairs.Count == 0) continue;
+            if (pairs.Count > 1) return Unsupported(feature.Id, $"{feature.Id}: {edge[0]} and {edge[1]} meet in more than one edge; the managed B-rep kernel rounds one");
+            var (result, blend, problem) = Blends.Apply(solid.Body, pairs[0].a, pairs[0].b, size, kind);
+            if (problem is not null) return Unsupported(feature.Id, $"the edge between {edge[0]} and {edge[1]} cannot be {what}: {problem}");
+            // Only the blend's own face takes its name; the rest of its prism lies on faces of the body.
+            var face = new Dictionary<FaceId, IReadOnlyList<string>>();
+            foreach (var o in result!.Origins.SelectMany(o => o).Where(o => o.Operand == 1)) face[o.Face] = o.Face == blend ? [$"{feature.Id}/face"] : [];
+            solids[i] = (Named(result, [solid, new NamedBody(result.Body, face)]), body);
+            return null;
+        }
+        return Unsupported(feature.Id, $"{feature.Id}: no edge between {edge[0]} and {edge[1]}");
+    }
+
+    static bool Adjacent(Body body, FaceId a, FaceId b) => Enumerable.Range(0, body.Edges.Length)
+        .Any(e => body.UsesOf(new EdgeId(e)).Select(body.FaceOf).ToHashSet().SetEquals([a, b]));
 
     // The feature's tools applied to the current body's solids: new solids of it, joined to the solids they meet, or
     // cut out of each. Other bodies are left as they are.

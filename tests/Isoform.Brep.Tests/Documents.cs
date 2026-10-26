@@ -2,7 +2,7 @@ using Isoform.Document;
 
 namespace Isoform.Brep.Tests;
 
-/// <summary>Isoform part documents the managed kernel builds (experiments 1 to 4), with their exact volumes.</summary>
+/// <summary>Isoform part documents the managed kernel builds (experiments 1 to 5), with their exact volumes.</summary>
 public static class Documents
 {
     static readonly SketchPlane Xy = new([0, 0, 0], [1, 0, 0], [0, 0, 1]);
@@ -124,6 +124,33 @@ public static class Documents
 
     static PartDocument OnSlab(params Feature[] more) => new([Slab, .. more]);
 
+    // Experiment 5: fillets and chamfers between flat faces. A rolling ball of radius r leaves the corner of a
+    // right-angled edge out (r²(1 − π/4)), its centroid that far from either face.
+    static double Spandrel(double r) => r * r * (1 - Math.PI / 4);
+    static double Centroid(double r) => r * (5.0 / 6 - Math.PI / 4) / (1 - Math.PI / 4);
+
+    static readonly Profile Bracket2 = new([0, 0],
+    [
+        new ProfileEdge("bottom", [40, 0]), new ProfileEdge("tip", [40, 5]), new ProfileEdge("inner", [5, 5]),
+        new ProfileEdge("riser", [5, 30]), new ProfileEdge("top", [0, 30]), new ProfileEdge("back", [0, 0]),
+    ]);
+
+    static readonly (string Name, PartDocument Document, double Volume)[] Rounds =
+    [
+        ("rounded top edge", OnSlab(new Fillet("round", ["plate/z+", "plate/x+"], 2)), 50_000 - Spandrel(2) * 50),
+        ("chamfered front edge", OnSlab(new Chamfer("bevel", ["plate/z+", "plate/y-"], 3)), 50_000 - 0.5 * 9 * 100),
+        ("rounded vertical corner", OnSlab(new Fillet("round", ["plate/x+", "plate/y+"], 5)), 50_000 - Spandrel(5) * 10),
+        ("L bracket with an inside fillet", new([new Extrude("bracket", BooleanOp.New, Xy, Bracket2, 0, 20), new Fillet("inside", ["bracket/inner", "bracket/riser"], 3)]),
+            (40 * 5 + 5 * 25 + Spandrel(3)) * 20),
+        ("rounded edge beside a hole", OnSlab(new Hole("hole", [30, 25], 10), new Fillet("round", ["plate/z+", "plate/x-"], 2)),
+            50_000 - Math.PI * 250 - Spandrel(2) * 50),
+        // The front top edge ends on the 45° face x + z = 100: each bit of the spandrel runs to x = 100 − z.
+        ("rounded edge ending on an angled face", OnSlab(new PlaneCut("cut", [90, 25, 10], [1, 0, 1]), new Fillet("round", ["plate/z+", "plate/y-"], 2)),
+            47_500 - Spandrel(2) * (90 + Centroid(2))),
+        ("chamfer and fillet on two edges", OnSlab(new Chamfer("bevel", ["plate/z-", "plate/y+"], 1), new Fillet("round", ["plate/x-", "plate/y-"], 4)),
+            50_000 - 0.5 * 100 - Spandrel(4) * 10),
+    ];
+
     // Experiment 4: planes at an angle to cylinders, which meet them in ellipses. The slab under
     // z = 10 − (x − 20)·slope, clipped at z = 0.
     static double Wedge(double slope) => 50 * (20 * 10 + 0.5 * (10 / slope) * 10);
@@ -201,6 +228,7 @@ public static class Documents
         .. Booleans.Select(b => new object[] { b.Name, b.Document, b.Volume }),
         .. Holes.Select(b => new object[] { b.Name, b.Document, b.Volume }),
         .. Angles.Select(b => new object[] { b.Name, b.Document, b.Volume }),
+        .. Rounds.Select(b => new object[] { b.Name, b.Document, b.Volume }),
     ];
 
     public static PartDocument Named(string name) => name switch
@@ -208,6 +236,6 @@ public static class Documents
         "mounting plate" => MountingPlate,
         "bracket" => Bracket,
         "two pads" => TwoPads,
-        _ => Booleans.Concat(Holes).Concat(Angles).Single(b => b.Name == name).Document,
+        _ => Booleans.Concat(Holes).Concat(Angles).Concat(Rounds).Single(b => b.Name == name).Document,
     };
 }
