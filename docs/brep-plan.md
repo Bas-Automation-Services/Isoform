@@ -119,12 +119,41 @@ the quartic of two cylinders at an angle), tangent contact, and sliver tolerance
 - The two STEP conventions above come from OCCT's behaviour, not from its source; if another reader disagrees,
   moving the seam to the STEP cylinder's u = 0 would satisfy both.
 
-## Experiment 3: candidates (to decide)
+## Experiment 3: holes, blocks and sketches on faces (done, 2026-10-26)
 
-1. **Holes and sketches on faces:** a hole is a cut by a cylinder; a sketch on a face needs only the face's frame.
-   Cheap now, and it covers most of what `Isoform.Build`'s plates need.
-2. **Ellipses:** a plane at an angle to a cylinder (chamfered bores, angled cuts). The first curve that is not a line
-   or circle: a new carrier, its p-curves on both surfaces, and intersections with the others.
-3. **Revolve:** cones, spheres and tori as carriers. Widens the geometry; booleans with them need 2 first.
+**Adapter only; the kernel is unchanged.** `BrepModeler` now follows Isoform's history:
+- *Features:* blocks; extrudes from inline profiles or sketches; holes. A hole is a cut by a cylinder along the outward
+  normal where it goes in. Through all, it runs past the current body's extent both ways; blind, it runs from a floor
+  at its depth out past the part. Faces are named `id/wall`, `id/floor` and `id/<point>:wall`.
+- *Sketches:* solved where they stand in the history. A sketch on a face takes the face's plane as Isoform's
+  `SketchPlanes.OfFace` does: outward normal, world origin and world x put onto the plane.
+- *Bodies:* every feature works on the current body (`Feature.Body`), as in the F-rep core. Joins and cuts leave the
+  other bodies as they are. (Experiment 2 had joined and cut every solid, which only agreed because its documents had
+  one body.)
+- *Refused, named:* sketches that project part edges, and faces not flat or not there.
 
-Recommended: 1, then 2.
+**Results:** 9 more documents on a 100 × 50 × 10 block:
+- a hole through, through a side face, blind in the top, and blind at sketch points;
+- two holes overlapping, so cylinder meets cylinder;
+- a constrained sketch with a bore;
+- a boss sketched on the top face and bored through;
+- a slot sketched on the front face and cut 20 deep;
+- a hole in the second of two named bodies standing in each other.
+
+All 26 documents match the F-rep core (faces, names, neighbours, edges, corners, bodies), agree with `ExactBrep`,
+have exact volumes and read back in OCCT valid without healing. Tests: `tests/Isoform.Brep.Tests` 128,
+`BrepKernelStepTests` 26.
+
+## Experiment 4: candidates (to decide)
+
+1. **Ellipses and plane cuts:** a plane at an angle to a cylinder (angled cuts through bores, chamfered bores later).
+   This needs an ellipse carrier, its p-curves on a plane (an ellipse) and on a cylinder (a sine in (u, v)), and its
+   intersections with lines, circles and other ellipses. `PlaneCut` comes with it almost free: a cut by a box on the
+   plane.
+2. **Fillets and chamfers between planes:** constant-radius fillets between two planes are cylinders, and chamfers are
+   planes. The work is in the edge selection by face names, the set-back faces, and the ends where a fillet meets
+   other faces. Fillets against a perpendicular cylinder need a torus carrier.
+3. **Revolve:** cones, spheres and tori as carriers, with their intersections with planes and coaxial cylinders.
+
+Recommended: 1 (it removes the most common refusal), then 2 between planes, which is what `Isoform.Build`'s plates
+need next.

@@ -2,7 +2,7 @@ using Isoform.Document;
 
 namespace Isoform.Brep.Tests;
 
-/// <summary>Isoform part documents the managed kernel builds (experiments 1 and 2), with their exact volumes.</summary>
+/// <summary>Isoform part documents the managed kernel builds (experiments 1 to 3), with their exact volumes.</summary>
 public static class Documents
 {
     static readonly SketchPlane Xy = new([0, 0, 0], [1, 0, 0], [0, 0, 1]);
@@ -119,12 +119,57 @@ public static class Documents
 
     static PartDocument Then(PartDocument document, params Feature[] more) => new([.. document.Features, .. more]);
 
+    // Experiment 3: holes and sketches on faces, on a 100 × 50 × 10 block.
+    static readonly Block Slab = new("plate", BooleanOp.New, [0, 0, 0], [100, 50, 10]);
+
+    static PartDocument OnSlab(params Feature[] more) => new([Slab, .. more]);
+
+    // The lens two discs of radius a and b, d apart, share.
+    static double Lens(double a, double b, double d) =>
+        a * a * Math.Acos((d * d + a * a - b * b) / (2 * d * a)) + b * b * Math.Acos((d * d + b * b - a * a) / (2 * d * b))
+        - Math.Sqrt((-d + a + b) * (d + a - b) * (d - a + b) * (d + a + b)) / 2;
+
+    static readonly (string Name, PartDocument Document, double Volume)[] Holes =
+    [
+        ("hole through", OnSlab(new Hole("hole", [30, 25], 10)), 50_000 - Math.PI * 250),
+        ("hole through a side face", OnSlab(new Hole("side", [25, 5], 4) { On = "plate/x+" }), 50_000 - Math.PI * 400),
+        ("blind hole in the top face", OnSlab(new Hole("pocket", [20, 20], 6) { On = "plate/z+", Depth = 4 }), 50_000 - Math.PI * 36),
+        ("blind holes at sketch points", OnSlab(
+            new Sketch("spots", new SketchPlacement(Face: "plate/z+"), new Dictionary<string, double[]> { ["near"] = [20, 25], ["far"] = [80, 25] }, [], []),
+            new Hole("holes", [], 5) { Sketch = "spots", Points = ["near", "far"], Depth = 3 }), 50_000 - 2 * Math.PI * 6.25 * 3),
+        ("two holes overlapping", OnSlab(new Hole("a", [30, 25], 10), new Hole("b", [36, 25], 8)), 50_000 - 10 * (Math.PI * 41 - Lens(5, 4, 6))),
+        // A constrained sketch: a 60 × 40 rectangle round an R4 bore, from points that start off it.
+        ("sketched plate with a bore", new(
+            [
+                new Sketch("base", new SketchPlacement(Xy), new Dictionary<string, double[]> { ["a"] = [0, 0], ["b"] = [58, 1], ["c"] = [61, 39], ["d"] = [1, 41], ["h"] = [20, 20] },
+                    [new SketchLine("bottom", "a", "b"), new SketchLine("right", "b", "c"), new SketchLine("top", "c", "d"), new SketchLine("left", "d", "a"), new SketchCircle("bore", "h", 3)],
+                    [new("horizontal", ["bottom"]), new("vertical", ["right"]), new("horizontal", ["top"]), new("vertical", ["left"]), new("fix", ["a"]), new("fix", ["h"]),
+                     new("length", ["bottom"], 60), new("length", ["left"], 40), new("radius", ["bore"], 4)]),
+                new Extrude("plate", BooleanOp.New, null, null, 0, 5) { Sketch = "base" },
+            ]), 60 * 40 * 5 - Math.PI * 16 * 5),
+        // A boss sketched on the top face, and a hole along Z through boss and plate.
+        ("boss sketched on the top, bored", OnSlab(
+            new Sketch("ring", new SketchPlacement(Face: "plate/z+"), new Dictionary<string, double[]> { ["c"] = [50, 25] }, [new SketchCircle("rim", "c", 8)], []),
+            new Extrude("boss", BooleanOp.Join, null, null, 0, 8) { Sketch = "ring" },
+            new Hole("bore", [50, 25], 6)), 50_000 + Math.PI * 512 - Math.PI * 9 * 18),
+        // A slot sketched on the front face (y = 0, sketch y up world z), cut 20 deep.
+        ("slot sketched on the front face", OnSlab(
+            new Sketch("slot", new SketchPlacement(Face: "plate/y-"), new Dictionary<string, double[]> { ["a"] = [40, 3], ["b"] = [60, 3], ["c"] = [60, 7], ["d"] = [40, 7] },
+                [new SketchLine("low", "a", "b"), new SketchLine("deep", "b", "c"), new SketchLine("high", "c", "d"), new SketchLine("back", "d", "a")], []),
+            new Extrude("groove", BooleanOp.Cut, null, null, -20, 1) { Sketch = "slot" }), 50_000 - 20 * 4 * 20),
+        // A second body standing in the first: the hole cuts only the current one, the post.
+        ("hole in the second of two bodies", OnSlab(
+            new Block("post", BooleanOp.New, [40, 15, 5], [20, 20, 30]),
+            new Hole("pin", [50, 25], 6)), 50_000 + 12_000 - Math.PI * 9 * 30),
+    ];
+
     public static IEnumerable<object[]> All =>
     [
         ["mounting plate", MountingPlate, MountingPlateVolume],
         ["bracket", Bracket, BracketVolume],
         ["two pads", TwoPads, TwoPadsVolume],
         .. Booleans.Select(b => new object[] { b.Name, b.Document, b.Volume }),
+        .. Holes.Select(b => new object[] { b.Name, b.Document, b.Volume }),
     ];
 
     public static PartDocument Named(string name) => name switch
@@ -132,6 +177,6 @@ public static class Documents
         "mounting plate" => MountingPlate,
         "bracket" => Bracket,
         "two pads" => TwoPads,
-        _ => Booleans.Single(b => b.Name == name).Document,
+        _ => Booleans.Concat(Holes).Single(b => b.Name == name).Document,
     };
 }

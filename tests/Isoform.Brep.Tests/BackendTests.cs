@@ -99,8 +99,8 @@ public class BackendTests(ITestOutputHelper output)
     [Fact]
     public void What_the_kernel_cannot_do_yet_is_refused_by_name()
     {
-        var withHole = new PartDocument([.. Documents.TwoPads.Features, new Hole("h", [10, 10], 4)]);
-        var result = new BrepModeler(Settings).Regenerate(withHole);
+        var withCut = new PartDocument([.. Documents.TwoPads.Features, new PlaneCut("h", [10, 10, 4], [0, 0, 1])]);
+        var result = new BrepModeler(Settings).Regenerate(withCut);
         result.Topology.Should().BeNull();
         result.Diagnostics.Should().ContainSingle(d => d.Code == Diagnostic.BackendFailed && d.FeatureId == "h");
     }
