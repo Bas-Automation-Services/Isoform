@@ -53,6 +53,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Isoform.Brep", "src\Isoform
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Isoform.Brep.Tests", "tests\Isoform.Brep.Tests\Isoform.Brep.Tests.csproj", "{2B8DA869-B624-4F7B-ACB3-755F1E56702F}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Isoform.Brep.Modeling", "src\Isoform.Brep.Modeling\Isoform.Brep.Modeling.csproj", "{C7317115-2AC7-41F5-8073-A9A51E12C717}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -291,6 +293,18 @@ Global
 		{2B8DA869-B624-4F7B-ACB3-755F1E56702F}.Release|x64.Build.0 = Release|Any CPU
 		{2B8DA869-B624-4F7B-ACB3-755F1E56702F}.Release|x86.ActiveCfg = Release|Any CPU
 		{2B8DA869-B624-4F7B-ACB3-755F1E56702F}.Release|x86.Build.0 = Release|Any CPU
+		{C7317115-2AC7-41F5-8073-A9A51E12C717}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{C7317115-2AC7-41F5-8073-A9A51E12C717}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{C7317115-2AC7-41F5-8073-A9A51E12C717}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{C7317115-2AC7-41F5-8073-A9A51E12C717}.Debug|x64.Build.0 = Debug|Any CPU
+		{C7317115-2AC7-41F5-8073-A9A51E12C717}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{C7317115-2AC7-41F5-8073-A9A51E12C717}.Debug|x86.Build.0 = Debug|Any CPU
+		{C7317115-2AC7-41F5-8073-A9A51E12C717}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{C7317115-2AC7-41F5-8073-A9A51E12C717}.Release|Any CPU.Build.0 = Release|Any CPU
+		{C7317115-2AC7-41F5-8073-A9A51E12C717}.Release|x64.ActiveCfg = Release|Any CPU
+		{C7317115-2AC7-41F5-8073-A9A51E12C717}.Release|x64.Build.0 = Release|Any CPU
+		{C7317115-2AC7-41F5-8073-A9A51E12C717}.Release|x86.ActiveCfg = Release|Any CPU
+		{C7317115-2AC7-41F5-8073-A9A51E12C717}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

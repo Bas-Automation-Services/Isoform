@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- The managed B-rep kernel behind Isoform's backend-neutral API, and its bodies as Isoform's exact B-rep for STEP. -->
+  <ItemGroup>
+    <ProjectReference Include="../Isoform.Brep/Isoform.Brep.csproj" />
+    <ProjectReference Include="../Isoform.Modeling/Isoform.Modeling.csproj" />
+    <ProjectReference Include="../Isoform.Sketching/Isoform.Sketching.csproj" />
+    <ProjectReference Include="../Isoform.Step/Isoform.Step.csproj" />
+  </ItemGroup>
+
+</Project>

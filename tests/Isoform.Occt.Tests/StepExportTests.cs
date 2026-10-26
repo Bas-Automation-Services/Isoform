@@ -440,7 +440,7 @@ public class StepExportTests(ITestOutputHelper output)
         }
     }
 
-    static (Brep Brep, OcctShape Healed, OcctShape Unhealed) RoundTrip(FrepResult frep, ModelingSettings settings, string name)
+    static (Step.Brep Brep, OcctShape Healed, OcctShape Unhealed) RoundTrip(FrepResult frep, ModelingSettings settings, string name)
     {
         var brep = ExactBrep.Build(frep, settings);
         var path = Path.Combine(Path.GetTempPath(), $"isoform-{Guid.NewGuid():N}.step");
@@ -457,13 +457,13 @@ public class StepExportTests(ITestOutputHelper output)
     }
 
     /// <summary>Counts as Isoform's topology counts them: seams (one face) are not edges, corners are where 3+ faces meet.</summary>
-    static (int Faces, int Edges, int Vertices) Counts(OcctShape s) => (
+    internal static (int Faces, int Edges, int Vertices) Counts(OcctShape s) => (
         s.FaceCount,
         Enumerable.Range(0, s.EdgeCount).Count(e => s.EdgeFaces(e).Length == 2),
         Enumerable.Range(0, s.VertexCount).Count(v => s.VertexFaces(v).Length >= 3));
 
     /// <summary>The same counts of the B-rep itself.</summary>
-    static (int Faces, int Edges, int Vertices) Counts(Brep b)
+    static (int Faces, int Edges, int Vertices) Counts(Step.Brep b)
     {
         var faces = b.Solids.SelectMany(s => s.Faces).ToList();
         var facesOfEdge = b.Edges.Select(e => faces.Where(f => f.Loops.Any(l => l.Coedges.Any(c => c.Edge == e.Index))).Count()).ToList();

@@ -14,6 +14,7 @@
 
   <ItemGroup>
     <ProjectReference Include="../../src/Isoform.Brep/Isoform.Brep.csproj" />
+    <ProjectReference Include="../../src/Isoform.Brep.Modeling/Isoform.Brep.Modeling.csproj" />
   </ItemGroup>
 
   <ItemGroup>
