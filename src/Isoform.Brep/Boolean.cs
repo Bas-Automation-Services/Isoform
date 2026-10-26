@@ -126,7 +126,7 @@ public static class Booleans
         }
 
         List<(double From, double To)> intervals = [];
-        if (c is Circle3)
+        if (c.Period is not null)
         {
             var sorted = Dedupe(ts.Select(Intersections.Wrap), c, periodic: true);
             if (sorted.Count == 0) sorted.Add(0);

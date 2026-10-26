@@ -2,6 +2,7 @@ using BasAutomation.Geometry;
 using Isoform.Step;
 using IsoCircle = Isoform.Geometry.Circle;
 using IsoCurve = Isoform.Geometry.Curve;
+using IsoEllipse = Isoform.Geometry.Ellipse;
 using IsoLine = Isoform.Geometry.Line;
 using IsoSurface = Isoform.Geometry.Surface;
 using SurfaceKind = Isoform.Geometry.SurfaceKind;
@@ -9,9 +10,11 @@ using SurfaceKind = Isoform.Geometry.SurfaceKind;
 namespace Isoform.Brep.Modeling;
 
 /// <summary>
-/// Kernel bodies as Isoform's exact B-rep (<see cref="Isoform.Step.Brep"/>), which <see cref="StepWriter"/> writes.
-/// Curves and surfaces map one to one; p-curves are the kernel's own, moved into the parameters Isoform's STEP
-/// placements define (on a cylinder, u turns by the angle between the two x axes).
+/// Kernel bodies as Isoform's exact B-rep (<see cref="Isoform.Step.Brep"/>), which <see cref="StepWriter"/> writes,
+/// with the conventions of Isoform's own export (<see cref="ExactBrep"/>): edges parametrised to start at π/2 on a
+/// circle (in [π/2, 3π/2] on an ellipse), clear of the 0 / 2π wrap where readers differ; images in a curved face's
+/// parameters from <see cref="SurfaceParameters.Image"/>, each shifted by whole turns to start where the one before
+/// it ended, the first within a turn of π.
 /// </summary>
 public static class StepConversion
 {
@@ -26,32 +29,15 @@ public static class StepConversion
             var (body, names) = (bodies[b].Body, bodies[b].Names);
             var (v0, e0) = (vertices.Count, edges.Count);
             foreach (var v in body.Vertices) vertices.Add(new BrepVertex(vertices.Count, v.Point));
-            foreach (var e in body.Edges) edges.Add(new BrepEdge(edges.Count, Curve(e.Curve), v0 + e.Start.Index, v0 + e.End.Index, e.T0, e.T1));
+            foreach (var e in body.Edges) edges.Add(Finish(edges.Count, e, body, v0));
 
             BrepShell Shell(Shell shell) => new([.. shell.Faces.Select(f =>
             {
                 var face = body[f];
-                var (surface, shift) = Surface(face.Surface, faceOffset + f.Index, string.Join("+", names[f]));
-                if (surface.Kind != SurfaceKind.Plane)
-                {
-                    // The face's u in the period that ends in (0, 2π]: OCCT's reader moves a periodic face's p-curves
-                    // there (found by experiment), which leaves a face written in any other period open at its seam.
-                    var high = face.Loops.SelectMany(body.CoedgesOf).Max(c => Math.Max(body[c].Pcurve.At(body[body[c].Edge].T0).X, body[c].Pcurve.At(body[body[c].Edge].T1).X)) + shift;
-                    shift -= 2 * Math.PI * Math.Ceiling(high / (2 * Math.PI) - 1 - 1e-12);
-                }
+                var surface = Surface(face.Surface, faceOffset + f.Index, string.Join("+", names[f]));
                 var loops = face.Loops.Select((l, i) => new BrepLoop([.. SeamFirst(body, l, face.SameSense).Select(c =>
-                {
-                    var coedge = body[c];
-                    var edge = body[coedge.Edge];
-                    UvCurve? uv = null;
-                    if (surface.Kind != SurfaceKind.Plane)
-                    {
-                        var (a, z) = (coedge.Pcurve.At(edge.T0), coedge.Pcurve.At(edge.T1));
-                        uv = new UvCurve(1, [(a.X + shift, a.Y), (z.X + shift, z.Y)], [edge.T0, edge.T1], [2, 2]);
-                    }
-                    return new BrepCoedge(e0 + coedge.Edge.Index, coedge.Forward, uv);
-                })], Outer: i == 0)).ToList();
-                return new BrepFace(faceOffset + f.Index, names[f], surface, face.SameSense, loops);
+                    new BrepCoedge(e0 + body[c].Edge.Index, body[c].Forward, null))], Outer: i == 0)).ToList();
+                return new BrepFace(faceOffset + f.Index, names[f], surface, face.SameSense, WithImages(surface, loops, edges));
             })]);
 
             solids.Add(new BrepSolid(bodies.Count == 1 ? name : $"{name}-{b + 1}", Shell(body.Shells[0]), [.. body.Shells.Skip(1).Select(Shell)]));
@@ -60,8 +46,9 @@ public static class StepConversion
         return new Step.Brep(vertices, edges, solids);
     }
 
-    // A loop's coedges, started so that a seam is met first along the use OCCT's reader gives the SEAM_CURVE's first
-    // p-curve (found by experiment): against the edge on a face with its surface's sense, along it on one against it.
+    // A loop's coedges, started so that a seam's last use as written runs as the face is oriented (along the edge on a
+    // face with its surface's sense, against it otherwise): OCCT's reader gives a seam's p-curves to its uses one at a
+    // time and the last decides (ExactBrep.SeamsForwardLast turns the edge round for the same reason).
     static IEnumerable<CoedgeId> SeamFirst(Body body, LoopId loop, bool sameSense)
     {
         var coedges = body.CoedgesOf(loop).ToList();
@@ -71,26 +58,78 @@ public static class StepConversion
         return [.. coedges.Skip(first), .. coedges.Take(first)];
     }
 
-    static IsoCurve Curve(Curve3 c) => c switch
+    // The edge on Isoform's curve, parametrised as Isoform's export does.
+    static BrepEdge Finish(int index, Edge e, Body body, int v0)
     {
-        Line3 l => new IsoLine(l.Origin, l.Direction),
-        Circle3 k => new IsoCircle(k.Frame.Origin, k.Frame.ZAxis, k.Frame.XAxis, k.Radius),
-        _ => throw new NotSupportedException(c.GetType().Name),
-    };
-
-    // The Isoform surface, and what to add to the kernel's u to get its parameter there.
-    static (IsoSurface, double) Surface(Surface s, int id, string source)
-    {
-        switch (s)
+        var (p, q) = (body[e.Start].Point, body[e.End].Point);
+        var (start, end) = (v0 + e.Start.Index, v0 + e.End.Index);
+        const double quarter = Math.PI / 2;
+        static double Turn(double a) => a - 2 * Math.PI * Math.Floor(a / (2 * Math.PI));
+        switch (e.Curve)
         {
-            case Plane p:
-                return (new IsoSurface(id, source, SurfaceKind.Plane, p.Frame.Origin, p.Frame.ZAxis), 0);
-            case Cylinder c:
-                var surface = new IsoSurface(id, source, SurfaceKind.Cylinder, c.Frame.Origin, c.Frame.ZAxis, c.Radius);
-                var (x, y, _) = SurfaceParameters.Axes(surface);
-                return (surface, Math.Atan2(c.Frame.XAxis.Dot(y), c.Frame.XAxis.Dot(x)));
+            case Line3 l:
+                return new BrepEdge(index, new IsoLine(p, l.Direction), start, end, 0, (q - p).Dot(l.Direction));
+            case Circle3 k:
+            {
+                var radial = p - k.Frame.Origin;
+                var n = k.Frame.ZAxis;
+                var circle = new IsoCircle(k.Frame.Origin, n, (radial - n * radial.Dot(n)).Normalized().Cross(n), k.Radius);
+                return new BrepEdge(index, circle, start, end, quarter, quarter + (e.IsClosed ? 2 * Math.PI : Turn(circle.Parameter(q) - quarter)));
+            }
+            case Ellipse3 k:
+            {
+                var ellipse = new IsoEllipse(k.Frame.Origin, k.Frame.ZAxis, k.Frame.XAxis, k.Major, k.Minor);
+                var t = Turn(ellipse.Parameter(p));
+                if (t < quarter || t > 3 * quarter) (ellipse, t) = (ellipse with { X = -ellipse.X }, Turn(t + Math.PI));
+                return new BrepEdge(index, ellipse, start, end, t, t + (e.IsClosed ? 2 * Math.PI : Turn(ellipse.Parameter(q) - t)));
+            }
             default:
-                throw new NotSupportedException(s.GetType().Name);
+                throw new NotSupportedException(e.Curve.GetType().Name);
         }
     }
+
+    // A curved face's loops with every coedge's image, each starting where the one before it ended.
+    static List<BrepLoop> WithImages(IsoSurface s, List<BrepLoop> loops, List<BrepEdge> edges)
+    {
+        if (s.Kind == SurfaceKind.Plane) return loops;
+        var images = new Dictionary<int, UvCurve>();
+        (double U, double V)? anchor = null;
+        var result = new List<BrepLoop>();
+        foreach (var loop in loops)
+        {
+            var coedges = new List<BrepCoedge>();
+            var last = anchor;
+            foreach (var c in loop.Coedges)
+            {
+                var e = edges[c.Edge];
+                if (!images.TryGetValue(c.Edge, out var image)) images[c.Edge] = image = SurfaceParameters.Image(s, e.Curve, e.T0, e.T1);
+                var from = c.Forward ? image.Start : image.End;
+                var to = last ?? (Math.PI, Math.PI);
+                image = Snapped(image.Shifted(SurfaceParameters.Turns(to.U - from.U), 0));
+                coedges.Add(c with { Uv = image });
+                anchor ??= c.Forward ? image.Start : image.End;
+                last = c.Forward ? image.End : image.Start;
+            }
+            result.Add(loop with { Coedges = coedges });
+        }
+        return result;
+    }
+
+    // An image with every u that rounding left a hair off a whole turn put on it: a seam at u = 0 written at −2e-16
+    // is read a turn away.
+    static UvCurve Snapped(UvCurve image) => image with
+    {
+        Poles = [.. image.Poles.Select(p =>
+        {
+            var turn = 2 * Math.PI * Math.Round(p.U / (2 * Math.PI));
+            return Math.Abs(p.U - turn) <= 1e-12 ? (turn, p.V) : p;
+        })],
+    };
+
+    static IsoSurface Surface(Surface s, int id, string source) => s switch
+    {
+        Plane p => new IsoSurface(id, source, SurfaceKind.Plane, p.Frame.Origin, p.Frame.ZAxis),
+        Cylinder c => new IsoSurface(id, source, SurfaceKind.Cylinder, c.Frame.Origin, c.Frame.ZAxis, c.Radius),
+        _ => throw new NotSupportedException(s.GetType().Name),
+    };
 }

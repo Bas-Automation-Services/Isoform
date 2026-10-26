@@ -63,7 +63,14 @@ internal static class Intersections
             var center = c.Frame.Origin + a * (n.Dot(p.Frame.Origin - c.Frame.Origin) / na);
             return SurfaceMeeting.Along(new Circle3(RigidTransform3D.FromFrame(center, a, c.Frame.XAxis), c.Radius));
         }
-        if (Math.Abs(na) > Parallel) return SurfaceMeeting.Refused("a plane at an angle to a cylinder's axis, which meets it in an ellipse");
+        if (Math.Abs(na) > Parallel)
+        {
+            // Centre on the axis; minor axis R across it, major axis R / |n·a| down the slope.
+            var center = c.Frame.Origin + a * (n.Dot(p.Frame.Origin - c.Frame.Origin) / na);
+            var minor = a.Cross(n).Normalized();
+            var major = n.Cross(minor);
+            return SurfaceMeeting.Along(new Ellipse3(RigidTransform3D.FromFrame(center, n, major), c.Radius / Math.Abs(na), c.Radius));
+        }
         var s = n.Dot(c.Frame.Origin - p.Frame.Origin);
         if (Math.Abs(s) > c.Radius + Snap) return SurfaceMeeting.Nothing;
         if (Math.Abs(s) > c.Radius - Snap) return SurfaceMeeting.Refused("a plane tangent to a cylinder");
@@ -100,8 +107,81 @@ internal static class Intersections
         (Line3 p, Circle3 c) => (LineCircle(p, c), false),
         (Circle3 c, Line3 p) => (LineCircle(p, c), false),
         (Circle3 c, Circle3 d) => CircleCircle(c, d),
+        (Line3 p, Ellipse3 e) => (LineConic(p, e), false),
+        (Ellipse3 e, Line3 p) => (LineConic(p, e), false),
+        (Ellipse3 or Circle3, Ellipse3 or Circle3) => ConicConic(a, b),
         _ => throw new NotSupportedException($"{a.GetType().Name} against {b.GetType().Name}"),
     };
+
+    // A circle or an ellipse: its frame and semi-axes (along its X and Y).
+    static (RigidTransform3D Frame, double A, double B) Conic(Curve3 c) => c switch
+    {
+        Circle3 k => (k.Frame, k.Radius, k.Radius),
+        Ellipse3 e => (e.Frame, e.Major, e.Minor),
+        _ => throw new NotSupportedException(c.GetType().Name),
+    };
+
+    static bool OnConic(Curve3 c, Point3D p) => (c.At(Param(c, p)) - p).Length <= Snap;
+
+    static List<Point3D> LineConic(Line3 line, Curve3 conic)
+    {
+        var (f, a, b) = Conic(conic);
+        var z = f.ZAxis;
+        var dz = line.Direction.Dot(z);
+        if (Math.Abs(dz) > Parallel)
+        {
+            var p = line.At((f.Origin - line.Origin).Dot(z) / dz);
+            return OnConic(conic, p) ? [p] : [];
+        }
+        if (Math.Abs((line.Origin - f.Origin).Dot(z)) > Snap) return [];
+        // In the conic's frame: (x/a)² + (y/b)² = 1 along the line.
+        var (o, d) = (f.ApplyInverse(line.Origin), f.ApplyInverse(line.Direction));
+        var qa = d.X * d.X / (a * a) + d.Y * d.Y / (b * b);
+        var qb = 2 * (o.X * d.X / (a * a) + o.Y * d.Y / (b * b));
+        var qc = o.X * o.X / (a * a) + o.Y * o.Y / (b * b) - 1;
+        var disc = qb * qb - 4 * qa * qc;
+        var scale = 4 * qa * Snap / Math.Min(a, b);
+        if (disc < -scale) return [];
+        if (disc <= scale) return [line.At(-qb / (2 * qa))];
+        var root = Math.Sqrt(disc);
+        return [line.At((-qb - root) / (2 * qa)), line.At((-qb + root) / (2 * qa))];
+    }
+
+    static (List<Point3D>, bool) ConicConic(Curve3 c, Curve3 d)
+    {
+        var (f, _, _) = Conic(c);
+        var (g, a, b) = Conic(d);
+        if (f.ZAxis.Cross(g.ZAxis).Length >= Parallel)
+        {
+            // Planes at an angle: the line they share against one, kept where it is on the other.
+            var line = PlanesLine(f.Origin, f.ZAxis, g.Origin, g.ZAxis);
+            return ([.. LineConic(line, c).Where(p => OnConic(d, p))], false);
+        }
+        if (Math.Abs((g.Origin - f.Origin).Dot(f.ZAxis)) > Snap) return ([], false);
+        // One plane: the same conic, or where d's equation changes sign along c (tangency is not found).
+        double Implicit(Point3D p)
+        {
+            var q = g.ApplyInverse(p);
+            return q.X * q.X / (a * a) + q.Y * q.Y / (b * b) - 1;
+        }
+        const int n = 720;
+        var values = Enumerable.Range(0, n + 1).Select(i => Implicit(c.At(2 * Math.PI * i / n))).ToArray();
+        if (values.All(v => Math.Abs(v) <= Snap / Math.Min(a, b))) return ([], true);
+        var points = new List<Point3D>();
+        for (var i = 0; i < n; i++)
+        {
+            if (values[i] * values[i + 1] > 0) continue;
+            var (lo, hi) = (2 * Math.PI * i / n, 2 * Math.PI * (i + 1) / n);
+            for (var k = 0; k < 80; k++)
+            {
+                var mid = (lo + hi) / 2;
+                if (Implicit(c.At(mid)) * values[i] > 0) lo = mid; else hi = mid;
+            }
+            var p = c.At((lo + hi) / 2);
+            if (points.All(q => (q - p).Length > Snap)) points.Add(p);
+        }
+        return (points, false);
+    }
 
     static (List<Point3D>, bool) LineLine(Line3 p, Line3 q)
     {
@@ -163,6 +243,7 @@ internal static class Intersections
     {
         Line3 l => (p - l.Origin).Dot(l.Direction),
         Circle3 k => Math.Atan2((p - k.Frame.Origin).Dot(k.Frame.YAxis), (p - k.Frame.Origin).Dot(k.Frame.XAxis)),
+        Ellipse3 e => Math.Atan2((p - e.Frame.Origin).Dot(e.Frame.YAxis) / e.Minor, (p - e.Frame.Origin).Dot(e.Frame.XAxis) / e.Major),
         _ => throw new NotSupportedException(c.GetType().Name),
     };
 
@@ -173,13 +254,13 @@ internal static class Intersections
     public static double? On(Curve3 c, double t0, double t1, Point3D p)
     {
         var t = Param(c, p);
-        if (c is Circle3)
+        if (c.Period is not null)
         {
             t = t0 + Wrap(t - t0);
             // A point just before t0 wraps to near t0 + 2π.
             if (t > t1 && (p - c.At(t0)).Length <= Snap) t = t0;
         }
-        var slack = c is Circle3 k ? Snap / k.Radius : Snap;
+        var slack = c switch { Circle3 k => Snap / k.Radius, Ellipse3 e => Snap / e.Minor, _ => Snap };
         if (t < t0 - slack || t > t1 + slack) return null;
         t = Math.Clamp(t, t0, t1);
         return (c.At(t) - p).Length <= Snap ? t : null;
@@ -188,10 +269,42 @@ internal static class Intersections
     /// <summary>The distance from a point to the piece of a curve over [t0, t1] (t0 &lt; t1).</summary>
     public static double Distance(Curve3 c, double t0, double t1, Point3D p)
     {
+        if (c is Ellipse3) return Nearest(c, t0, t1, p);
         var t = Param(c, p);
-        if (c is Circle3) t = t0 + Wrap(t - t0);
+        if (c.Period is not null) t = t0 + Wrap(t - t0);
         if (t >= t0 && t <= t1) return (c.At(t) - p).Length;
         return Math.Min((c.At(t0) - p).Length, (c.At(t1) - p).Length);
+    }
+
+    // The distance to the nearest point of a piece: golden-section search on each of 32 sub-pieces.
+    static double Nearest(Curve3 c, double t0, double t1, Point3D p)
+    {
+        var best = Math.Min((c.At(t0) - p).Length, (c.At(t1) - p).Length);
+        const double g = 0.6180339887498949;
+        for (var i = 0; i < 32; i++)
+        {
+            var (a, b) = (t0 + (t1 - t0) * i / 32, t0 + (t1 - t0) * (i + 1) / 32);
+            double F(double t) => (c.At(t) - p).Length;
+            var (x1, x2) = (b - g * (b - a), a + g * (b - a));
+            var (f1, f2) = (F(x1), F(x2));
+            for (var k = 0; k < 80; k++)
+            {
+                if (f1 < f2)
+                {
+                    (b, x2, f2) = (x2, x1, f1);
+                    x1 = b - g * (b - a);
+                    f1 = F(x1);
+                }
+                else
+                {
+                    (a, x1, f1) = (x1, x2, f2);
+                    x2 = a + g * (b - a);
+                    f2 = F(x2);
+                }
+            }
+            best = Math.Min(best, Math.Min(f1, f2));
+        }
+        return best;
     }
 
     /// <summary>An angle taken into [0, 2π).</summary>
@@ -289,6 +402,25 @@ internal static class Uv
                 var sense = k.Frame.ZAxis.Dot(cyl.Frame.ZAxis) > 0 ? 1 : -1;
                 return new Line2(new Point2D(phase, (k.Frame.Origin - cyl.Frame.Origin).Dot(cyl.Frame.ZAxis)), new Vector2D(sense, 0));
             }
+            case (Plane p, Ellipse3 e):
+            {
+                var x = e.Frame.XAxis;
+                var rotation = Math.Atan2(x.Dot(p.Frame.YAxis), x.Dot(p.Frame.XAxis));
+                return new Ellipse2(Of(p, e.Frame.Origin), e.Major, e.Minor, rotation, e.Frame.ZAxis.Dot(p.Frame.ZAxis) > 0 ? 1 : -1, 0);
+            }
+            case (Cylinder cyl, Ellipse3 e):
+            {
+                // A plane section: across the axis it is the cylinder's circle, so u runs with t; along it a cosine.
+                var z = cyl.Frame.ZAxis;
+                var (xe, ye) = (e.Frame.XAxis, e.Frame.YAxis);
+                var (xp, yp) = ((xe - z * xe.Dot(z)) * e.Major, (ye - z * ye.Dot(z)) * e.Minor);
+                if (Math.Abs(xp.Length - cyl.Radius) > Intersections.Snap || Math.Abs(yp.Length - cyl.Radius) > Intersections.Snap || Math.Abs(xp.Dot(yp)) > Intersections.Snap)
+                    throw new NotSupportedException("an ellipse on a cylinder that is not a plane section of it");
+                var u0 = Math.Atan2(xp.Dot(cyl.Frame.YAxis), xp.Dot(cyl.Frame.XAxis));
+                var slope = xp.Cross(yp).Dot(z) > 0 ? 1 : -1;
+                var (ca, cb) = (e.Major * xe.Dot(z), e.Minor * ye.Dot(z));
+                return new Wave2(u0, (e.Frame.Origin - cyl.Frame.Origin).Dot(z), slope, Math.Sqrt(ca * ca + cb * cb), Math.Atan2(-cb, ca));
+            }
             default:
                 throw new NotSupportedException($"a {c.GetType().Name} on a {s.GetType().Name}");
         }
@@ -299,6 +431,8 @@ internal static class Uv
     {
         Line2 l => l with { Origin = new Point2D(l.Origin.X + du, l.Origin.Y) },
         Circle2 c => c with { Center = new Point2D(c.Center.X + du, c.Center.Y) },
+        Ellipse2 e => e with { Center = new Point2D(e.Center.X + du, e.Center.Y) },
+        Wave2 w => w with { U0 = w.U0 + du },
         _ => throw new NotSupportedException(pc.GetType().Name),
     };
 
@@ -307,6 +441,8 @@ internal static class Uv
     {
         Line2 l => new Line2(l.At(beta), l.Direction * alpha),
         Circle2 c => new Circle2(c.Center, c.Radius, c.Phase + c.Sense * beta, c.Sense * (int)Math.Round(alpha)),
+        Ellipse2 e => e with { Offset = alpha * (beta + e.Offset), Sense = e.Sense * (int)Math.Round(alpha) },
+        Wave2 w => w with { U0 = w.U0 + w.Slope * beta, Slope = w.Slope * (int)Math.Round(alpha), Phase = alpha * (beta + w.Phase) },
         _ => throw new NotSupportedException(pc.GetType().Name),
     };
 
@@ -321,6 +457,9 @@ internal static class Uv
                 return new LineSegment(F(l.At(from)), F(l.At(to)));
             case Circle2 c when k == 1:
                 return new ArcSegment(c.Center, c.Radius, c.Phase + c.Sense * from, c.Sense * (to - from));
+            case Ellipse2 when k == 1:
+            case Wave2:
+                return new CurveSegment(pc, from, to, k);
             default:
                 throw new NotSupportedException($"a {pc.GetType().Name} on a {s.GetType().Name}");
         }

@@ -207,7 +207,7 @@ internal static class Sewing
                                 var (t0, t1) = forward ? (u.From, u.To) : (u.To, u.From);
                                 var (s, f) = forward ? (start[i], end[i]) : (end[i], start[i]);
                                 // A circle's range starts in [0, 2π), where a reader that takes it from the vertices puts it.
-                                var d = u.Curve is Circle3 ? 2 * Math.PI * Math.Floor(t0 / (2 * Math.PI) + 1e-12) : 0;
+                                var d = u.Curve.Period is not null ? 2 * Math.PI * Math.Floor(t0 / (2 * Math.PI) + 1e-12) : 0;
                                 var edge = builder.AddEdge(u.Curve, t0 - d, t1 - d, V(s), V(f));
                                 // The partner's p-curve in this edge's parameter: its From is at u.To, its To at u.From.
                                 var alpha = (w.From - w.To) / (u.To - u.From);
@@ -294,6 +294,8 @@ internal static class Sewing
                               (q.Origin - p.Origin - p.Direction * (q.Origin - p.Origin).Dot(p.Direction)).Length <= Snap,
         (Circle3 p, Circle3 q) => p.Frame.ZAxis.Cross(q.Frame.ZAxis).Length < 1e-9 && Near(p.Frame.Origin, q.Frame.Origin) &&
                                   Math.Abs(p.Radius - q.Radius) <= Snap,
+        (Ellipse3 p, Ellipse3 q) => p.Frame.ZAxis.Cross(q.Frame.ZAxis).Length < 1e-9 && p.Frame.XAxis.Cross(q.Frame.XAxis).Length < 1e-9 &&
+                                    Near(p.Frame.Origin, q.Frame.Origin) && Math.Abs(p.Major - q.Major) <= Snap && Math.Abs(p.Minor - q.Minor) <= Snap,
         _ => false,
     };
 
@@ -301,7 +303,7 @@ internal static class Sewing
     static Use Joined(Use x, Use y)
     {
         var t = Intersections.Param(x.Curve, y.End);
-        if (x.Curve is Circle3)
+        if (x.Curve.Period is not null)
         {
             var direction = Math.Sign(x.To - x.From);
             var turn = Intersections.Wrap(direction * (t - x.To));

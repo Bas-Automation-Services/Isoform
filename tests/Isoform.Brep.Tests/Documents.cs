@@ -2,7 +2,7 @@ using Isoform.Document;
 
 namespace Isoform.Brep.Tests;
 
-/// <summary>Isoform part documents the managed kernel builds (experiments 1 to 3), with their exact volumes.</summary>
+/// <summary>Isoform part documents the managed kernel builds (experiments 1 to 4), with their exact volumes.</summary>
 public static class Documents
 {
     static readonly SketchPlane Xy = new([0, 0, 0], [1, 0, 0], [0, 0, 1]);
@@ -124,6 +124,36 @@ public static class Documents
 
     static PartDocument OnSlab(params Feature[] more) => new([Slab, .. more]);
 
+    // Experiment 4: planes at an angle to cylinders, which meet them in ellipses. The slab under
+    // z = 10 − (x − 20)·slope, clipped at z = 0.
+    static double Wedge(double slope) => 50 * (20 * 10 + 0.5 * (10 / slope) * 10);
+
+    static readonly double Tan30 = Math.Tan(Math.PI / 6), Tan10 = Math.Tan(Math.PI / 18);
+
+    static readonly (string Name, PartDocument Document, double Volume)[] Angles =
+    [
+        ("plane cut off the end", OnSlab(new PlaneCut("cut", [90, 25, 10], [1, 0, 1])), 50_000 - 0.5 * 10 * 10 * 50),
+        // The bore's column under the cut, at its mean height (the cut stays above z = 0 across it).
+        ("oblique cut through a hole", OnSlab(new Hole("hole", [30, 25], 10), new PlaneCut("cut", [20, 25, 10], [Tan30, 0, 1])),
+            Wedge(Tan30) - Math.PI * 25 * (10 - 10 * Tan30)),
+        ("one cut through two holes", OnSlab(new Hole("a", [30, 25], 10), new Hole("b", [60, 25], 8), new PlaneCut("cut", [20, 25, 10], [Tan10, 0, 1])),
+            Wedge(Tan10) - Math.PI * 25 * (10 - 10 * Tan10) - Math.PI * 16 * (10 - 40 * Tan10)),
+        // The boss's column under a plane tilted 20° through its axis at z = 20, clear of the plate.
+        ("tilted cut through a boss", OnSlab(
+            new Sketch("ring", new SketchPlacement(Face: "plate/z+"), new Dictionary<string, double[]> { ["c"] = [50, 25] }, [new SketchCircle("rim", "c", 8)], []),
+            new Extrude("boss", BooleanOp.Join, null, null, 0, 15) { Sketch = "ring" },
+            new PlaneCut("cut", [50, 25, 20], [0, Math.Sin(Math.PI / 9), Math.Cos(Math.PI / 9)])), 50_000 + Math.PI * 640),
+        // A bore 30° off vertical: horizontal slices are ellipses of area π r² / cos 30°.
+        ("bore at an angle", OnSlab(new Extrude("bore", BooleanOp.Cut, new SketchPlane([50, 25, 5], [0, 1, 0], [Math.Sin(Math.PI / 6), 0, Math.Cos(Math.PI / 6)]),
+            new Profile([-4, 0], [new ProfileEdge("a", [4, 0], 1), new ProfileEdge("b", [-4, 0], 1)]), -20, 20)), 50_000 - Math.PI * 160 / Math.Cos(Math.PI / 6)),
+        // A post 30° off vertical, starting inside the plate: what stands above the top face, cut there in an ellipse.
+        ("angled post", OnSlab(new Extrude("post", BooleanOp.Join, new SketchPlane([50, 25, 5], [0, 1, 0], [Math.Sin(Math.PI / 6), 0, Math.Cos(Math.PI / 6)]),
+            new Profile([-4, 0], [new ProfileEdge("a", [4, 0], 1), new ProfileEdge("b", [-4, 0], 1)]), 0, 20)), 50_000 + Math.PI * 16 * (20 - 5 / Math.Cos(Math.PI / 6))),
+        // Into the 45° face at (95, 25, 5), through to the bottom at (90, 25, 0): 5√2 along its axis.
+        ("hole into the angled face", OnSlab(new PlaneCut("cut", [90, 25, 10], [1, 0, 1]), new Hole("drill", [45 * Math.Sqrt(2), 25], 4) { On = "cut/face" }),
+            47_500 - Math.PI * 4 * 5 * Math.Sqrt(2)),
+    ];
+
     // The lens two discs of radius a and b, d apart, share.
     static double Lens(double a, double b, double d) =>
         a * a * Math.Acos((d * d + a * a - b * b) / (2 * d * a)) + b * b * Math.Acos((d * d + b * b - a * a) / (2 * d * b))
@@ -170,6 +200,7 @@ public static class Documents
         ["two pads", TwoPads, TwoPadsVolume],
         .. Booleans.Select(b => new object[] { b.Name, b.Document, b.Volume }),
         .. Holes.Select(b => new object[] { b.Name, b.Document, b.Volume }),
+        .. Angles.Select(b => new object[] { b.Name, b.Document, b.Volume }),
     ];
 
     public static PartDocument Named(string name) => name switch
@@ -177,6 +208,6 @@ public static class Documents
         "mounting plate" => MountingPlate,
         "bracket" => Bracket,
         "two pads" => TwoPads,
-        _ => Booleans.Concat(Holes).Single(b => b.Name == name).Document,
+        _ => Booleans.Concat(Holes).Concat(Angles).Single(b => b.Name == name).Document,
     };
 }

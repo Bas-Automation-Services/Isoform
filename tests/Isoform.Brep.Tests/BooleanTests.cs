@@ -130,11 +130,38 @@ public class BooleanTests(ITestOutputHelper output)
     }
 
     [Fact]
-    public void Ellipses_are_refused()
+    public void A_bore_at_45_degrees_meets_the_faces_in_ellipses()
     {
-        var tilted = RigidTransform3D.FromFrame(new Point3D(50, 30, -5), new Vector3D(0, 1, 1), new Vector3D(1, 0, 0));
-        var r = Booleans.Subtract(Plate, Prism(Circle(0, 0, 4), 0, 30, tilted));
+        var tilted = RigidTransform3D.FromFrame(new Point3D(50, 30, -5), new Vector3D(0, 1, 1).Normalized(), new Vector3D(1, 0, 0));
+        var r = One(Booleans.Subtract(Plate, Prism(Circle(0, 0, 4), 0, 30, tilted)));
+        // Horizontal slices are ellipses of area π r² / cos 45°.
+        MassProperties.Volume(r.Body).Should().BeApproximately(60000 - Math.PI * 160 * Math.Sqrt(2), 1e-9);
+        r.Body.Faces.Should().HaveCount(7);
+        r.Body.Edges.Select(e => e.Curve).OfType<Ellipse3>().Should().HaveCount(2);
+        BodyCheck.Genus(r.Body, new ShellId(0)).Should().Be(1);
+    }
+
+    [Fact]
+    public void A_cut_at_30_degrees_across_a_bore()
+    {
+        var plate = Prism(Rectangle(0, 0, 100, 50), 0, 10, null, Circle(30, 25, 5));
+        var slope = Math.Tan(Math.PI / 6);
+        var plane = RigidTransform3D.FromFrame(new Point3D(20, 25, 10), new Vector3D(slope, 0, 1).Normalized(), new Vector3D(0, 1, 0));
+        var r = One(Booleans.Subtract(plate, Prism(Rectangle(-500, -500, 500, 500), 0, 500, plane)));
+        // The plate under z = 10 − (x − 20)·tan 30°, less the bore's column under it (its mean height at x = 30).
+        var zeroAt = 20 + 10 / slope;
+        var prism = 50 * (20 * 10 + 0.5 * (zeroAt - 20) * 10);
+        MassProperties.Volume(r.Body).Should().BeApproximately(prism - Math.PI * 25 * (10 - 10 * slope), 1e-9);
+        r.Body.Edges.Select(e => e.Curve).OfType<Ellipse3>().Should().ContainSingle();
+    }
+
+    [Fact]
+    public void Cylinders_at_an_angle_are_refused()
+    {
+        var across = RigidTransform3D.FromFrame(new Point3D(-1, 30, 5), new Vector3D(1, 0, 0), new Vector3D(0, 1, 0));
+        var holed = Prism(Rectangle(0, 0, 100, 60), 0, 10, null, Circle(50, 30, 4));
+        var r = Booleans.Subtract(holed, Prism(Circle(0, 0, 2), 0, 102, across));
         r.Bodies.Should().BeNull();
-        r.Problem.Should().Contain("ellipse");
+        r.Problem.Should().Contain("not parallel");
     }
 }

@@ -123,6 +123,10 @@ internal static class Arrangement
                 var (sin, cos) = Math.SinCos(theta);
                 var (tx, ty) = (-sin * sign, cos * sign);
                 return atEnd ? (Math.Atan2(-ty, -tx), -sign / a.Radius) : (Math.Atan2(ty, tx), sign / a.Radius);
+            case CurveSegment c:
+                var t = atEnd ? c.To : c.From;
+                var h = c.Heading(t);
+                return atEnd ? (Math.Atan2(-h.Y, -h.X), -c.Curvature(t)) : (Math.Atan2(h.Y, h.X), c.Curvature(t));
             default:
                 throw new NotSupportedException(s.GetType().Name);
         }
@@ -136,6 +140,7 @@ internal static class Arrangement
         {
             LineSegment l => ((l.To.X - l.From.X) / l.Length, (l.To.Y - l.From.Y) / l.Length),
             ArcSegment a => (-Math.Sin(a.StartAngle + a.Sweep / 2) * Math.Sign(a.Sweep), Math.Cos(a.StartAngle + a.Sweep / 2) * Math.Sign(a.Sweep)),
+            CurveSegment c => Unit(c.Heading((c.From + c.To) / 2)),
             _ => throw new NotSupportedException(s.GetType().Name),
         };
         return new Point2D(m.X - ty * distance, m.Y + tx * distance);
@@ -145,8 +150,11 @@ internal static class Arrangement
     {
         LineSegment l => new((l.From.X + l.To.X) / 2, (l.From.Y + l.To.Y) / 2),
         ArcSegment a => a.PointAt(a.StartAngle + a.Sweep / 2),
+        CurveSegment c => c.Mid,
         _ => throw new NotSupportedException(s.GetType().Name),
     };
+
+    static (double, double) Unit(Vector2D v) => (v.X / v.Length, v.Y / v.Length);
 
     /// <summary>
     /// A point well inside a face given by its loops (face on the left in (u, v)): on a few horizontal lines across
@@ -178,6 +186,7 @@ internal static class Arrangement
     static IEnumerable<Point2D> Samples(Segment s)
     {
         if (s is LineSegment l) return [l.From, l.To];
+        if (s is CurveSegment c) return c.Samples();
         var a = (ArcSegment)s;
         return Enumerable.Range(0, 17).Select(i => a.PointAt(a.StartAngle + a.Sweep * i / 16));
     }
@@ -195,6 +204,9 @@ internal static class Arrangement
                 var dx = Math.Sqrt(a.Radius * a.Radius - dy * dy);
                 foreach (var x in new[] { dx, -dx })
                     if (a.Covers(Math.Atan2(dy, x))) yield return a.Center.X + x;
+                break;
+            case CurveSegment c:
+                foreach (var x in c.Crossings(y)) yield return x;
                 break;
         }
     }

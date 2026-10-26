@@ -129,3 +129,58 @@ public sealed record Cylinder(RigidTransform3D Frame, double Radius) : Surface
 
     public override double? PeriodU => 2 * Math.PI;
 }
+
+/// <summary>
+/// An ellipse in its frame's XY plane round the frame's origin, counter-clockwise about the frame's Z:
+/// <c>Origin + Major · cos t · X + Minor · sin t · Y</c>. A plane at an angle to a cylinder meets it in one.
+/// </summary>
+public sealed record Ellipse3(RigidTransform3D Frame, double Major, double Minor) : Curve3
+{
+    public override Point3D At(double t)
+    {
+        var (sin, cos) = Math.SinCos(t);
+        return Frame.Origin + Frame.XAxis * (Major * cos) + Frame.YAxis * (Minor * sin);
+    }
+
+    public override Vector3D Derivative(double t)
+    {
+        var (sin, cos) = Math.SinCos(t);
+        return Frame.YAxis * (Minor * cos) - Frame.XAxis * (Major * sin);
+    }
+
+    public override double? Period => 2 * Math.PI;
+}
+
+/// <summary>
+/// An ellipse in (u, v): <c>Center + Major · cos(t + Offset) · a + Minor · sin(t + Offset) · Sense · b</c>, with a the
+/// direction at angle <see cref="Rotation"/> and b a turned a quarter counter-clockwise.
+/// </summary>
+public sealed record Ellipse2(Point2D Center, double Major, double Minor, double Rotation, int Sense, double Offset) : Curve2
+{
+    public override Point2D At(double t)
+    {
+        var (s, c) = Math.SinCos(t + Offset);
+        var (rs, rc) = Math.SinCos(Rotation);
+        var (x, y) = (Major * c, Minor * s * Sense);
+        return new Point2D(Center.X + x * rc - y * rs, Center.Y + x * rs + y * rc);
+    }
+
+    public override Vector2D Derivative(double t)
+    {
+        var (s, c) = Math.SinCos(t + Offset);
+        var (rs, rc) = Math.SinCos(Rotation);
+        var (x, y) = (-Major * s, Minor * c * Sense);
+        return new Vector2D(x * rc - y * rs, x * rs + y * rc);
+    }
+}
+
+/// <summary>
+/// A plane's section of a cylinder in its (u, v): <c>u = U0 + Slope · t</c> (Slope ±1) and
+/// <c>v = V0 + Amplitude · cos(t + Phase)</c>, for an ellipse parametrised by its angle t.
+/// </summary>
+public sealed record Wave2(double U0, double V0, int Slope, double Amplitude, double Phase) : Curve2
+{
+    public override Point2D At(double t) => new(U0 + Slope * t, V0 + Amplitude * Math.Cos(t + Phase));
+
+    public override Vector2D Derivative(double t) => new(Slope, -Amplitude * Math.Sin(t + Phase));
+}

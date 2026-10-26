@@ -7,8 +7,8 @@ namespace Isoform.Brep.Modeling;
 
 /// <summary>
 /// Isoform documents on the managed B-rep kernel: blocks, plain extrudes (an inline profile, or the regions of a
-/// sketch on a plane or on a flat face of the part) and holes (through, or blind with a floor; along Z, into a face,
-/// or at a sketch's points). Each starts a body, joins it or cuts it, working on the current body as Isoform's
+/// sketch on a plane or on a flat face of the part), holes (through, or blind with a floor; along Z, into a face, or
+/// at a sketch's points) and plane cuts (face <c>id/face</c>). Each starts a body, joins it or cuts it, working on the current body as Isoform's
 /// <see cref="Feature.Body"/> says. Faces carry Isoform's names: sides after their profile edge, caps <c>id/start</c>
 /// and <c>id/end</c>, blocks <c>id/x-</c> … <c>id/z+</c>, holes <c>id/wall</c> and <c>id/floor</c>, faces merged on
 /// one surface named by all their sources. Anything else is refused with <see cref="Diagnostic.BackendFailed"/>.
@@ -43,6 +43,7 @@ public sealed class BrepModeler(ModelingSettings settings) : IModeler
                 Block { Blend: 0 } b => Guard(b.Id, () => [BlockTool(b)], b.Op),
                 Extrude { Blend: 0 } e => Tools(e, sketches) is var (t, p) ? (t, e.Op, p) : default,
                 Hole h => HoleTools(h, sketches, [.. solids.Where(s => s.Body == current).Select(s => s.Solid)]) is var (t, p) ? (t, BooleanOp.Cut, p) : default,
+                PlaneCut c => Guard(c.Id, () => [PlaneTool(c, [.. solids.Where(s => s.Body == current).Select(s => s.Solid)])], BooleanOp.Cut),
                 _ => (null, BooleanOp.New, Unsupported(feature.Id, $"{feature.GetType().Name} is not supported by the managed B-rep kernel yet")),
             };
             if (failed is not null) return Failed(failed);
@@ -172,6 +173,21 @@ public sealed class BrepModeler(ModelingSettings settings) : IModeler
             return Swept(h.Id, circle, frame, from, along.Max() + reach, [[$"{spot.Spot}wall"]], $"{spot.Spot}floor", $"{spot.Spot}mouth");
         })], BooleanOp.Cut);
         return (tools, failed);
+    }
+
+    // A plane cut: a box standing on the plane on the side its normal points to, reaching past the body; its base is
+    // the cut face, id/face.
+    NamedBody PlaneTool(PlaneCut c, List<NamedBody> body)
+    {
+        var (at, n) = (P(c.Point), V(c.Normal).Normalized());
+        var reach = body.SelectMany(b => b.Body.Vertices).Select(v => (v.Point - at).Length).DefaultIfEmpty(0).Max()
+                    + body.SelectMany(b => b.Body.Faces).Select(f => f.Surface is Cylinder k ? k.Radius : 0).DefaultIfEmpty(0).Max() + 1;
+        var x = Math.Abs(n.X) < 0.9 ? new Vector3D(1, 0, 0) : new Vector3D(0, 1, 0);
+        var frame = RigidTransform3D.FromFrame(at, n, (x - n * n.Dot(x)).Normalized());
+        Point2D Q(double u, double v) => new(u, v);
+        var square = new ProfileLoop([new LineSegment(Q(-reach, -reach), Q(reach, -reach)), new LineSegment(Q(reach, -reach), Q(reach, reach)),
+            new LineSegment(Q(reach, reach), Q(-reach, reach)), new LineSegment(Q(-reach, reach), Q(-reach, -reach))]);
+        return Swept(c.Id, new Region(square), frame, 0, reach, [["beyond-1", "beyond-2", "beyond-3", "beyond-4"]], "face", "beyond");
     }
 
     // The feature's tools applied to the current body's solids: new solids of it, joined to the solids they meet, or

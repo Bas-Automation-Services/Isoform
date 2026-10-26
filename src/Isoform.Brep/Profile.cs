@@ -54,6 +54,7 @@ public sealed record ProfileLoop(IReadOnlyList<Segment> Segments)
         // A chord's x dy − y dx term, plus for an arc the circular segment between chord and arc.
         LineSegment l => Cross(l.From, l.To) / 2,
         ArcSegment a => Cross(a.Start, a.End) / 2 + Math.Sign(a.Sweep) * a.Radius * a.Radius / 2 * (Math.Abs(a.Sweep) - Math.Sin(Math.Abs(a.Sweep))),
+        CurveSegment c => c.AreaTerm(),
         _ => throw new NotSupportedException(),
     });
 
@@ -70,6 +71,11 @@ public sealed record ProfileLoop(IReadOnlyList<Segment> Segments)
         var turns = 0;
         foreach (var s in Segments)
         {
+            if (s is CurveSegment curve)
+            {
+                angle += curve.Subtended(p);
+                continue;
+            }
             var (a, b) = (s.Start - p, s.End - p);
             angle += Math.Atan2(a.X * b.Y - a.Y * b.X, a.X * b.X + a.Y * b.Y);
             if (s is ArcSegment arc && InCircularSegment(arc, p)) turns += Math.Sign(arc.Sweep);
@@ -183,6 +189,7 @@ static class Distances
         ArcSegment a => a.Covers(Math.Atan2(p.Y - a.Center.Y, p.X - a.Center.X))
             ? Math.Abs((p - a.Center).Length - a.Radius)
             : Math.Min((p - a.Start).Length, (p - a.End).Length),
+        CurveSegment c => c.DistanceTo(p),
         _ => throw new NotSupportedException(),
     };
 

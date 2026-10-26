@@ -73,11 +73,8 @@ Scope (2026-10-26): extrudes that join or cut, bounded by planes and cylinders, 
 
 **Adapter:** `BrepModeler` runs the features in order: new bodies, joins (the tool united with each body it meets)
 and cuts (subtracted from each body). Faces merged on one surface are named by all their sources, sorted, as the
-F-rep core names them (`boss/a+boss/b`, `boss/w+plate/w`). `StepConversion` follows two conventions of OCCT's STEP
-reader, both found by experiment:
-- a circle edge's range starts in [0, 2π);
-- a cylinder face is written in the period of u that ends in (0, 2π], with a seam met first along the use the reader
-  gives its first p-curve.
+F-rep core names them (`boss/a+boss/b`, `boss/w+plate/w`). `StepConversion` followed two conventions of OCCT's
+STEP reader, found by experiment; experiment 4 replaced them with Isoform's own export conventions.
 
 **Results:** 14 documents on a 100 × 60 × 10 plate: a boss on top, pockets past and flush with the top, a window, a
 bore, a boss flush with two sides, a notch, a bore along the plate, blocks over and against the end, a cut parting
@@ -116,8 +113,8 @@ the quartic of two cylinders at an angle), tangent contact, and sliver tolerance
   frames; anything that shares `Plane3D` with it has to know.
 - `BasAutomation.Geometry` types compare with a tolerance in `==` but hash exactly, so equal values can hash apart.
 - The 2D segment distances in `Profile.cs` could move to `BasAutomation.Geometry`.
-- The two STEP conventions above come from OCCT's behaviour, not from its source; if another reader disagrees,
-  moving the seam to the STEP cylinder's u = 0 would satisfy both.
+- The STEP conventions come from OCCT's reader (experiment 4); whether other readers, Inventor's first, agree is
+  not checked yet.
 
 ## Experiment 3: holes, blocks and sketches on faces (done, 2026-10-26)
 
@@ -144,16 +141,55 @@ All 26 documents match the F-rep core (faces, names, neighbours, edges, corners,
 have exact volumes and read back in OCCT valid without healing. Tests: `tests/Isoform.Brep.Tests` 128,
 `BrepKernelStepTests` 26.
 
-## Experiment 4: candidates (to decide)
+## Experiment 4: ellipses and plane cuts (done, 2026-10-26)
 
-1. **Ellipses and plane cuts:** a plane at an angle to a cylinder (angled cuts through bores, chamfered bores later).
-   This needs an ellipse carrier, its p-curves on a plane (an ellipse) and on a cylinder (a sine in (u, v)), and its
-   intersections with lines, circles and other ellipses. `PlaneCut` comes with it almost free: a cut by a box on the
-   plane.
-2. **Fillets and chamfers between planes:** constant-radius fillets between two planes are cylinders, and chamfers are
-   planes. The work is in the edge selection by face names, the set-back faces, and the ends where a fillet meets
+**Kernel:**
+- *Carrier:* `Ellipse3`. A plane at an angle to a cylinder now meets it in an ellipse: centre on the axis, minor axis
+  R across it, major axis R / |n·a| down the slope.
+- *P-curves:* on a plane an `Ellipse2`. On the cylinder a `Wave2`: u runs with the ellipse's angle and v is a cosine
+  of it, because across the axis a plane section is the cylinder's own circle.
+- *Intersections:* line–ellipse is a quadratic in the conic's frame. Circle–ellipse and ellipse–ellipse go through
+  the line their planes share, or are solved numerically (sign changes, then bisection) when the planes coincide.
+- *Flat segments:* `CurveSegment` measures a p-curve that is neither line nor arc in short sub-pieces, each a graph
+  over its chord. Distance, crossings and area are exact to rounding, and so is the angle it subtends: a sub-chord's
+  angle plus a whole turn where the point lies between sub-piece and chord. Tracing, classification and sewing are
+  unchanged.
+- *Still refused:* two cylinders at an angle (a quartic), tangencies.
+
+**Adapter:** `PlaneCut` is a cut by a box standing on the plane and reaching past the body; its base is `id/face`.
+
+**STEP:** `StepConversion` now follows Isoform's own export (`ExactBrep`) instead of the two experimental rules of
+experiment 2:
+- circle edges start at π/2 and ellipse edges in [π/2, 3π/2], clear of the 0 / 2π wrap;
+- images come from `SurfaceParameters.Image` (degree-9 pieces where they are not straight), each shifted to start
+  where the one before ended;
+- a seam's last written use runs as the face is oriented;
+- image u values within 1e-12 of a whole turn are put on it. A seam at u = 0 written at −2e-16 at one end is read a
+  turn away and leaves the face open.
+
+**Results:** 7 more documents on the 100 × 50 × 10 block:
+- a 45° cut off the end;
+- an oblique cut through a hole;
+- one cut through two holes (two ellipses in one face);
+- a tilted cut through a boss;
+- a bore 30° off vertical;
+- an angled post joined into the plate;
+- a hole drilled into the angled face.
+
+All 33 documents match the F-rep core, agree with `ExactBrep` (ellipse edges included), have exact volumes, and read
+back in OCCT valid without healing. Tests: `tests/Isoform.Brep.Tests` 151 (`BooleanTests` 15), `BrepKernelStepTests`
+33.
+
+## Experiment 5: candidates (to decide)
+
+1. **Inventor as a second STEP reader:** import the 33 STEP files in Inventor and check solids, face counts and
+   volumes. It is the reader the parts end up in, and the STEP conventions above were only tested against OCCT.
+   Interactive, so it is a checked report, not a unit test.
+2. **Fillets and chamfers between planes:** constant-radius fillets between two planes are cylinders, and chamfers
+   are planes. The work is in edge selection by face names, the set-back faces, and the ends where a fillet meets
    other faces. Fillets against a perpendicular cylinder need a torus carrier.
-3. **Revolve:** cones, spheres and tori as carriers, with their intersections with planes and coaxial cylinders.
+3. **Two cylinders at an angle:** cross bores. Their intersection is a quartic, so the first curve without a closed
+   form, traced numerically or held as a B-spline.
+4. **Revolve:** cones, spheres and tori as carriers.
 
-Recommended: 1 (it removes the most common refusal), then 2 between planes, which is what `Isoform.Build`'s plates
-need next.
+Recommended: 1 (small, and it settles the open STEP question), then 2.
