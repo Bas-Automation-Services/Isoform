@@ -105,7 +105,7 @@ public static class StepConversion
                 if (!images.TryGetValue(c.Edge, out var image)) images[c.Edge] = image = SurfaceParameters.Image(s, e.Curve, e.T0, e.T1);
                 var from = c.Forward ? image.Start : image.End;
                 var to = last ?? (Math.PI, Math.PI);
-                image = Snapped(image.Shifted(SurfaceParameters.Turns(to.U - from.U), 0));
+                image = Snapped(image.Shifted(SurfaceParameters.Turns(to.U - from.U), SurfaceParameters.PeriodicV(s) ? SurfaceParameters.Turns(to.V - from.V) : 0));
                 coedges.Add(c with { Uv = image });
                 anchor ??= c.Forward ? image.Start : image.End;
                 last = c.Forward ? image.End : image.Start;
@@ -130,6 +130,7 @@ public static class StepConversion
     {
         Plane p => new IsoSurface(id, source, SurfaceKind.Plane, p.Frame.Origin, p.Frame.ZAxis),
         Cylinder c => new IsoSurface(id, source, SurfaceKind.Cylinder, c.Frame.Origin, c.Frame.ZAxis, c.Radius),
+        Torus t => new IsoSurface(id, source, SurfaceKind.Torus, t.Frame.Origin, t.Frame.ZAxis, t.Major, t.Minor),
         _ => throw new NotSupportedException(s.GetType().Name),
     };
 }

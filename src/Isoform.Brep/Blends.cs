@@ -5,11 +5,13 @@ namespace Isoform.Brep;
 public enum BlendKind { Fillet, Chamfer }
 
 /// <summary>
-/// Fillets and chamfers on the straight edge between two planar faces. A convex edge loses the prism between the
+/// Fillets and chamfers. On the straight edge between two planar faces a convex edge loses the prism between the
 /// edge and the ball (or the chamfer's plane) rolled along it; a concave edge gains it. The prism runs past the edge's
-/// ends, so the faces the edge ends on cut the new face off (an arc or an ellipse on each). This is the rounded edge
-/// only where the prism touches nothing but the two faces and the faces at the edge's ends: any other face it changes
-/// (a radius too large for a face, an edge that ends inside the material) refuses the blend.
+/// ends, so the faces the edge ends on cut the new face off (an arc or an ellipse on each). On the circle where a flat
+/// face meets a cylinder square to it (a hole's rim, a boss's foot) the ball rolls round the axis: the ring it leaves
+/// out (or fills) is the spandrel turned round the axis, its new face a torus. This is the rounded edge only where the
+/// prism or ring touches nothing but the two faces and the faces at the edge's ends: any other face it changes (a
+/// radius too large for a face, an edge that ends inside the material) refuses the blend.
 /// </summary>
 public static class Blends
 {
@@ -18,10 +20,16 @@ public static class Blends
     /// <paramref name="size"/> or chamfered back by it on both faces. Origins: operand 0 the body's faces, operand 1
     /// the blend's; <c>Face</c> is the blend's own face among operand 1's (the arc or the chamfer's slope).
     /// </summary>
-    public static (Shaped? Result, FaceId Face, string? Problem) Apply(Body body, FaceId a, FaceId b, double size, BlendKind kind)
+    public static (Shaped? Result, FaceId Face, string? Problem) Apply(Body body, FaceId a, FaceId b, double size, BlendKind kind) =>
+        (body[a].Surface, body[b].Surface) switch
+        {
+            (Plane pa, Plane pb) => Straight(body, a, b, pa, pb, size, kind),
+            (Plane, Cylinder) or (Cylinder, Plane) => Rim(body, a, b, size, kind),
+            _ => (null, default, "only an edge between two flat faces, or a flat face and a cylinder, can be rounded or chamfered yet"),
+        };
+
+    static (Shaped?, FaceId, string?) Straight(Body body, FaceId a, FaceId b, Plane pa, Plane pb, double size, BlendKind kind)
     {
-        if (body[a].Surface is not Plane pa || body[b].Surface is not Plane pb)
-            return (null, default, "only an edge between two flat faces can be rounded or chamfered yet");
         var edges = Enumerable.Range(0, body.Edges.Length).Select(e => new EdgeId(e))
             .Where(e => body.UsesOf(e).Select(body.FaceOf).ToHashSet().SetEquals([a, b])).ToList();
         if (edges.Count == 0) return (null, default, "the two faces share no edge");
@@ -83,17 +91,69 @@ public static class Blends
             profile = new ProfileLoop([new LineSegment(p, fa), new ArcSegment(o, size, start, sweep), new LineSegment(fb, p)]);
         }
         var (tool, why) = Extrusion.Extrude(new Region(profile), frame, 0, ts.Max() - ts.Min() + 2 * margin, body.Tolerance);
-        if (tool is null) return (null, default, $"the {(kind == BlendKind.Fillet ? "fillet" : "chamfer")} has no room: {why}");
+        if (tool is null) return (null, default, $"the {Name(kind)} has no room: {why}");
 
-        var (result, problem) = convex ? Booleans.Subtract(body, tool.Body) : Booleans.Unite(body, tool.Body);
-        if (problem is not null) return (null, default, problem);
-        if (result is not [var one]) return (null, default, $"the {(kind == BlendKind.Fillet ? "fillet" : "chamfer")} parts the body");
-
-        // Faces other than the two and those at the edge's ends must come through unchanged.
         var ends = new[] { ts.Min(), ts.Max() }.Select(t => line.Origin + d * t).ToList();
         var allowed = new HashSet<FaceId> { a, b };
         foreach (var co in body.Coedges.Select((_, i) => new CoedgeId(i)))
             if (ends.Any(e => (body[body.StartOf(co)].Point - e).Length <= Intersections.Snap)) allowed.Add(body.FaceOf(co));
+        // The profile's second segment is the arc (or the slope): its side face is the new face.
+        return Settle(body, tool.Body, tool.Sides[0][1], convex, allowed, kind);
+    }
+
+    // The circle where a flat face meets a cylinder square to it: the spandrel in the half-plane through the axis
+    // (distance from the axis, height above the face), turned round the axis.
+    static (Shaped?, FaceId, string?) Rim(Body body, FaceId a, FaceId b, double size, BlendKind kind)
+    {
+        var (fp, fc) = body[a].Surface is Plane ? (a, b) : (b, a);
+        var (plane, cylinder) = ((Plane)body[fp].Surface, (Cylinder)body[fc].Surface);
+        var axis = cylinder.Frame.ZAxis;
+        if (plane.Frame.ZAxis.Cross(axis).Length >= 1e-9)
+            return (null, default, "the flat face is at an angle to the cylinder, so the edge is an ellipse, which has no exact fillet");
+        if (kind == BlendKind.Chamfer) return (null, default, "a chamfer round a circle is a cone, which the managed kernel does not have yet");
+        var edges = Enumerable.Range(0, body.Edges.Length).Select(e => new EdgeId(e))
+            .Where(e => body.UsesOf(e).Select(body.FaceOf).ToHashSet().SetEquals([a, b])).ToList();
+        if (edges is not [var edge] || body[edge].Curve is not Circle3 || !body[edge].IsClosed)
+            return (null, default, "only a whole circle between a flat face and a cylinder can be rounded yet");
+
+        var origin = cylinder.Frame.Origin + axis * (plane.Frame.Origin - cylinder.Frame.Origin).Dot(axis);
+        var frame = RigidTransform3D.FromFrame(origin, axis, cylinder.Frame.XAxis);
+        // At the edge's start, in the half-plane: x away from the axis, y along it.
+        var e0 = body[edge];
+        var at = e0.Curve.At(e0.T0);
+        var radial = (at - origin).Normalized();
+        Vector2D Flat(Vector3D v) => new(v.Dot(radial), v.Dot(axis));
+        var nP = plane.Frame.ZAxis * (body[fp].SameSense ? 1 : -1);
+        var nC = radial * (body[fc].SameSense ? 1 : -1);
+        Vector3D Into(FaceId f, Vector3D n)
+        {
+            var use = body.UsesOf(edge).First(u => body.FaceOf(u) == f);
+            return n.Cross(e0.Curve.Derivative(e0.T0) * (body[use].Forward ? 1 : -1)).Normalized();
+        }
+        var (np, nc, inP, inC) = (Flat(nP), Flat(nC), Flat(Into(fp, nP)), Flat(Into(fc, nC)));
+        var convex = np.Dot(inC) < 0;
+
+        // The ball's centre is `size` from both, inside the material for a convex edge, outside for a concave one.
+        var side = convex ? -1 : 1;
+        var corner = new Point2D(cylinder.Radius, 0);
+        var center = corner + (np + nc) * (side * size);
+        var (ta, tb) = (center - np * (side * size), center - nc * (side * size));
+        var start = Math.Atan2(ta.Y - center.Y, ta.X - center.X);
+        var sweep = Math.IEEERemainder(Math.Atan2(tb.Y - center.Y, tb.X - center.X) - start, 2 * Math.PI);
+        var profile = new ProfileLoop([new LineSegment(corner, ta), new ArcSegment(center, size, start, sweep), new LineSegment(tb, corner)]);
+        var (ring, why) = Revolution.Revolve(new Region(profile), frame, body.Tolerance);
+        if (ring is null) return (null, default, $"the fillet has no room: {why}");
+        var face = new FaceId(Enumerable.Range(0, ring.Body.Faces.Length).First(f => ring.Origins[f].Contains(new Origin(0, new FaceId(1)))));
+        return Settle(body, ring.Body, face, convex, [a, b], kind);
+    }
+
+    // The blend applied: the tool taken away from a convex edge or added to a concave one, refused if any face but the
+    // allowed ones comes out changed.
+    static (Shaped?, FaceId, string?) Settle(Body body, Body tool, FaceId face, bool convex, HashSet<FaceId> allowed, BlendKind kind)
+    {
+        var (result, problem) = convex ? Booleans.Subtract(body, tool) : Booleans.Unite(body, tool);
+        if (problem is not null) return (null, default, problem);
+        if (result is not [var one]) return (null, default, $"the {Name(kind)} parts the body");
         for (var f = 0; f < body.Faces.Length; f++)
         {
             var id = new FaceId(f);
@@ -101,11 +161,12 @@ public static class Blends
             var after = Enumerable.Range(0, one.Body.Faces.Length).Where(g => one.Origins[g].Contains(new Origin(0, id))).ToList();
             var before = MassProperties.Area(body, id);
             if (after.Any(g => one.Origins[g].Count > 1) || Math.Abs(after.Sum(g => MassProperties.Area(one.Body, new FaceId(g))) - before) > 1e-9 * (1 + before))
-                return (null, default, $"the {(kind == BlendKind.Fillet ? "fillet" : "chamfer")} reaches other faces than the two it runs between and those at its ends (a size too large, or an edge that ends inside the material)");
+                return (null, default, $"the {Name(kind)} reaches other faces than the two it runs between and those at its ends (a size too large, or an edge that ends inside the material)");
         }
-        // The profile's second segment is the arc (or the slope): its side face is the new face.
-        return (one, tool.Sides[0][1], null);
+        return (one, face, null);
     }
+
+    static string Name(BlendKind kind) => kind == BlendKind.Fillet ? "fillet" : "chamfer";
 
     static bool Collinear(Line3 p, Line3 q) => p.Direction.Cross(q.Direction).Length < 1e-9 &&
         (q.Origin - p.Origin - p.Direction * (q.Origin - p.Origin).Dot(p.Direction)).Length <= Intersections.Snap;

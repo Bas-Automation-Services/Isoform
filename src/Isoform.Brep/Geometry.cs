@@ -97,6 +97,9 @@ public abstract record Surface
 
     /// <summary>The period of u for a surface closed round u (2π for a cylinder), else null.</summary>
     public virtual double? PeriodU => null;
+
+    /// <summary>The period of v for a surface closed round v (2π round a torus's tube), else null.</summary>
+    public virtual double? PeriodV => null;
 }
 
 /// <summary>The frame's XY plane: <c>S(u, v) = Origin + u · X + v · Y</c>, normal along Z.</summary>
@@ -128,6 +131,37 @@ public sealed record Cylinder(RigidTransform3D Frame, double Radius) : Surface
     public override Vector3D DerivativeV(double u, double v) => Frame.ZAxis;
 
     public override double? PeriodU => 2 * Math.PI;
+}
+
+/// <summary>
+/// A torus round the frame's Z axis: <c>S(u, v) = Origin + (Major + Minor · cos v) · (cos u · X + sin u · Y) + Minor ·
+/// sin v · Z</c>. u is the angle round the axis, v round the tube from its outer side; the normal points out of the
+/// tube. A fillet between a plane and a cylinder square to it is a piece of one.
+/// </summary>
+public sealed record Torus(RigidTransform3D Frame, double Major, double Minor) : Surface
+{
+    public override Point3D At(double u, double v)
+    {
+        var (su, cu) = Math.SinCos(u);
+        var (sv, cv) = Math.SinCos(v);
+        return Frame.Origin + (Frame.XAxis * cu + Frame.YAxis * su) * (Major + Minor * cv) + Frame.ZAxis * (Minor * sv);
+    }
+
+    public override Vector3D DerivativeU(double u, double v)
+    {
+        var (su, cu) = Math.SinCos(u);
+        return (Frame.YAxis * cu - Frame.XAxis * su) * (Major + Minor * Math.Cos(v));
+    }
+
+    public override Vector3D DerivativeV(double u, double v)
+    {
+        var (su, cu) = Math.SinCos(u);
+        var (sv, cv) = Math.SinCos(v);
+        return (Frame.XAxis * cu + Frame.YAxis * su) * (-Minor * sv) + Frame.ZAxis * (Minor * cv);
+    }
+
+    public override double? PeriodU => 2 * Math.PI;
+    public override double? PeriodV => 2 * Math.PI;
 }
 
 /// <summary>

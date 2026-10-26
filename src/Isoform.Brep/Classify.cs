@@ -24,12 +24,14 @@ internal sealed class FlatFace
             var (from, to) = body.ParametersOf(c);
             return Uv.Flat(Surface, body[c].Pcurve, from, to);
         })]))];
-        if (Surface is Cylinder cyl)
-            UMin = face.Loops.SelectMany(body.CoedgesOf).Min(c =>
-            {
-                var (from, to) = body.ParametersOf(c);
-                return Math.Min(body[c].Pcurve.At(from).X, body[c].Pcurve.At(to).X);
-            });
+        // The windows of a periodic u or v: from the lowest the face's p-curves reach.
+        var ends = face.Loops.SelectMany(body.CoedgesOf).SelectMany(c =>
+        {
+            var (from, to) = body.ParametersOf(c);
+            return new[] { body[c].Pcurve.At(from), body[c].Pcurve.At(to) };
+        }).ToList();
+        if (Surface.PeriodU is not null) UMin = ends.Min(p => p.X);
+        if (Surface.PeriodV is not null) VMin = ends.Min(p => p.Y);
 
         var points = Edges.SelectMany(e => Sample(body[e])).ToList();
         Box = (new Point3D(points.Min(p => p.X), points.Min(p => p.Y), points.Min(p => p.Z)),
@@ -41,6 +43,7 @@ internal sealed class FlatFace
     public IReadOnlyList<EdgeId> Edges { get; }
     public IReadOnlyList<ProfileLoop> Loops { get; }
     public double UMin { get; }
+    public double VMin { get; }
     public (Point3D Min, Point3D Max) Box { get; }
 
     static IEnumerable<Point3D> Sample(Edge e)
@@ -54,13 +57,14 @@ internal sealed class FlatFace
 
     public Point2D FlatOf(Point2D uv)
     {
-        if (Surface is not Cylinder c) return uv;
-        var u = UMin - 1e-9 + Intersections.Wrap(uv.X - (UMin - 1e-9));
-        return new Point2D(u * c.Radius, uv.Y);
+        var (du, dv) = ShiftInto(uv);
+        return new Point2D((uv.X + du) * Uv.Scale(Surface), (uv.Y + dv) * Uv.ScaleV(Surface));
     }
 
-    /// <summary>A u on the face's window: the shift (a multiple of 2π) that takes <paramref name="u"/> into it.</summary>
-    public double ShiftInto(double u) => Surface is Cylinder ? UMin - 1e-9 + Intersections.Wrap(u - (UMin - 1e-9)) - u : 0;
+    /// <summary>The shifts (multiples of 2π) that take (u, v) into the face's windows.</summary>
+    public (double U, double V) ShiftInto(Point2D uv) => (
+        Surface.PeriodU is null ? 0 : UMin - 1e-9 + Intersections.Wrap(uv.X - (UMin - 1e-9)) - uv.X,
+        Surface.PeriodV is null ? 0 : VMin - 1e-9 + Intersections.Wrap(uv.Y - (VMin - 1e-9)) - uv.Y);
 
     /// <summary>Where a point on (or very near) the face's surface lies against the face.</summary>
     public Place Locate(Point3D p) => Locate(FlatOf(p));

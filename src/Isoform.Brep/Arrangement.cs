@@ -187,8 +187,7 @@ internal static class Arrangement
             }
         }
         if (best is not { } found) throw new BooleanFailure("no point found inside a face");
-        var k = Uv.Scale(surface);
-        return new Point2D(found.Point.X / k, found.Point.Y);
+        return new Point2D(found.Point.X / Uv.Scale(surface), found.Point.Y / Uv.ScaleV(surface));
     }
 
     static IEnumerable<Point2D> Samples(Segment s)

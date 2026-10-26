@@ -158,6 +158,14 @@ public static class Documents
         // (r − its centroid's depth).
         ("fillet meeting a chamfer", OnSlab(new Fillet("a", ["plate/z+", "plate/x+"], 2), new Chamfer("b", ["plate/z+", "plate/y+"], 2)),
             50_000 - Spandrel(2) * 50 - 2 * 100 + Spandrel(2) * (2 - Centroid(2))),
+        // Tori (Pappus): the spandrel turned round the axis, its centroid outside a hole's wall or inside a boss's.
+        ("filleted hole edge", OnSlab(new Hole("hole", [30, 25], 10), new Fillet("round", ["plate/z+", "hole/wall"], 2)),
+            50_000 - Math.PI * 250 - 2 * Math.PI * (5 + Centroid(2)) * Spandrel(2)),
+        ("boss with a rounded foot", OnSlab(
+            new Sketch("ring", new SketchPlacement(Face: "plate/z+"), new Dictionary<string, double[]> { ["c"] = [50, 25] }, [new SketchCircle("rim", "c", 8)], []),
+            new Extrude("boss", BooleanOp.Join, null, null, 0, 15) { Sketch = "ring" },
+            new Fillet("foot", ["plate/z+", "boss/rim"], 3)), 50_000 + Math.PI * 64 * 15 + 2 * Math.PI * (8 + Centroid(3)) * Spandrel(3)),
+
     ];
 
     // Experiment 4: planes at an angle to cylinders, which meet them in ellipses. The slab under

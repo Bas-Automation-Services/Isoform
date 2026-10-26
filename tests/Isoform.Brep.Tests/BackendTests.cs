@@ -59,7 +59,7 @@ public class BackendTests(ITestOutputHelper output)
         foreach (var f in faces)
             other.Where(o => Name(o) == Name(f)).Should().Contain(o => Same(f.Surface, o.Surface), Name(f));
 
-        // Corners (where three or more edges end; seam vertices lie wherever each B-rep puts its seam) within 1e-9.
+        // Corners (where three or more edges other than seams end) within 1e-9.
         var corners = Corners(mine);
         var theirCorners = Corners(theirs);
         corners.Should().HaveSameCount(theirCorners);
@@ -75,8 +75,12 @@ public class BackendTests(ITestOutputHelper output)
                && (s.Kind == Isoform.Geometry.SurfaceKind.Plane ? Math.Abs(s.Axis.Dot(d)) : (d - s.Axis * s.Axis.Dot(d)).Length) < 1e-9;
     }
 
-    static List<Point3D> Corners(Step.Brep b) =>
-        [.. b.Vertices.Where(v => b.Edges.Count(e => e.Start == v.Index || e.End == v.Index) >= 3).Select(v => v.Point)];
+    // Seams (an edge one face uses twice) lie wherever each B-rep cuts its periodic faces open, so they make no corners.
+    static List<Point3D> Corners(Step.Brep b)
+    {
+        var seams = b.Solids.SelectMany(s => s.Faces).SelectMany(f => f.Loops.SelectMany(l => l.Coedges).GroupBy(c => c.Edge).Where(g => g.Count() == 2).Select(g => g.Key)).ToHashSet();
+        return [.. b.Vertices.Where(v => b.Edges.Count(e => !seams.Contains(e.Index) && (e.Start == v.Index || e.End == v.Index)) >= 3).Select(v => v.Point)];
+    }
 
     [Fact]
     public void Each_body_is_a_solid_of_its_own()

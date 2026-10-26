@@ -30,6 +30,11 @@ internal static class Intersections
         (Plane p, Cylinder c) => PlaneCylinder(p, c),
         (Cylinder c, Plane p) => PlaneCylinder(p, c),
         (Cylinder c, Cylinder d) => CylinderCylinder(c, d),
+        (Plane p, Torus t) => PlaneTorus(p, t),
+        (Torus t, Plane p) => PlaneTorus(p, t),
+        (Cylinder c, Torus t) => CylinderTorus(c, t),
+        (Torus t, Cylinder c) => CylinderTorus(c, t),
+        (Torus t, Torus u) => SameTorus(t, u) ? SurfaceMeeting.Same : SurfaceMeeting.Refused("two tori that are not the same"),
         _ => SurfaceMeeting.Refused($"a {a.GetType().Name.ToLowerInvariant()} against a {b.GetType().Name.ToLowerInvariant()}"),
     };
 
@@ -100,6 +105,46 @@ internal static class Intersections
         var mid = c.Frame.Origin + ex * x;
         return SurfaceMeeting.Along(new Line3(mid + ey * h, a), new Line3(mid - ey * h, a));
     }
+
+    // A plane square to the torus's axis cuts the tube in two circles round the axis (one where it touches); other
+    // planes cut it in quartics, refused.
+    static SurfaceMeeting PlaneTorus(Plane p, Torus t)
+    {
+        var (n, a) = (p.Frame.ZAxis, t.Frame.ZAxis);
+        if (Math.Abs(n.Dot(a)) < 1 - Parallel) return SurfaceMeeting.Refused("a plane that is not square to a torus's axis");
+        var h = (p.Frame.Origin - t.Frame.Origin).Dot(a);
+        return Rings(t, h, Math.Abs(h) > t.Minor + Snap ? null : Math.Sqrt(Math.Max(0, t.Minor * t.Minor - h * h)), radial: true);
+    }
+
+    // A cylinder round the torus's axis cuts the tube in two circles at heights either side of its middle.
+    static SurfaceMeeting CylinderTorus(Cylinder c, Torus t)
+    {
+        var a = t.Frame.ZAxis;
+        var w = c.Frame.Origin - t.Frame.Origin;
+        if (c.Frame.ZAxis.Cross(a).Length >= Parallel || (w - a * w.Dot(a)).Length > Snap)
+            return SurfaceMeeting.Refused("a cylinder that is not round a torus's axis");
+        var d = c.Radius - t.Major;
+        return Rings(t, d, Math.Abs(d) > t.Minor + Snap ? null : Math.Sqrt(Math.Max(0, t.Minor * t.Minor - d * d)), radial: false);
+    }
+
+    // The circles round a torus's axis where the tube's section meets a line: at height h, radii Major ± half (radial),
+    // or at radius Major + h, heights ± half; one circle where half is 0 (tangent), none where it is null.
+    static SurfaceMeeting Rings(Torus t, double h, double? half, bool radial)
+    {
+        if (half is not { } w) return SurfaceMeeting.Nothing;
+        var offsets = w <= Snap ? new[] { 0.0 } : [-w, w];
+        var circles = new List<Curve3>();
+        foreach (var o in offsets)
+        {
+            var (radius, height) = radial ? (t.Major + o, h) : (t.Major + h, o);
+            if (radius <= Snap) continue;
+            circles.Add(new Circle3(RigidTransform3D.FromFrame(t.Frame.Origin + t.Frame.ZAxis * height, t.Frame.ZAxis, t.Frame.XAxis), radius));
+        }
+        return SurfaceMeeting.Along([.. circles]);
+    }
+
+    static bool SameTorus(Torus t, Torus u) => (t.Frame.Origin - u.Frame.Origin).Length <= Snap && t.Frame.ZAxis.Cross(u.Frame.ZAxis).Length < Parallel &&
+                                               Math.Abs(t.Major - u.Major) <= Snap && Math.Abs(t.Minor - u.Minor) <= Snap;
 
     // Cylinders at an angle. Of equal radius with axes that cross (two fillets meeting in a mitre) they meet in two
     // ellipses, in the planes through the crossing that bisect the axes: |p|² − (p·a)² = |p|² − (p·b)² there, so
@@ -356,8 +401,48 @@ internal static class Intersections
                 yield return (-qb - root) / (2 * qa);
                 yield return (-qb + root) / (2 * qa);
                 break;
+            case Torus t:
+                foreach (var hit in TorusHits(p, d, t)) yield return hit;
+                break;
             default:
                 throw new NotSupportedException(s.GetType().Name);
+        }
+    }
+
+    // The ray against the torus's quartic (|q|² + R² − r²)² = 4R²(qx² + qy²), within the sphere round it: sign changes
+    // on a fine grid, refined by bisection. A ray grazing the tube finds no root there, as for any tangent ray.
+    static IEnumerable<double> TorusHits(Point3D p, Vector3D d, Torus t)
+    {
+        var (q0, dq) = (t.Frame.ApplyInverse(p), t.Frame.ApplyInverse(d));
+        var (big, small) = (t.Major, t.Minor);
+        double F(double s)
+        {
+            var (x, y, z) = (q0.X + dq.X * s, q0.Y + dq.Y * s, q0.Z + dq.Z * s);
+            var k = x * x + y * y + z * z + big * big - small * small;
+            return k * k - 4 * big * big * (x * x + y * y);
+        }
+        var reach = big + small;
+        var (b, c) = (q0.X * dq.X + q0.Y * dq.Y + q0.Z * dq.Z, q0.X * q0.X + q0.Y * q0.Y + q0.Z * q0.Z - reach * reach);
+        var disc = b * b - c;
+        if (disc < 0) yield break;
+        var (from, to) = (-b - Math.Sqrt(disc), -b + Math.Sqrt(disc));
+        const int n = 400;
+        var previous = F(from);
+        for (var i = 1; i <= n; i++)
+        {
+            var s = from + (to - from) * i / n;
+            var value = F(s);
+            if (previous * value < 0)
+            {
+                var (lo, hi) = (from + (to - from) * (i - 1) / n, s);
+                for (var k = 0; k < 80; k++)
+                {
+                    var mid = (lo + hi) / 2;
+                    if (F(mid) * previous > 0) lo = mid; else hi = mid;
+                }
+                yield return (lo + hi) / 2;
+            }
+            previous = value;
         }
     }
 
@@ -369,7 +454,8 @@ internal static class Intersections
 
 /// <summary>
 /// Surface parameters and the flat (u, v) the boolean works in: (u, v) itself on a plane, (R·u, v) on a cylinder,
-/// so that lengths and angles in it are the surface's own.
+/// so that lengths and angles in it are the surface's own, (R·u, r·v) on a torus, where they are not, but where every
+/// curve the kernel puts on one runs along u or v.
 /// </summary>
 internal static class Uv
 {
@@ -379,18 +465,37 @@ internal static class Uv
         Plane plane => new((p - plane.Frame.Origin).Dot(plane.Frame.XAxis), (p - plane.Frame.Origin).Dot(plane.Frame.YAxis)),
         Cylinder c => new(Math.Atan2((p - c.Frame.Origin).Dot(c.Frame.YAxis), (p - c.Frame.Origin).Dot(c.Frame.XAxis)),
             (p - c.Frame.Origin).Dot(c.Frame.ZAxis)),
+        Torus t => TorusUv(t, p),
         _ => throw new NotSupportedException(s.GetType().Name),
     };
 
-    public static double Scale(Surface s) => s is Cylinder c ? c.Radius : 1;
+    static Point2D TorusUv(Torus t, Point3D p)
+    {
+        var q = t.Frame.ApplyInverse(p);
+        return new Point2D(Math.Atan2(q.Y, q.X), Math.Atan2(q.Z, Math.Sqrt(q.X * q.X + q.Y * q.Y) - t.Major));
+    }
+
+    /// <summary>How flat (u, v) scales u: the radius on a cylinder, the major radius on a torus.</summary>
+    public static double Scale(Surface s) => s switch { Cylinder c => c.Radius, Torus t => t.Major, _ => 1 };
+
+    /// <summary>How flat (u, v) scales v: the minor radius on a torus.</summary>
+    public static double ScaleV(Surface s) => s is Torus t ? t.Minor : 1;
 
     /// <summary>The distance from a point to the surface.</summary>
     public static double Distance(Surface s, Point3D p) => s switch
     {
         Plane plane => Math.Abs((p - plane.Frame.Origin).Dot(plane.Frame.ZAxis)),
         Cylinder c => Math.Abs(Radial(c, p) - c.Radius),
+        Torus t => TorusDistance(t, p),
         _ => throw new NotSupportedException(s.GetType().Name),
     };
+
+    static double TorusDistance(Torus t, Point3D p)
+    {
+        var q = t.Frame.ApplyInverse(p);
+        var rho = Math.Sqrt(q.X * q.X + q.Y * q.Y) - t.Major;
+        return Math.Abs(Math.Sqrt(rho * rho + q.Z * q.Z) - t.Minor);
+    }
 
     static double Radial(Cylinder c, Point3D p)
     {
@@ -442,13 +547,36 @@ internal static class Uv
                 var (ca, cb) = (e.Major * xe.Dot(z), e.Minor * ye.Dot(z));
                 return new Wave2(u0, (e.Frame.Origin - cyl.Frame.Origin).Dot(z), slope, Math.Sqrt(ca * ca + cb * cb), Math.Atan2(-cb, ca));
             }
+            case (Torus t, Circle3 k) when k.Frame.ZAxis.Cross(t.Frame.ZAxis).Length < 1e-9:
+            {
+                // Round the axis: v fixed, u runs with t.
+                var x = k.Frame.XAxis;
+                var phase = Math.Atan2(x.Dot(t.Frame.YAxis), x.Dot(t.Frame.XAxis));
+                var v = TorusUv(t, k.At(0)).Y;
+                return new Line2(new Point2D(phase, v), new Vector2D(k.Frame.ZAxis.Dot(t.Frame.ZAxis) > 0 ? 1 : -1, 0));
+            }
+            case (Torus t, Circle3 k):
+            {
+                // Round the tube (a meridian): u fixed, v runs with t.
+                var u = TorusUv(t, k.Frame.Origin).X;
+                var (su, cu) = Math.SinCos(u);
+                var radial = t.Frame.XAxis * cu + t.Frame.YAxis * su;
+                var (x, y) = (k.Frame.XAxis, k.Frame.YAxis);
+                var psi = Math.Atan2(x.Dot(t.Frame.ZAxis), x.Dot(radial));
+                var turning = radial * -Math.Sin(psi) + t.Frame.ZAxis * Math.Cos(psi);
+                return new Line2(new Point2D(u, psi), new Vector2D(0, y.Dot(turning) > 0 ? 1 : -1));
+            }
             default:
                 throw new NotSupportedException($"a {c.GetType().Name} on a {s.GetType().Name}");
         }
     }
 
-    /// <summary>The p-curve moved by <paramref name="du"/> in u.</summary>
-    public static Curve2 Shift(Curve2 pc, double du) => du == 0 ? pc : pc switch
+    /// <summary>The p-curve moved by <paramref name="du"/> in u (and <paramref name="dv"/> in v).</summary>
+    public static Curve2 Shift(Curve2 pc, double du, double dv = 0) => du == 0 && dv == 0 ? pc : dv != 0 ? pc switch
+    {
+        Line2 l => l with { Origin = new Point2D(l.Origin.X + du, l.Origin.Y + dv) },
+        _ => throw new NotSupportedException($"a {pc.GetType().Name} moved in v"),
+    } : pc switch
     {
         Line2 l => l with { Origin = new Point2D(l.Origin.X + du, l.Origin.Y) },
         Circle2 c => c with { Center = new Point2D(c.Center.X + du, c.Center.Y) },
@@ -470,16 +598,16 @@ internal static class Uv
     /// <summary>The p-curve over [from, to] (in that order) as a segment in flat (u, v).</summary>
     public static Segment Flat(Surface s, Curve2 pc, double from, double to)
     {
-        var k = Scale(s);
+        var (k, kv) = (Scale(s), ScaleV(s));
         switch (pc)
         {
             case Line2 l:
-                Point2D F(Point2D p) => new(p.X * k, p.Y);
+                Point2D F(Point2D p) => new(p.X * k, p.Y * kv);
                 return new LineSegment(F(l.At(from)), F(l.At(to)));
             case Circle2 c when k == 1:
                 return new ArcSegment(c.Center, c.Radius, c.Phase + c.Sense * from, c.Sense * (to - from));
             case Ellipse2 when k == 1:
-            case Wave2:
+            case Wave2 when s is Cylinder:
                 return new CurveSegment(pc, from, to, k);
             default:
                 throw new NotSupportedException($"a {pc.GetType().Name} on a {s.GetType().Name}");

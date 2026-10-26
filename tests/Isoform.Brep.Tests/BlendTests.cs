@@ -79,4 +79,43 @@ public class BlendTests(ITestOutputHelper output)
         r.Should().BeNull();
         problem.Should().Contain("three fillets");
     }
+
+    static double Centroid(double r) => r * (5.0 / 6 - Math.PI / 4) / (1 - Math.PI / 4);
+
+    static FaceId Wall(Body body) => new(Enumerable.Range(0, body.Faces.Length).Single(f => body.Faces[f].Surface is Cylinder));
+
+    [Fact]
+    public void A_hole_rim_is_rounded_by_a_torus()
+    {
+        var body = Extrusion.Extrude(new Region(Rectangle(0, 0, 100, 50), [Circle(30, 25, 5)]), RigidTransform3D.Identity, 0, 10).Result!.Body;
+        var (r, face, problem) = Blends.Apply(body, Face(body, new Vector3D(0, 0, 1), new Point3D(0, 0, 10)), Wall(body), 2, BlendKind.Fillet);
+        output.WriteLine(problem ?? "");
+        problem.Should().BeNull();
+        // Pappus: the spandrel round the hole, its centroid that far outside the wall.
+        MassProperties.Volume(r!.Body).Should().BeApproximately(50000 - Math.PI * 250 - 2 * Math.PI * (5 + Centroid(2)) * Spandrel(2), 1e-9);
+        r.Body.Faces.Should().Contain(f => f.Surface is Torus);
+    }
+
+    [Fact]
+    public void A_boss_foot_is_filled_by_a_torus()
+    {
+        var plate = Extrusion.Extrude(new Region(Rectangle(0, 0, 100, 50)), RigidTransform3D.Identity, 0, 10).Result!.Body;
+        var boss = Extrusion.Extrude(new Region(Circle(50, 25, 8)), RigidTransform3D.Identity, 10, 25).Result!.Body;
+        var body = Booleans.Merge(Booleans.Unite(plate, boss).Bodies![0].Body).Body;
+        var (r, _, problem) = Blends.Apply(body, Face(body, new Vector3D(0, 0, 1), new Point3D(0, 0, 10)), Wall(body), 3, BlendKind.Fillet);
+        output.WriteLine(problem ?? "");
+        problem.Should().BeNull();
+        MassProperties.Volume(r!.Body).Should().BeApproximately(50000 + Math.PI * 64 * 15 + 2 * Math.PI * (8 + Centroid(3)) * Spandrel(3), 1e-9);
+    }
+
+    [Fact]
+    public void A_boss_top_rim_is_rounded_by_a_torus()
+    {
+        // One torus face; Isoform's F-rep core rounds a swept profile's cap edge along the sweep and names it per side.
+        var boss = Extrusion.Extrude(new Region(Circle(50, 25, 8)), RigidTransform3D.Identity, 10, 25).Result!.Body;
+        var (r, _, problem) = Blends.Apply(boss, Face(boss, new Vector3D(0, 0, 1), new Point3D(0, 0, 25)), Wall(boss), 2, BlendKind.Fillet);
+        problem.Should().BeNull();
+        MassProperties.Volume(r!.Body).Should().BeApproximately(Math.PI * 64 * 15 - 2 * Math.PI * (8 - Centroid(2)) * Spandrel(2), 1e-9);
+        r.Body.Faces.Should().HaveCount(4);
+    }
 }

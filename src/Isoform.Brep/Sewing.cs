@@ -71,7 +71,7 @@ internal static class Sewing
                 {
                     var match = FindUse(loops[other], w => Opposite(u, w));
                     if (match is not { } at) continue;
-                    placed[other] = Place(surface, loops[other], at.Loop, at.Index, u.Pcurve.At((u.From + u.To) / 2).X);
+                    placed[other] = Place(surface, loops[other], at.Loop, at.Index, u.Pcurve.At((u.From + u.To) / 2));
                     queue.Enqueue(other);
                     break;
                 }
@@ -104,28 +104,28 @@ internal static class Sewing
     }
 
     // A patch's loops (face on the left in (u, v)) with p-curves on `surface`, each loop continuous in u; the given
-    // use's middle at `targetU` (anywhere when null), other loops in the period nearest it.
-    static List<Use> Place(Surface surface, List<IReadOnlyList<Use>> loops, int loop, int index, double? targetU)
+    // use's middle at `target` (anywhere when null), other loops in the period nearest it.
+    static List<Use> Place(Surface surface, List<IReadOnlyList<Use>> loops, int loop, int index, Point2D? target)
     {
         var result = new List<Use>();
-        double? anchor = targetU;
+        var anchor = target;
         foreach (var l in new[] { loop }.Concat(Enumerable.Range(0, loops.Count).Where(i => i != loop)))
         {
             var uses = loops[l];
             var start = l == loop ? index : 0;
-            double? previousEnd = null;
+            Point2D? previousEnd = null;
             for (var k = 0; k < uses.Count; k++)
             {
                 var u = uses[(start + k) % uses.Count];
                 var pc = Uv.Pcurve(surface, u.Curve);
-                if (surface is Cylinder)
-                {
-                    var mid = pc.At((u.From + u.To) / 2).X;
-                    var want = previousEnd is { } end ? end + (mid - pc.At(u.From).X) : anchor ?? Intersections.Wrap(mid);
-                    pc = Uv.Shift(pc, 2 * Math.PI * Math.Round((want - mid) / (2 * Math.PI)));
-                    previousEnd = pc.At(u.To).X;
-                    anchor ??= pc.At((u.From + u.To) / 2).X;
-                }
+                // Each periodic parameter by whole turns: on from the use before, or to the anchor.
+                var (mid, from) = (pc.At((u.From + u.To) / 2), pc.At(u.From));
+                double Turn(double want, double at) => 2 * Math.PI * Math.Round((want - at) / (2 * Math.PI));
+                var du = surface.PeriodU is null ? 0 : Turn(previousEnd is { } e ? e.X + (mid.X - from.X) : anchor?.X ?? Intersections.Wrap(mid.X), mid.X);
+                var dv = surface.PeriodV is null ? 0 : Turn(previousEnd is { } f ? f.Y + (mid.Y - from.Y) : anchor?.Y ?? Intersections.Wrap(mid.Y), mid.Y);
+                pc = Uv.Shift(pc, du, dv);
+                previousEnd = pc.At(u.To);
+                anchor ??= pc.At((u.From + u.To) / 2);
                 result.Add(u with { Pcurve = pc });
             }
         }

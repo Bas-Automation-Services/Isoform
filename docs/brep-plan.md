@@ -214,15 +214,46 @@ healing. Tests: `tests/Isoform.Brep.Tests` 177 (`BlendTests` 6), `BrepKernelStep
 **Refused, named:** fillets that meet at a corner (the F-rep core mitres them; here the second fillet's cylinder meets
 the first's at right angles, a quartic), fillets against a cylinder (they need a torus), loop fillets.
 
-## Experiment 6: candidates (to decide)
+## Experiment 6: mitres and tori (done, 2026-10-26)
 
-1. **Fillets meeting at a corner (mitres):** two fillets sharing a face meet in the plane bisecting the corner. The
-   F-rep core mitres them; here the second fillet would end on that plane instead of on the first fillet.
-2. **Tori:** fillets between a plane and a cylinder square to it (a hole's rim, a boss's foot) are tori, and tori
-   meet planes in circles. This needs the carrier, its p-curves and its intersections with planes and cylinders.
-3. **Loop fillets and chamfers:** every edge round one face, which needs 1 (mitres at convex corners) and 2 (arcs
-   in the loop).
-4. **Inventor as a second STEP reader**, parked above.
+**Mitres:** two cylinders of equal radius whose axes cross meet in two ellipses, in the planes through the crossing
+that bisect the axes (p·(a − b) = 0 or p·(a + b) = 0). With that, a second fillet (or chamfer) sharing a face with an
+earlier one is just its prism taken from the body that already has the first. That is Isoform's rounded max exactly,
+and the corner comes out mitred. An edge that ends against two earlier fillets would close a corner of three, which
+Isoform rounds with a ball; that is refused by name.
+
+**Tori:**
+- *Carrier:* `Torus`, periodic in u and v. Every place that handled a cylinder's periodic u now handles v as well:
+  face windows, cut shifts, merge placement and STEP images.
+- *Intersections:* tori meet planes square to their axis and cylinders round it in circles (one where they touch).
+  Other planes and cylinders meet them in quartics and are refused.
+- *Ray hits:* the quartic, solved on a fine grid with bisection.
+- *Revolve:* `Revolution` turns a region in the (x, z) half-plane once round an axis. Lines across the axis sweep flat
+  rings, lines along it cylinders, arcs tori, each curved face with its seam at u = 0. The faces are sewn by
+  `Sewing` like any boolean's.
+- *Fillets:* a whole circle where a flat face meets a cylinder square to it (a hole's rim, a boss's foot) is rounded
+  by the spandrel turned round the axis. The ring is subtracted for a convex edge and added for a concave one, with the
+  same area guard. A chamfer there would be a cone and is refused.
+
+**Results:** 4 more documents: two fillets meeting in a mitre, a fillet meeting a chamfer, a filleted hole edge, a
+boss with a rounded foot. All 44 documents match the F-rep core, agree with `ExactBrep`, have exact volumes, and read
+back in OCCT valid without healing (tori included). The `ExactBrep` comparison no longer counts seam edges when it
+finds corners, because each B-rep cuts its periodic faces open where it likes. Tests: `tests/Isoform.Brep.Tests` 197
+(`BlendTests` 11, `RevolutionTests` 4), `BrepKernelStepTests` 44.
+
+**A difference, kept out of the comparison:** a fillet on a swept profile's cap edge (a boss's top rim). The F-rep
+core rounds it along the sweep and names it per side (`cap/face` and `cap/boss/rim`, 10 faces). The kernel makes one
+torus face, `cap/face` (9 faces), with the exact volume. Which one Isoform should name is a question for the F-rep
+side; `BlendTests` covers the kernel's.
+
+## Experiment 7: candidates (to decide)
+
+1. **Partial revolves and loop fillets:** a torus piece round an arc of a profile (not a whole circle), meeting
+   straight fillets tangentially where a line runs into an arc. With mitres, this rounds a face's whole loop, which is
+   most of the fillets in real parts.
+2. **Cones:** chamfers round holes and bosses, and revolves of lines at an angle.
+3. **Ball corners:** three fillets meeting at a corner, a sphere carrier.
+4. **Inventor as a second STEP reader**, parked.
 5. **Two cylinders at an angle (cross bores)**, a quartic.
 
-Recommended: 1, then 2; together they make 3 possible, which is what most fillets in parts are.
+Recommended: 1, then 2.

@@ -263,7 +263,8 @@ public static class Booleans
                 foreach (var (curve, t0, t1) in Distinct(cuts[f]))
                 {
                     var pc = Uv.Pcurve(face.Surface, curve);
-                    pc = Uv.Shift(pc, flat.ShiftInto(pc.At((t0 + t1) / 2).X));
+                    var (du, dv) = flat.ShiftInto(pc.At((t0 + t1) / 2));
+                    pc = Uv.Shift(pc, du, dv);
                     var use = new Use(curve, t0, t1, pc);
                     uses.Add(use);
                     uses.Add(use.Reversed());
