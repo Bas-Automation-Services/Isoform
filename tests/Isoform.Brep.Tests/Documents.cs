@@ -149,6 +149,15 @@ public static class Documents
             47_500 - Spandrel(2) * (90 + Centroid(2))),
         ("chamfer and fillet on two edges", OnSlab(new Chamfer("bevel", ["plate/z-", "plate/y+"], 1), new Fillet("round", ["plate/x-", "plate/y-"], 4)),
             50_000 - 0.5 * 100 - Spandrel(4) * 10),
+        // Experiment 6: two fillets sharing the top face meet at the corner in a mitre, an ellipse in the plane
+        // bisecting it; the corner gives back r³(5/3 − π/2) of what both edges would lose.
+        ("two fillets meeting in a mitre", OnSlab(new Fillet("a", ["plate/z+", "plate/x+"], 2), new Fillet("b", ["plate/z+", "plate/y+"], 2)),
+            50_000 - Spandrel(2) * 150 + 8 * (5.0 / 3 - Math.PI / 2)),
+        // A fillet and a chamfer sharing the top face: the chamfer's plane cuts the fillet's cylinder at an angle. Over
+        // the fillet's section the chamfer takes z − 8 of its length, so the corner gives back the spandrel times
+        // (r − its centroid's depth).
+        ("fillet meeting a chamfer", OnSlab(new Fillet("a", ["plate/z+", "plate/x+"], 2), new Chamfer("b", ["plate/z+", "plate/y+"], 2)),
+            50_000 - Spandrel(2) * 50 - 2 * 100 + Spandrel(2) * (2 - Centroid(2))),
     ];
 
     // Experiment 4: planes at an angle to cylinders, which meet them in ellipses. The slab under

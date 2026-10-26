@@ -43,6 +43,16 @@ public static class Blends
         // ends, where it cuts nothing; a concave edge's fills, so it stops on the faces the edge ends on.
         var ts = edges.SelectMany(e => new[] { body[e].T0, body[e].T1 }.Select(t => (body[e].Curve.At(t) - line.Origin).Dot(d))).ToList();
         var margin = convex ? 2 * size + 1 : 0;
+        // Where the edge ends against two earlier fillets, three meet at a corner: Isoform rounds that with a ball,
+        // which these prisms do not make.
+        foreach (var t in new[] { ts.Min(), ts.Max() })
+        {
+            var tip = line.Origin + d * t;
+            var curved = body.Coedges.Select((_, i) => new CoedgeId(i))
+                .Where(co => (body[body.StartOf(co)].Point - tip).Length <= Intersections.Snap)
+                .Select(body.FaceOf).Distinct().Count(f => f != a && f != b && body[f].Surface is not Plane);
+            if (curved >= 2) return (null, default, "three fillets meeting at a corner need a ball there, which the managed kernel does not make yet");
+        }
         if (!convex)
         {
             var tips = new[] { ts.Min(), ts.Max() }.Select(t => line.Origin + d * t).ToList();

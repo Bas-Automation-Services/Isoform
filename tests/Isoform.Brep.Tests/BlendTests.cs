@@ -51,15 +51,32 @@ public class BlendTests(ITestOutputHelper output)
         problem.Should().Contain("reaches other faces");
     }
 
-    [Fact]
-    public void A_fillet_meeting_another_at_a_corner_is_refused()
+    // Rounds the edge between the faces facing n1 and n2 through p1 and p2.
+    static Body Round(Body body, Vector3D n1, Point3D p1, Vector3D n2, Point3D p2, double r)
     {
-        var body = Block();
-        var top = Face(body, new Vector3D(0, 0, 1), new Point3D(0, 0, 10));
-        var (first, _, _) = Blends.Apply(body, top, Face(body, new Vector3D(1, 0, 0), new Point3D(100, 0, 0)), 2, BlendKind.Fillet);
-        var b = first!.Body;
-        var (r, _, problem) = Blends.Apply(b, Face(b, new Vector3D(0, 0, 1), new Point3D(0, 0, 10)), Face(b, new Vector3D(0, 1, 0), new Point3D(0, 50, 0)), 2, BlendKind.Fillet);
+        var (result, _, problem) = Blends.Apply(body, Face(body, n1, p1), Face(body, n2, p2), r, BlendKind.Fillet);
+        problem.Should().BeNull();
+        return result!.Body;
+    }
+
+    [Fact]
+    public void Two_fillets_meeting_at_a_corner_mitre()
+    {
+        var (z, x, y) = (new Vector3D(0, 0, 1), new Vector3D(1, 0, 0), new Vector3D(0, 1, 0));
+        var once = Round(Block(), z, new Point3D(0, 0, 10), x, new Point3D(100, 0, 0), 2);
+        var twice = Round(once, z, new Point3D(0, 0, 10), y, new Point3D(0, 50, 0), 2);
+        // Each edge loses its spandrel along its whole length; the corner, where both would, gives back r³(5/3 − π/2).
+        MassProperties.Volume(twice).Should().BeApproximately(50000 - Spandrel(2) * 150 + 8 * (5.0 / 3 - Math.PI / 2), 1e-9);
+        twice.Edges.Select(e => e.Curve).OfType<Ellipse3>().Should().ContainSingle();
+    }
+
+    [Fact]
+    public void Three_fillets_at_a_corner_are_refused()
+    {
+        var (z, x, y) = (new Vector3D(0, 0, 1), new Vector3D(1, 0, 0), new Vector3D(0, 1, 0));
+        var body = Round(Round(Block(), z, new Point3D(0, 0, 10), x, new Point3D(100, 0, 0), 2), z, new Point3D(0, 0, 10), y, new Point3D(0, 50, 0), 2);
+        var (r, _, problem) = Blends.Apply(body, Face(body, x, new Point3D(100, 0, 0)), Face(body, y, new Point3D(0, 50, 0)), 2, BlendKind.Fillet);
         r.Should().BeNull();
-        problem.Should().Contain("not parallel");
+        problem.Should().Contain("three fillets");
     }
 }

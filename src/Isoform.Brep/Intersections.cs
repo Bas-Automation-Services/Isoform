@@ -84,7 +84,7 @@ internal static class Intersections
     static SurfaceMeeting CylinderCylinder(Cylinder c, Cylinder d)
     {
         var a = c.Frame.ZAxis;
-        if (a.Cross(d.Frame.ZAxis).Length >= Parallel) return SurfaceMeeting.Refused("two cylinders whose axes are not parallel");
+        if (a.Cross(d.Frame.ZAxis).Length >= Parallel) return Crossed(c, d);
         var w = d.Frame.Origin - c.Frame.Origin;
         var perp = w - a * w.Dot(a);
         var dist = perp.Length;
@@ -99,6 +99,26 @@ internal static class Intersections
         var ey = a.Cross(ex);
         var mid = c.Frame.Origin + ex * x;
         return SurfaceMeeting.Along(new Line3(mid + ey * h, a), new Line3(mid - ey * h, a));
+    }
+
+    // Cylinders at an angle. Of equal radius with axes that cross (two fillets meeting in a mitre) they meet in two
+    // ellipses, in the planes through the crossing that bisect the axes: |p|² − (p·a)² = |p|² − (p·b)² there, so
+    // p·(a − b) = 0 or p·(a + b) = 0. Any other pair meets in a quartic, refused.
+    static SurfaceMeeting Crossed(Cylinder c, Cylinder d)
+    {
+        var (a, b) = (c.Frame.ZAxis, d.Frame.ZAxis);
+        var (p, q) = (new Line3(c.Frame.Origin, a), new Line3(d.Frame.Origin, b));
+        var (crossing, _) = LineLine(p, q);
+        if (Math.Abs(c.Radius - d.Radius) > Snap || crossing is not [var o])
+            return SurfaceMeeting.Refused("two cylinders whose axes are not parallel (they meet in a quartic)");
+        var curves = new List<Curve3>();
+        foreach (var n in new[] { (a - b).Normalized(), (a + b).Normalized() })
+        {
+            var x = Math.Abs(n.X) < 0.9 ? new Vector3D(1, 0, 0) : new Vector3D(0, 1, 0);
+            var plane = new Plane(RigidTransform3D.FromFrame(o, n, (x - n * n.Dot(x)).Normalized()));
+            curves.AddRange(PlaneCylinder(plane, c).Curves);
+        }
+        return SurfaceMeeting.Along([.. curves]);
     }
 
     /// <summary>Where two curves meet, or that they are the same curve (<c>Overlap</c>, no points).</summary>
