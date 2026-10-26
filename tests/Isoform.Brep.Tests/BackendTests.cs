@@ -54,9 +54,10 @@ public class BackendTests(ITestOutputHelper output)
         // Faces by name: each lies on the surface of a face with that name (bodies of one feature share names).
         var faces = mine.Solids.SelectMany(s => s.Faces).ToList();
         var other = theirs.Solids.SelectMany(s => s.Faces).ToList();
-        faces.Select(f => f.Sources[0]).Order().Should().Equal(other.Select(f => string.Join("+", f.Sources)).Order(), name);
+        string Name(BrepFace f) => string.Join("+", f.Sources.Order(StringComparer.Ordinal));
+        faces.Select(Name).Order().Should().Equal(other.Select(Name).Order(), name);
         foreach (var f in faces)
-            other.Where(o => o.Sources.Contains(f.Sources[0])).Should().Contain(o => Same(f.Surface, o.Surface), f.Sources[0]);
+            other.Where(o => Name(o) == Name(f)).Should().Contain(o => Same(f.Surface, o.Surface), Name(f));
 
         // Corners (where three or more edges end; seam vertices lie wherever each B-rep puts its seam) within 1e-9.
         var corners = Corners(mine);

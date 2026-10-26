@@ -2,7 +2,7 @@ using Isoform.Document;
 
 namespace Isoform.Brep.Tests;
 
-/// <summary>Isoform part documents the managed kernel builds in experiment 1, with their exact volumes.</summary>
+/// <summary>Isoform part documents the managed kernel builds (experiments 1 and 2), with their exact volumes.</summary>
 public static class Documents
 {
     static readonly SketchPlane Xy = new([0, 0, 0], [1, 0, 0], [0, 0, 1]);
@@ -79,11 +79,52 @@ public static class Documents
 
     public static readonly double TwoPadsVolume = (600 + 800) * 5;
 
+    // Experiment 2: a 100 × 60 × 10 plate joined or cut by a second extrude.
+    static readonly SketchPlane Top = new([0, 0, 10], [1, 0, 0], [0, 0, 1]);
+    static readonly SketchPlane Yz = new([0, 0, 0], [0, 1, 0], [1, 0, 0]);
+
+    static Profile Rectangle(double x0, double y0, double x1, double y1) =>
+        new([x0, y0], [new("s", [x1, y0]), new("e", [x1, y1]), new("n", [x0, y1]), new("w", [x0, y0])]);
+
+    // A circle as two half arcs a and b: one face a+b.
+    static Profile Circle(double cx, double cy, double r) => new([cx - r, cy], [new("a", [cx + r, cy], 1), new("b", [cx - r, cy], 1)]);
+
+    static PartDocument OnPlate(Extrude second) => new([new Extrude("plate", BooleanOp.New, Xy, Rectangle(0, 0, 100, 60), 0, 10), second]);
+
+    static readonly (string Name, PartDocument Document, double Volume)[] Booleans =
+    [
+        ("boss on top", OnPlate(new Extrude("boss", BooleanOp.Join, Top, Circle(50, 30, 10), 0, 15)), 60_000 + Math.PI * 1_500),
+        ("pocket past the top", OnPlate(new Extrude("pocket", BooleanOp.Cut, Xy, Rectangle(20, 10, 60, 40), 4, 11)), 60_000 - 7_200),
+        ("pocket flush with the top", OnPlate(new Extrude("pocket", BooleanOp.Cut, Top, Rectangle(20, 10, 60, 40), -6, 0)), 60_000 - 7_200),
+        ("window", OnPlate(new Extrude("window", BooleanOp.Cut, Xy, Rectangle(20, 10, 60, 40), -1, 11)), 60_000 - 12_000),
+        ("bore", OnPlate(new Extrude("bore", BooleanOp.Cut, Xy, Circle(50, 30, 8), -1, 11)), 60_000 - Math.PI * 640),
+        ("boss flush with two sides", OnPlate(new Extrude("boss", BooleanOp.Join, Top, Rectangle(0, 0, 30, 20), 0, 5)), 63_000),
+        ("notch in the side", OnPlate(new Extrude("notch", BooleanOp.Cut, Xy, Rectangle(-5, 20, 10, 40), -1, 11)), 58_000),
+        ("bore along the plate", OnPlate(new Extrude("bore", BooleanOp.Cut, Yz, Circle(30, 5, 3), -1, 101)), 60_000 - Math.PI * 900),
+        ("block over the end", OnPlate(new Extrude("ext", BooleanOp.Join, Xy, Rectangle(80, 20, 120, 40), 0, 10)), 64_000),
+        ("block against the end", OnPlate(new Extrude("ext", BooleanOp.Join, Xy, Rectangle(100, 10, 130, 50), 0, 10)), 72_000),
+        ("cut in two", OnPlate(new Extrude("gap", BooleanOp.Cut, Xy, Rectangle(40, -1, 50, 61), -1, 11)), 54_000),
+        // A boss, a bore through boss and plate, and a counterbore 5 deep in the boss's top.
+        ("boss with a counterbored hole", Then(OnPlate(new Extrude("boss", BooleanOp.Join, Top, Circle(50, 30, 10), 0, 15)),
+            new Extrude("bore", BooleanOp.Cut, Xy, Circle(50, 30, 4), -1, 26),
+            new Extrude("counterbore", BooleanOp.Cut, Xy, Circle(50, 30, 6), 20, 26)), 60_000 + Math.PI * 1_000),
+        // A slot from a bore across its seam (the bore's u = 0 side, towards +x): the slot less what the disc covers,
+        // ∫ √(64 − y²) dy over |y| ≤ 4 = 4√48 + 64π/6.
+        ("slot across a bore's seam", Then(OnPlate(new Extrude("bore", BooleanOp.Cut, Xy, Circle(50, 30, 8), -1, 11)),
+            new Extrude("slot", BooleanOp.Cut, Xy, Rectangle(50, 26, 70, 34), -1, 11)), (6_000 - Math.PI * 64 - 160 + 4 * Math.Sqrt(48) + 64 * Math.PI / 6) * 10),
+        // A boss standing on a pocket's floor, its top level with the plate's.
+        ("boss on a pocket floor", Then(OnPlate(new Extrude("pocket", BooleanOp.Cut, Xy, Rectangle(20, 10, 80, 50), 5, 11)),
+            new Extrude("boss", BooleanOp.Join, Xy, Circle(50, 30, 5), 5, 10)), 48_000 + Math.PI * 125),
+    ];
+
+    static PartDocument Then(PartDocument document, params Feature[] more) => new([.. document.Features, .. more]);
+
     public static IEnumerable<object[]> All =>
     [
         ["mounting plate", MountingPlate, MountingPlateVolume],
         ["bracket", Bracket, BracketVolume],
         ["two pads", TwoPads, TwoPadsVolume],
+        .. Booleans.Select(b => new object[] { b.Name, b.Document, b.Volume }),
     ];
 
     public static PartDocument Named(string name) => name switch
@@ -91,6 +132,6 @@ public static class Documents
         "mounting plate" => MountingPlate,
         "bracket" => Bracket,
         "two pads" => TwoPads,
-        _ => throw new ArgumentException(name),
+        _ => Booleans.Single(b => b.Name == name).Document,
     };
 }

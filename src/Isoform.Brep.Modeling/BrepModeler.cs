@@ -6,9 +6,10 @@ using Isoform.Sketching;
 namespace Isoform.Brep.Modeling;
 
 /// <summary>
-/// Isoform documents on the managed B-rep kernel. Experiment 1 covers one extrude that starts the part (an inline
-/// profile, or the regions of a sketch on a plane), with Isoform's face names: sides after their profile edge, caps
-/// <c>id/start</c> and <c>id/end</c>. Anything else is refused with <see cref="Diagnostic.BackendFailed"/>.
+/// Isoform documents on the managed B-rep kernel: plain extrudes (an inline profile, or the regions of a sketch on a
+/// plane) that start a body, join it or cut it, with Isoform's face names: sides after their profile edge, caps
+/// <c>id/start</c> and <c>id/end</c>, faces merged on one surface named by all their sources. Anything else is
+/// refused with <see cref="Diagnostic.BackendFailed"/>.
 /// </summary>
 public sealed class BrepModeler(ModelingSettings settings) : IModeler
 {
@@ -19,29 +20,21 @@ public sealed class BrepModeler(ModelingSettings settings) : IModeler
         if (DocumentRules.FirstProblem(document, settings.Tolerance) is { } invalid) return Failed(invalid);
         document = Parametric.Resolve(document);
 
-        var extrudes = document.Features.OfType<Extrude>().ToList();
-        if (document.Features.FirstOrDefault(f => f is not (Sketch or Extrude)) is { } other)
-            return Failed(Unsupported(other.Id, $"{other.GetType().Name} is not supported by the managed B-rep kernel yet"));
-        if (extrudes is not [{ Op: BooleanOp.New, Blend: 0 } e])
-            return Failed(Unsupported(extrudes.FirstOrDefault()?.Id, "the managed B-rep kernel supports one plain extrude that starts the part"));
-
-        var (plane, regions, problem) = Shape(document, e);
-        if (problem is not null) return Failed(new Diagnostic(SketchSolution.Invalid, e.Id, $"{e.Id}: {problem}"));
-
-        var frame = RigidTransform3D.FromFrame(P(plane!.Origin), V(plane.Normal), V(plane.X));
         var bodies = new List<NamedBody>();
-        foreach (var region in regions!)
+        foreach (var feature in document.Features)
         {
-            var (loops, names) = ProfileConversion.Loops(region, settings.Tolerance);
-            var (result, why) = Extrusion.Extrude(new Region(loops[0], loops.Skip(1).ToList()), frame, e.Start, e.End, settings.Tolerance);
-            if (result is null) return Failed(Unsupported(e.Id, $"{e.Id} cannot be extruded: {why}"));
-            var faceNames = new Dictionary<FaceId, string> { [result.StartCap] = $"{e.Id}/start", [result.EndCap] = $"{e.Id}/end" };
-            for (var l = 0; l < names.Count; l++)
-            for (var s = 0; s < names[l].Count; s++)
-                faceNames[result.Sides[l][s]] = $"{e.Id}/{names[l][s]}";
-            if (BodyCheck.Problems(result.Body) is [var first, ..])
-                return Failed(Unsupported(e.Id, $"{e.Id} made an invalid body: {first.Kind} at {first.Where}: {first.Message}"));
-            bodies.Add(new NamedBody(result.Body, faceNames));
+            switch (feature)
+            {
+                case Sketch:
+                    continue;
+                case Extrude { Blend: 0 } e:
+                    var (tools, problem) = Tools(document, e);
+                    if (problem is not null) return Failed(problem);
+                    if (Apply(bodies, tools!, e) is { } failed) return Failed(failed);
+                    break;
+                default:
+                    return Failed(Unsupported(feature.Id, $"{feature.GetType().Name} is not supported by the managed B-rep kernel yet"));
+            }
         }
         return new BrepResult([], TopologyOf(bodies), bodies);
     }
@@ -49,6 +42,85 @@ public sealed class BrepModeler(ModelingSettings settings) : IModeler
     static BrepResult Failed(Diagnostic d) => new([d], null, []);
 
     static Diagnostic Unsupported(string? feature, string message) => new(Diagnostic.BackendFailed, feature, message);
+
+    // The extrude's tool bodies, one per region, named.
+    (List<NamedBody>? Tools, Diagnostic? Problem) Tools(PartDocument document, Extrude e)
+    {
+        var (plane, regions, problem) = Shape(document, e);
+        if (problem is not null) return (null, new Diagnostic(SketchSolution.Invalid, e.Id, $"{e.Id}: {problem}"));
+
+        var frame = RigidTransform3D.FromFrame(P(plane!.Origin), V(plane.Normal), V(plane.X));
+        var tools = new List<NamedBody>();
+        foreach (var region in regions!)
+        {
+            var (loops, names) = ProfileConversion.Loops(region, settings.Tolerance);
+            var (result, why) = Extrusion.Extrude(new Region(loops[0], loops.Skip(1).ToList()), frame, e.Start, e.End, settings.Tolerance);
+            if (result is null) return (null, Unsupported(e.Id, $"{e.Id} cannot be extruded: {why}"));
+            var faceNames = new Dictionary<FaceId, IReadOnlyList<string>> { [result.StartCap] = [$"{e.Id}/start"], [result.EndCap] = [$"{e.Id}/end"] };
+            for (var l = 0; l < names.Count; l++)
+            for (var s = 0; s < names[l].Count; s++)
+                faceNames[result.Sides[l][s]] = [$"{e.Id}/{names[l][s]}"];
+            var raw = new NamedBody(result.Body, faceNames);
+            try
+            {
+                tools.Add(Named(Booleans.Merge(result.Body), [raw]));
+            }
+            catch (BooleanFailure failure)
+            {
+                return (null, Unsupported(e.Id, $"{e.Id} made an invalid body: {failure.Message}"));
+            }
+        }
+        return (tools, null);
+    }
+
+    // The extrude's tools applied to the part's bodies: new bodies, joined to the bodies they meet, or cut out of each.
+    static Diagnostic? Apply(List<NamedBody> bodies, List<NamedBody> tools, Extrude e)
+    {
+        switch (e.Op)
+        {
+            case BooleanOp.New:
+                bodies.AddRange(tools);
+                return null;
+            case BooleanOp.Join:
+                foreach (var tool in tools)
+                {
+                    var current = tool;
+                    for (var i = 0; i < bodies.Count; i++)
+                    {
+                        var (result, problem) = Booleans.Unite(bodies[i].Body, current.Body);
+                        if (problem is not null) return Unsupported(e.Id, $"{e.Id} cannot be joined: {problem}");
+                        if (result is not [var one]) continue;
+                        current = Named(one, [bodies[i], current]);
+                        bodies.RemoveAt(i--);
+                    }
+                    bodies.Add(current);
+                }
+                return null;
+            case BooleanOp.Cut:
+                var pieces = bodies.ToList();
+                foreach (var tool in tools)
+                {
+                    var next = new List<NamedBody>();
+                    foreach (var piece in pieces)
+                    {
+                        var (result, problem) = Booleans.Subtract(piece.Body, tool.Body);
+                        if (problem is not null) return Unsupported(e.Id, $"{e.Id} cannot be cut: {problem}");
+                        next.AddRange(result!.Select(r => Named(r, [piece, tool])));
+                    }
+                    pieces = next;
+                }
+                bodies.Clear();
+                bodies.AddRange(pieces);
+                return null;
+            default:
+                throw new NotSupportedException(e.Op.ToString());
+        }
+    }
+
+    // A result body named from its operands: each face by every source of the faces it came from.
+    static NamedBody Named(Shaped shaped, NamedBody[] operands) => new(shaped.Body,
+        Enumerable.Range(0, shaped.Body.Faces.Length).ToDictionary(f => new FaceId(f), f => (IReadOnlyList<string>)
+            [.. shaped.Origins[f].SelectMany(o => operands[o.Operand].Names[o.Face]).Distinct().Order(StringComparer.Ordinal)]));
 
     // The plane and regions an extrude sweeps: its inline profile, or the regions of its sketch.
     static (SketchPlane? Plane, IReadOnlyList<SketchRegion>? Regions, string? Problem) Shape(PartDocument document, Extrude e)
@@ -75,7 +147,7 @@ public sealed class BrepModeler(ModelingSettings settings) : IModeler
         {
             var (body, names) = (bodies[b].Body, bodies[b].Names);
             var offset = faces.Count;
-            for (var f = 0; f < body.Faces.Length; f++) faces.Add(new TopoFace(offset + f, [names[new FaceId(f)]], b));
+            for (var f = 0; f < body.Faces.Length; f++) faces.Add(new TopoFace(offset + f, names[new FaceId(f)], b));
 
             var pairs = new Dictionary<(int, int), List<Edge>>();
             for (var i = 0; i < body.Edges.Length; i++)
@@ -127,8 +199,8 @@ public sealed class BrepModeler(ModelingSettings settings) : IModeler
     static Vector3D V(double[] a) => new(a[0], a[1], a[2]);
 }
 
-/// <summary>A kernel body with Isoform's name for each face.</summary>
-public sealed record NamedBody(Body Body, IReadOnlyDictionary<FaceId, string> Names);
+/// <summary>A kernel body with Isoform's names for each face (several for a face merged from faces on one surface).</summary>
+public sealed record NamedBody(Body Body, IReadOnlyDictionary<FaceId, IReadOnlyList<string>> Names);
 
 public sealed class BrepResult(IReadOnlyList<Diagnostic> diagnostics, Topology? topology, IReadOnlyList<NamedBody> bodies)
     : ModelResult(diagnostics, topology)
@@ -145,7 +217,7 @@ public sealed class BrepResult(IReadOnlyList<Diagnostic> diagnostics, Topology? 
         {
             for (var f = 0; f < body.Faces.Length; f++)
             {
-                if (names[new FaceId(f)] != source) continue;
+                if (!names[new FaceId(f)].Contains(source)) continue;
                 var d = Distance(body.Faces[f].Surface, p);
                 if (best is null || d < best.Value.Distance) best = (offset + f, d);
             }

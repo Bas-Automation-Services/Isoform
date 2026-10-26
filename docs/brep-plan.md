@@ -51,19 +51,80 @@ Volumes are exact to 1e-12 relative from the B-rep itself. Tests: `tests/Isoform
 B-rep, names included, in milliseconds instead of a meshing pass, and its STEP needs no healing. It says nothing yet
 about the hard part of a B-rep kernel: booleans, and faces that meet other faces in general position.
 
+## Experiment 2: join and cut (done, 2026-10-26)
+
+Scope (2026-10-26): extrudes that join or cut, bounded by planes and cylinders, with the F-rep core as the oracle.
+
+**Boolean (`Booleans` in `Isoform.Brep`):**
+- *Intersect:* every pair of faces whose boxes overlap meets in closed form (plane–plane lines; plane–cylinder
+  circles and lines; parallel cylinders in lines). The curves are cut down to where they lie on both faces. Faces on
+  one surface instead imprint each other's edges.
+- *Split:* edges split where those pieces end, recorded per edge so that both faces of an edge split it alike. Each
+  face is then cut in its own flat (u, v) (lengths true on cylinders): uses are traced into loops that keep the face
+  on their left, and loops sorted into outer boundaries and holes.
+- *Classify:* each piece is located against the other solid at a point well inside it (ray parity, retried when a
+  ray grazes an edge): out, in, or on its boundary facing the same way or the other. Union keeps A out or on-same and
+  B out; difference keeps A out or on-opposite and B in, turned round.
+- *Merge and sew:* kept faces on one surface that share an edge are merged into one face (faces round a cylinder
+  close with a seam), edges that continue each other through a two-edge vertex are joined, and the faces are sewn by
+  edge geometry into shells. A shell with negative volume is a void of the solid around it; several solids come
+  back as several bodies. Every result passes `BodyCheck`, or the boolean fails with the reason.
+- *Refused, named:* ellipses (a plane at an angle to a cylinder), tangencies, cylinders at an angle.
+
+**Adapter:** `BrepModeler` runs the features in order: new bodies, joins (the tool united with each body it meets)
+and cuts (subtracted from each body). Faces merged on one surface are named by all their sources, sorted, as the
+F-rep core names them (`boss/a+boss/b`, `boss/w+plate/w`). `StepConversion` follows two conventions of OCCT's STEP
+reader, both found by experiment:
+- a circle edge's range starts in [0, 2π);
+- a cylinder face is written in the period of u that ends in (0, 2π], with a seam met first along the use the reader
+  gives its first p-curve.
+
+**Results:** 14 documents on a 100 × 60 × 10 plate: a boss on top, pockets past and flush with the top, a window, a
+bore, a boss flush with two sides, a notch, a bore along the plate, blocks over and against the end, a cut parting
+it in two, a boss with a counterbored hole (three booleans in a row), a slot across a bore's seam, and a boss on a
+pocket floor. On all 17 documents (with experiment 1's):
+- faces, names, neighbours, edges, corners and bodies match the F-rep core;
+- surfaces and corners agree with `ExactBrep` to 1e-9;
+- volumes are exact;
+- OCCT reads every file back as valid solids without healing, with a volume error of 3e-16 at most.
+
+Regeneration in a Debug build, against the F-rep core at 1 mm cells (ms):
+
+| Part | Kernel | F-rep |
+|---|---|---|
+| mounting plate (exp. 1) | 61 | 225 |
+| boss on top | 18 | 71 |
+| pocket flush with the top | 9 | 80 |
+| bore along the plate | 21 | 88 |
+| cut in two | 7 | 67 |
+| boss with a counterbored hole | 69 | 99 |
+| slot across a bore's seam | 34 | 75 |
+
+Nothing in the kernel is optimised yet: vertex and edge matching are quadratic, every face pair is intersected
+after a box test, and a join unites the tool with every body.
+
+Tests: `tests/Isoform.Brep.Tests` (101, 5 s; `BooleanTests` for the kernel alone) and `BrepKernelStepTests` (17).
+
+**What it shows:** the first booleans hold up. Coincident faces, splits that part a body, voids, seams and chained
+booleans all come out right without special cases per feature, because classification and sewing go by geometry
+alone. What is still open is the general case: faces that meet in curves other than lines and circles (ellipses,
+the quartic of two cylinders at an angle), tangent contact, and sliver tolerances.
+
 ## Open questions
 
 - `Plane3D`'s U and V axes in `BasAutomation.Geometry` are left-handed (U × V = −N). The kernel builds its own
   frames; anything that shares `Plane3D` with it has to know.
 - `BasAutomation.Geometry` types compare with a tolerance in `==` but hash exactly, so equal values can hash apart.
 - The 2D segment distances in `Profile.cs` could move to `BasAutomation.Geometry`.
+- The two STEP conventions above come from OCCT's behaviour, not from its source; if another reader disagrees,
+  moving the seam to the STEP cylinder's u = 0 would satisfy both.
 
-## Experiment 2: candidates (to decide)
+## Experiment 3: candidates (to decide)
 
-1. **A second extrude that joins or cuts** (planes and cylinders only): the first boolean, with face splitting,
-   edge imprinting and names that follow from both features. The step that decides whether this kernel is viable.
-2. **Holes and sketches on faces:** cheap given 1 (a hole is a cut by a cylinder); a sketch on a face needs the
-   face's frame, which the kernel has.
-3. **Revolve:** cones, spheres and tori as carriers, no booleans. Widens the geometry but not the hard part.
+1. **Holes and sketches on faces:** a hole is a cut by a cylinder; a sketch on a face needs only the face's frame.
+   Cheap now, and it covers most of what `Isoform.Build`'s plates need.
+2. **Ellipses:** a plane at an angle to a cylinder (chamfered bores, angled cuts). The first curve that is not a line
+   or circle: a new carrier, its p-curves on both surfaces, and intersections with the others.
+3. **Revolve:** cones, spheres and tori as carriers. Widens the geometry; booleans with them need 2 first.
 
-Recommended: 1 first, restricted to planes and cylinders, with the F-rep core as the oracle as in experiment 1.
+Recommended: 1, then 2.

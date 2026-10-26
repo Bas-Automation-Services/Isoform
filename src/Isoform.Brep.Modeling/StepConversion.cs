@@ -31,8 +31,15 @@ public static class StepConversion
             BrepShell Shell(Shell shell) => new([.. shell.Faces.Select(f =>
             {
                 var face = body[f];
-                var (surface, shift) = Surface(face.Surface, faceOffset + f.Index, names[f]);
-                var loops = face.Loops.Select((l, i) => new BrepLoop([.. body.CoedgesOf(l).Select(c =>
+                var (surface, shift) = Surface(face.Surface, faceOffset + f.Index, string.Join("+", names[f]));
+                if (surface.Kind != SurfaceKind.Plane)
+                {
+                    // The face's u in the period that ends in (0, 2π]: OCCT's reader moves a periodic face's p-curves
+                    // there (found by experiment), which leaves a face written in any other period open at its seam.
+                    var high = face.Loops.SelectMany(body.CoedgesOf).Max(c => Math.Max(body[c].Pcurve.At(body[body[c].Edge].T0).X, body[c].Pcurve.At(body[body[c].Edge].T1).X)) + shift;
+                    shift -= 2 * Math.PI * Math.Ceiling(high / (2 * Math.PI) - 1 - 1e-12);
+                }
+                var loops = face.Loops.Select((l, i) => new BrepLoop([.. SeamFirst(body, l, face.SameSense).Select(c =>
                 {
                     var coedge = body[c];
                     var edge = body[coedge.Edge];
@@ -44,13 +51,24 @@ public static class StepConversion
                     }
                     return new BrepCoedge(e0 + coedge.Edge.Index, coedge.Forward, uv);
                 })], Outer: i == 0)).ToList();
-                return new BrepFace(faceOffset + f.Index, [names[f]], surface, face.SameSense, loops);
+                return new BrepFace(faceOffset + f.Index, names[f], surface, face.SameSense, loops);
             })]);
 
             solids.Add(new BrepSolid(bodies.Count == 1 ? name : $"{name}-{b + 1}", Shell(body.Shells[0]), [.. body.Shells.Skip(1).Select(Shell)]));
             faceOffset += body.Faces.Length;
         }
         return new Step.Brep(vertices, edges, solids);
+    }
+
+    // A loop's coedges, started so that a seam is met first along the use OCCT's reader gives the SEAM_CURVE's first
+    // p-curve (found by experiment): against the edge on a face with its surface's sense, along it on one against it.
+    static IEnumerable<CoedgeId> SeamFirst(Body body, LoopId loop, bool sameSense)
+    {
+        var coedges = body.CoedgesOf(loop).ToList();
+        var seam = coedges.GroupBy(c => body[c].Edge).FirstOrDefault(g => g.Count() == 2);
+        if (seam is null) return coedges;
+        var first = coedges.FindIndex(c => body[c].Edge == seam.Key && body[c].Forward != sameSense);
+        return [.. coedges.Skip(first), .. coedges.Take(first)];
     }
 
     static IsoCurve Curve(Curve3 c) => c switch
