@@ -76,6 +76,66 @@ internal sealed class FlatFace
         return Loops.Sum(l => l.Winding(flat)) != 0 ? Place.Inside : Place.Outside;
     }
 
+    /// <summary>
+    /// Whether this face crosses the other's surface at a point inside the other face: on a grid over this face (and
+    /// along its loops), wherever the side of the other's surface changes between neighbours that are on this face,
+    /// the crossing found by bisection and located on the other face. A crossing finer than the grid can be missed.
+    /// </summary>
+    public bool Crosses(FlatFace other)
+    {
+        var (ku, kv) = (Uv.Scale(Surface), Uv.ScaleV(Surface));
+        Point3D On(Point2D q) => Surface.At(q.X / ku, q.Y / kv);
+        double Side(Point2D q) => Uv.Side(other.Surface, On(q));
+        bool Across(Point2D a, Point2D b)
+        {
+            var (sa, sb) = (Side(a), Side(b));
+            if (!(sa * sb < 0) || Math.Abs(sa) <= Intersections.Snap || Math.Abs(sb) <= Intersections.Snap) return false;
+            for (var k = 0; k < 60; k++)
+            {
+                var m = new Point2D((a.X + b.X) / 2, (a.Y + b.Y) / 2);
+                if (Side(m) * sa > 0) a = m; else b = m;
+            }
+            var p = On(new Point2D((a.X + b.X) / 2, (a.Y + b.Y) / 2));
+            return other.Locate(p) == Place.Inside;
+        }
+
+        // Along the loops.
+        foreach (var loop in Loops)
+        {
+            var points = loop.Segments.SelectMany(s => s is CurveSegment c ? c.Samples() : Enumerable.Range(0, 17).Select(i => Along(s, i / 16.0))).ToList();
+            for (var i = 0; i + 1 < points.Count; i++)
+                if (Across(points[i], points[i + 1])) return true;
+        }
+
+        // Across a grid, between neighbours on the face.
+        var flat = Loops.SelectMany(l => l.Segments).SelectMany(s => s is CurveSegment c ? c.Samples() : [s.Start, s.End]).ToList();
+        var (x0, x1, y0, y1) = (flat.Min(q => q.X), flat.Max(q => q.X), flat.Min(q => q.Y), flat.Max(q => q.Y));
+        const int n = 24;
+        var grid = new Point2D[n + 1, n + 1];
+        var on = new bool[n + 1, n + 1];
+        for (var i = 0; i <= n; i++)
+        for (var j = 0; j <= n; j++)
+        {
+            grid[i, j] = new Point2D(x0 + (x1 - x0) * i / n, y0 + (y1 - y0) * j / n);
+            on[i, j] = Locate(grid[i, j]) != Place.Outside;
+        }
+        for (var i = 0; i <= n; i++)
+        for (var j = 0; j <= n; j++)
+        {
+            if (!on[i, j]) continue;
+            if (i < n && on[i + 1, j] && Across(grid[i, j], grid[i + 1, j])) return true;
+            if (j < n && on[i, j + 1] && Across(grid[i, j], grid[i, j + 1])) return true;
+        }
+        return false;
+    }
+
+    static Point2D Along(Segment s, double f) => s switch
+    {
+        LineSegment l => new Point2D(l.From.X + (l.To.X - l.From.X) * f, l.From.Y + (l.To.Y - l.From.Y) * f),
+        ArcSegment a => a.PointAt(a.StartAngle + a.Sweep * f),
+        _ => throw new NotSupportedException(s.GetType().Name),
+    };
+
     /// <summary>The outward normal of the solid at a point of the face.</summary>
     public Vector3D Normal(Point3D p)
     {

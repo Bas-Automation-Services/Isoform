@@ -168,6 +168,154 @@ public static class Blends
 
     static string Name(BlendKind kind) => kind == BlendKind.Fillet ? "fillet" : "chamfer";
 
+    /// <summary>
+    /// Every edge round a flat face <paramref name="f"/> rounded (or chamfered): one piece per edge, each the spandrel
+    /// along it, a prism along a line, the spandrel turned round the axis along an arc. A piece stops exactly where
+    /// its edge runs on tangentially into the next and runs on past a convex corner, so straight pieces mitre there.
+    /// Reflex corners, sides not square to the face, and arcs meeting their neighbours at a corner are refused.
+    /// Origins: operand 0 the body's faces, k + 1 the k-th piece's; each piece's own face and the side it runs along.
+    /// </summary>
+    public static (Shaped? Result, IReadOnlyList<(FaceId Blend, FaceId Side)>? Pieces, string? Problem) Loop(Body body, FaceId f, double size, BlendKind kind)
+    {
+        if (body[f].Surface is not Plane pf) return (null, null, "only the loops of a flat face can be rounded yet");
+        var n = pf.Frame.ZAxis * (body[f].SameSense ? 1 : -1);
+        var tools = new List<(Body Tool, FaceId Blend, FaceId Side, bool Convex)>();
+        var sides = new HashSet<FaceId>();
+        foreach (var loop in body[f].Loops)
+        {
+            var cs = body.CoedgesOf(loop).ToList();
+            for (var i = 0; i < cs.Count; i++)
+            {
+                var (piece, why) = Piece(body, f, n, cs, i, size, kind);
+                if (piece is not { } p) return (null, null, why);
+                tools.Add(p);
+                sides.Add(p.Side);
+            }
+        }
+
+        // The pieces in turn, every face's origins carried back to the body's faces or a piece's.
+        var current = body;
+        var origins = Enumerable.Range(0, body.Faces.Length).Select(g => (IReadOnlyList<Origin>)[new Origin(0, new FaceId(g))]).ToList();
+        for (var k = 0; k < tools.Count; k++)
+        {
+            var (result, problem) = tools[k].Convex ? Booleans.Subtract(current, tools[k].Tool) : Booleans.Unite(current, tools[k].Tool);
+            if (problem is not null) return (null, null, $"{problem} (piece {k + 1} of {tools.Count})");
+            if (result is not [var one]) return (null, null, $"the {Name(kind)} parts the body");
+            var piece = k + 1;
+            origins = [.. one.Origins.Select(os => (IReadOnlyList<Origin>)[.. os.SelectMany(o => o.Operand == 0 ? origins[o.Face.Index] : [new Origin(piece, o.Face)]).Distinct()])];
+            current = one.Body;
+        }
+
+        // Faces other than the face and its sides must come through unchanged.
+        for (var g = 0; g < body.Faces.Length; g++)
+        {
+            var id = new FaceId(g);
+            if (id == f || sides.Contains(id)) continue;
+            var after = Enumerable.Range(0, current.Faces.Length).Where(h => origins[h].Contains(new Origin(0, id))).ToList();
+            var before = MassProperties.Area(body, id);
+            if (after.Any(h => origins[h].Count > 1) || Math.Abs(after.Sum(h => MassProperties.Area(current, new FaceId(h))) - before) > 1e-9 * (1 + before))
+                return (null, null, $"the {Name(kind)} round the face reaches other faces than the face and its sides (a size too large)");
+        }
+        return (new Shaped(current, origins), [.. tools.Select(t => (t.Blend, t.Side))], null);
+    }
+
+    enum Corner { Tangent, Convex, Reflex }
+
+    // The piece along the i-th coedge of a loop of f (face normal n): its tool, own face, side and which way it goes.
+    static ((Body Tool, FaceId Blend, FaceId Side, bool Convex)?, string?) Piece(Body body, FaceId f, Vector3D n, List<CoedgeId> cs, int i, double size, BlendKind kind)
+    {
+        var c = cs[i];
+        var edge = body[body[c].Edge];
+        var side = body.UsesOf(body[c].Edge).Select(body.FaceOf).First(g => g != f);
+        var (from, to) = body.ParametersOf(c);
+        Vector3D Travel(CoedgeId co, bool atEnd)
+        {
+            var (a, b) = body.ParametersOf(co);
+            return (body[body[co].Edge].Curve.Derivative(atEnd ? b : a) * Math.Sign(b - a)).Normalized();
+        }
+        Corner Turn(Vector3D into, Vector3D outOf)
+        {
+            var cross = into.Cross(outOf);
+            if (cross.Length < 1e-9 && into.Dot(outOf) > 0) return Corner.Tangent;
+            return cross.Dot(n) > 0 ? Corner.Convex : Corner.Reflex;
+        }
+        var single = cs.Count == 1;
+        var start = single ? Corner.Tangent : Turn(Travel(cs[(i + cs.Count - 1) % cs.Count], true), Travel(c, false));
+        var end = single ? Corner.Tangent : Turn(Travel(c, true), Travel(cs[(i + 1) % cs.Count], false));
+        if (start == Corner.Reflex || end == Corner.Reflex) return (null, "a reflex corner of the face, round which the ball would need a torus no edge names");
+
+        // Square sides only: a plane square to the face along a line, the cylinder round the face's normal along an arc.
+        var p0 = edge.Curve.At(from);
+        var t0 = Travel(c, false);
+        Vector3D sideNormal;
+        switch (edge.Curve, body[side].Surface)
+        {
+            case (Line3, Plane ps) when Math.Abs(ps.Frame.ZAxis.Dot(n)) < 1e-9:
+                sideNormal = ps.Frame.ZAxis * (body[side].SameSense ? 1 : -1);
+                break;
+            case (Circle3 k, Cylinder cy) when k.Frame.ZAxis.Cross(n).Length < 1e-9 && cy.Frame.ZAxis.Cross(n).Length < 1e-9 && Math.Abs(cy.Radius - k.Radius) <= Intersections.Snap:
+                sideNormal = (p0 - k.Frame.Origin - n * (p0 - k.Frame.Origin).Dot(n)).Normalized() * (body[side].SameSense ? 1 : -1);
+                break;
+            default:
+                return (null, "a side of the face that is not square to it, or not a plane or cylinder");
+        }
+        var inF = n.Cross(t0).Normalized();
+        var inSide = sideNormal.Cross(-t0).Normalized();
+        var convex = n.Dot(inSide) < 0;
+        if (!convex && kind == BlendKind.Chamfer) return (null, "only a convex edge can be chamfered");
+
+        // The section square to the edge: w into the face, h along its normal.
+        var h = convex ? -size : size;
+        var corner = new Point2D(0, 0);
+        var (ta, tb) = (new Point2D(size, 0), new Point2D(0, h));
+        Segment middle = kind == BlendKind.Chamfer ? new LineSegment(ta, tb)
+            : new ArcSegment(new Point2D(size, h), size, convex ? Math.PI / 2 : -Math.PI / 2, convex ? Math.PI / 2 : -Math.PI / 2);
+        var section = new ProfileLoop([new LineSegment(corner, ta), middle, new LineSegment(tb, corner)]);
+
+        if (edge.Curve is Line3)
+        {
+            // Run on past a convex corner (to mitre with the next piece), stop exactly where the next runs on
+            // tangentially; a concave edge's piece fills, so it stops at the sides it ends on.
+            var margin = 2 * size + 1;
+            var (m0, m1) = (convex && start == Corner.Convex ? margin : 0, convex && end == Corner.Convex ? margin : 0);
+            var length = (edge.Curve.At(to) - p0).Length;
+            var frame = RigidTransform3D.FromFrame(p0 - t0 * m0, t0, inF);
+            var (tool, why) = Extrusion.Extrude(new Region(section), frame, 0, length + m0 + m1, body.Tolerance);
+            if (tool is null) return (null, $"the {Name(kind)} has no room: {why}");
+            return ((tool.Body, tool.Sides[0][1], side, convex), null);
+        }
+
+        // An arc: the section turned round the arc's axis, from end to end (whole for a loop of one circle).
+        if (kind == BlendKind.Chamfer) return (null, "a chamfer round an arc is a cone, which the managed kernel does not have yet");
+        if (!single && (start != Corner.Tangent || end != Corner.Tangent)) return (null, "an arc meeting the next edge at a corner, where its torus would have to mitre");
+        var circle = (Circle3)edge.Curve;
+        var center = circle.Frame.Origin;
+        Vector3D Radial(Point3D p) => (p - center - n * (p - center).Dot(n)).Normalized();
+        var sigma = inF.Dot(Radial(p0)) > 0 ? 1 : -1;
+        var ring = new ProfileLoop([.. section.Segments.Select(s => Placed(s, circle.Radius, sigma))]);
+        var ccw = Radial(p0).Cross(t0).Dot(n) > 0;
+        var p1 = edge.Curve.At(to);
+        var (first, last) = ccw ? (p0, p1) : (p1, p0);
+        var angle = single ? 2 * Math.PI : Intersections.Wrap(Math.Atan2(Radial(first).Cross(Radial(last)).Dot(n), Radial(first).Dot(Radial(last))));
+        if (angle <= 0) angle = 2 * Math.PI;
+        var axis = RigidTransform3D.FromFrame(center, n, Radial(first));
+        var (turned, problem) = Revolution.Revolve(new Region(ring), axis, body.Tolerance, angle);
+        if (turned is null) return (null, $"the {Name(kind)} has no room: {problem}");
+        var blend = new FaceId(Enumerable.Range(0, turned.Body.Faces.Length).First(g => turned.Origins[g].Contains(new Origin(0, new FaceId(1)))));
+        return ((turned.Body, blend, side, convex), null);
+    }
+
+    // A section segment (w into the face, h along its normal) in the half-plane round an arc's axis: distance from
+    // the axis R + sigma * w (sigma = +1 where the face lies outside the arc), height h.
+    static Segment Placed(Segment s, double radius, int sigma) => s switch
+    {
+        LineSegment l => new LineSegment(new Point2D(radius + sigma * l.From.X, l.From.Y), new Point2D(radius + sigma * l.To.X, l.To.Y)),
+        ArcSegment a => sigma > 0
+            ? new ArcSegment(new Point2D(radius + a.Center.X, a.Center.Y), a.Radius, a.StartAngle, a.Sweep)
+            : new ArcSegment(new Point2D(radius - a.Center.X, a.Center.Y), a.Radius, Math.PI - a.StartAngle, -a.Sweep),
+        _ => throw new NotSupportedException(s.GetType().Name),
+    };
+
     static bool Collinear(Line3 p, Line3 q) => p.Direction.Cross(q.Direction).Length < 1e-9 &&
         (q.Origin - p.Origin - p.Direction * (q.Origin - p.Origin).Dot(p.Direction)).Length <= Intersections.Snap;
 

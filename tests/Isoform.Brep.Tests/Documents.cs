@@ -128,6 +128,10 @@ public static class Documents
     // right-angled edge out (r²(1 − π/4)), its centroid that far from either face.
     static double Spandrel(double r) => r * r * (1 - Math.PI / 4);
     static double Centroid(double r) => r * (5.0 / 6 - Math.PI / 4) / (1 - Math.PI / 4);
+    static double Mitre(double r) => r * r * r * (5.0 / 3 - Math.PI / 2);
+
+    // A stadium 20 long between two R5 ends, from (40, 20) to (60, 30).
+    static Profile Stadium() => new([40, 20], [new ProfileEdge("a", [60, 20]), new ProfileEdge("right", [60, 30], 1), new ProfileEdge("b", [40, 30]), new ProfileEdge("left", [40, 20], 1)]);
 
     static readonly Profile Bracket2 = new([0, 0],
     [
@@ -161,6 +165,16 @@ public static class Documents
         // Tori (Pappus): the spandrel turned round the axis, its centroid outside a hole's wall or inside a boss's.
         ("filleted hole edge", OnSlab(new Hole("hole", [30, 25], 10), new Fillet("round", ["plate/z+", "hole/wall"], 2)),
             50_000 - Math.PI * 250 - 2 * Math.PI * (5 + Centroid(2)) * Spandrel(2)),
+        // Experiment 7: loop fillets. Straight pieces mitre at convex corners (each corner gives back r³(5/3 − π/2));
+        // a concave loop's pieces fill, and its corners take that back; arcs run on into lines through tori.
+        ("outline with a loop round", new([new Extrude("outline", BooleanOp.New, Xy, Rectangle(0, 0, 60, 40), 0, 10), new Fillet("round", [], 2, Loop: "outline/end")]),
+            60 * 40 * 10 - 200 * Spandrel(2) + 4 * Mitre(2)),
+        ("pocket floor with a loop round", OnSlab(new Extrude("pocket", BooleanOp.Cut, Xy, Rectangle(20, 10, 60, 40), 4, 11), new Fillet("floor", [], 2, Loop: "pocket/start")),
+            50_000 - 40 * 30 * 6 + 140 * Spandrel(2) - 4 * Mitre(2)),
+        ("boss with a loop round", OnSlab(new Extrude("boss", BooleanOp.Join, Top, Stadium(), 0, 8), new Fillet("round", [], 1, Loop: "boss/end")),
+            50_000 + (20 * 10 + Math.PI * 25) * 8 - 40 * Spandrel(1) - 2 * Math.PI * (5 - Centroid(1)) * Spandrel(1)),
+        ("rim of a cut-out with a loop round", OnSlab(new Extrude("slot", BooleanOp.Cut, Xy, Stadium(), -1, 11), new Fillet("round", [], 1, Loop: "plate/z+")),
+            50_000 - (20 * 10 + Math.PI * 25) * 10 - (300 * Spandrel(1) - 4 * Mitre(1)) - 40 * Spandrel(1) - 2 * Math.PI * (5 + Centroid(1)) * Spandrel(1)),
         ("boss with a rounded foot", OnSlab(
             new Sketch("ring", new SketchPlacement(Face: "plate/z+"), new Dictionary<string, double[]> { ["c"] = [50, 25] }, [new SketchCircle("rim", "c", 8)], []),
             new Extrude("boss", BooleanOp.Join, null, null, 0, 15) { Sketch = "ring" },

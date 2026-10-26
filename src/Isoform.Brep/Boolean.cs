@@ -100,6 +100,9 @@ public static class Booleans
         switch (meeting.Kind)
         {
             case Meeting.Unsupported:
+                // Surfaces the kernel cannot intersect, but faces that only touch (a fillet's cylinder running on into
+                // the next one's torus): where neither face crosses the other's surface inside that face, no cut.
+                if (!x.Crosses(y) && !y.Crosses(x)) break;
                 throw new BooleanFailure($"two faces meet as {meeting.Why}, which the managed kernel does not handle yet");
             case Meeting.Curves:
                 foreach (var c in meeting.Curves) Along(ops, fa, fb, c);

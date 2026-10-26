@@ -39,7 +39,7 @@ public sealed class BrepModeler(ModelingSettings settings) : IModeler
             if (DocumentRules.StartsBody(feature)) current = feature.Body ?? feature.Id;
             else if (feature.Body is { } named) current = named;
 
-            if (feature is Fillet { Loop: null } or Chamfer { Loop: null })
+            if (feature is Fillet or Chamfer)
             {
                 if (Blend(feature, solids) is { } problemBlending) return Failed(problemBlending);
                 continue;
@@ -197,9 +197,11 @@ public sealed class BrepModeler(ModelingSettings settings) : IModeler
         return Swept(c.Id, new Region(square), frame, 0, reach, [["beyond-1", "beyond-2", "beyond-3", "beyond-4"]], "face", "beyond");
     }
 
-    // A fillet or chamfer on the edge between two named faces, on the solid that has them (whichever body that is).
+    // A fillet or chamfer on the edge between two named faces, or round the loops of one, on the solid that has them
+    // (whichever body that is).
     static Diagnostic? Blend(Feature feature, List<(NamedBody Solid, string Body)> solids)
     {
+        if ((feature switch { Fillet f => f.Loop, Chamfer c => c.Loop, _ => null }) is { } loop) return LoopBlend(feature, loop, solids);
         var (edge, size, kind) = feature switch
         {
             Fillet f => (f.Edge, f.Radius, BlendKind.Fillet),
@@ -223,6 +225,37 @@ public sealed class BrepModeler(ModelingSettings settings) : IModeler
             return null;
         }
         return Unsupported(feature.Id, $"{feature.Id}: no edge between {edge[0]} and {edge[1]}");
+    }
+
+    // Every edge round a named flat face: each piece's face named after the face on the other side, id/<side>.
+    static Diagnostic? LoopBlend(Feature feature, string loop, List<(NamedBody Solid, string Body)> solids)
+    {
+        var (size, kind) = feature switch
+        {
+            Fillet f => (f.Radius, BlendKind.Fillet),
+            Chamfer c => (c.Distance, BlendKind.Chamfer),
+            _ => throw new NotSupportedException(feature.GetType().Name),
+        };
+        for (var i = 0; i < solids.Count; i++)
+        {
+            var (solid, body) = solids[i];
+            var faces = Enumerable.Range(0, solid.Body.Faces.Length).Select(f => new FaceId(f)).Where(f => solid.Names[f].Contains(loop)).ToList();
+            if (faces.Count == 0) continue;
+            if (faces.Count > 1) return Unsupported(feature.Id, $"{feature.Id}: {loop} is in more than one piece; the managed B-rep kernel rounds the loops of one");
+            var (result, pieces, problem) = Blends.Loop(solid.Body, faces[0], size, kind);
+            if (problem is not null) return Unsupported(feature.Id, $"the edges round {loop} cannot be {(kind == BlendKind.Fillet ? "rounded" : "chamfered")}: {problem}");
+            var operands = new List<NamedBody> { solid };
+            foreach (var (blend, side) in pieces!)
+            {
+                var names = new Dictionary<FaceId, IReadOnlyList<string>>();
+                foreach (var o in result!.Origins.SelectMany(o => o).Where(o => o.Operand == operands.Count))
+                    names[o.Face] = o.Face == blend ? [.. solid.Names[side].Select(n => $"{feature.Id}/{n}")] : [];
+                operands.Add(new NamedBody(result.Body, names));
+            }
+            solids[i] = (Named(result!, [.. operands]), body);
+            return null;
+        }
+        return Unsupported(feature.Id, $"{feature.Id}: no face {loop}");
     }
 
     static bool Adjacent(Body body, FaceId a, FaceId b) => Enumerable.Range(0, body.Edges.Length)

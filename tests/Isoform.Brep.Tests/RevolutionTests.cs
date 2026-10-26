@@ -52,4 +52,22 @@ public class RevolutionTests(ITestOutputHelper output)
         r.Should().BeNull();
         problem.Should().Contain("cone");
     }
+
+    [Fact]
+    public void A_quarter_washer_has_its_ends_closed()
+    {
+        var (r, problem) = Revolution.Revolve(new Region(Rectangle(5, 0, 10, 4)), RigidTransform3D.Identity, angle: Math.PI / 2);
+        problem.Should().BeNull();
+        MassProperties.Volume(r!.Body).Should().BeApproximately(Math.PI * 75, 1e-9);
+        r.Body.Faces.Should().HaveCount(6);
+    }
+
+    [Fact]
+    public void Half_a_ring_of_round_section()
+    {
+        var (r, problem) = Revolution.Revolve(new Region(Circle(20, 0, 3)), RigidTransform3D.Identity, angle: Math.PI);
+        problem.Should().BeNull();
+        MassProperties.Volume(r!.Body).Should().BeApproximately(Math.PI * Math.PI * 20 * 9, 1e-9);
+        r.Body.Faces.Should().HaveCount(3);
+    }
 }

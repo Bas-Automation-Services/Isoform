@@ -48,8 +48,10 @@ public class BackendTests(ITestOutputHelper output)
     public void The_exact_brep_agrees_with_the_one_derived_from_the_frep(string name, PartDocument document, double _)
     {
         var mine = StepConversion.ToStep(new BrepModeler(Settings).Regenerate(document).Bodies);
-        var frep = (FrepResult)new FrepModeler(Settings).Regenerate(document);
-        var theirs = ExactBrep.Build(frep, Settings);
+        // The F-rep side's own exact B-rep needs its finer mesh to cut some fillet faces open.
+        var fine = new ModelingSettings { CellSize = 0.5 };
+        var frep = (FrepResult)new FrepModeler(fine).Regenerate(document);
+        var theirs = ExactBrep.Build(frep, fine);
 
         // Faces by name: each lies on the surface of a face with that name (bodies of one feature share names).
         var faces = mine.Solids.SelectMany(s => s.Faces).ToList();
@@ -103,7 +105,7 @@ public class BackendTests(ITestOutputHelper output)
     [Fact]
     public void What_the_kernel_cannot_do_yet_is_refused_by_name()
     {
-        var withCut = new PartDocument([.. Documents.TwoPads.Features, new Fillet("h", [], 1, Loop: "pads/end")]);
+        var withCut = new PartDocument([.. Documents.TwoPads.Features, new Isoform.Document.Shell("h", 1)]);
         var result = new BrepModeler(Settings).Regenerate(withCut);
         result.Topology.Should().BeNull();
         result.Diagnostics.Should().ContainSingle(d => d.Code == Diagnostic.BackendFailed && d.FeatureId == "h");

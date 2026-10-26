@@ -481,6 +481,23 @@ internal static class Uv
     /// <summary>How flat (u, v) scales v: the minor radius on a torus.</summary>
     public static double ScaleV(Surface s) => s is Torus t ? t.Minor : 1;
 
+    /// <summary>Which side of the surface a point is on: signed distance from a plane along its normal, from a cylinder
+    /// or a torus's tube outwards.</summary>
+    public static double Side(Surface s, Point3D p) => s switch
+    {
+        Plane plane => (p - plane.Frame.Origin).Dot(plane.Frame.ZAxis),
+        Cylinder c => Radial(c, p) - c.Radius,
+        Torus t => TorusSide(t, p),
+        _ => throw new NotSupportedException(s.GetType().Name),
+    };
+
+    static double TorusSide(Torus t, Point3D p)
+    {
+        var q = t.Frame.ApplyInverse(p);
+        var rho = Math.Sqrt(q.X * q.X + q.Y * q.Y) - t.Major;
+        return Math.Sqrt(rho * rho + q.Z * q.Z) - t.Minor;
+    }
+
     /// <summary>The distance from a point to the surface.</summary>
     public static double Distance(Surface s, Point3D p) => s switch
     {

@@ -63,7 +63,8 @@ public sealed record ProfileLoop(IReadOnlyList<Segment> Segments)
 
     /// <summary>
     /// How many times the loop winds round <paramref name="p"/>: the angle each chord subtends at p, plus ±1 for each
-    /// arc whose circular segment (between the arc and its chord) holds p. Exact for points away from the loop.
+    /// arc whose circular segment (between the arc and its chord) holds p, arcs taken in halves. Exact for points away
+    /// from the loop.
     /// </summary>
     public int Winding(Point2D p)
     {
@@ -76,9 +77,16 @@ public sealed record ProfileLoop(IReadOnlyList<Segment> Segments)
                 angle += curve.Subtended(p);
                 continue;
             }
-            var (a, b) = (s.Start - p, s.End - p);
-            angle += Math.Atan2(a.X * b.Y - a.Y * b.X, a.X * b.X + a.Y * b.Y);
-            if (s is ArcSegment arc && InCircularSegment(arc, p)) turns += Math.Sign(arc.Sweep);
+            // An arc in two halves: a point on its whole chord (often, where the chord runs through other vertices)
+            // sees that chord at ±π either way, and lies on neither side of it.
+            foreach (var piece in s is ArcSegment { IsFullCircle: false } whole
+                         ? [whole with { Sweep = whole.Sweep / 2 }, whole with { StartAngle = whole.StartAngle + whole.Sweep / 2, Sweep = whole.Sweep / 2 }]
+                         : new[] { s })
+            {
+                var (a, b) = (piece.Start - p, piece.End - p);
+                angle += Math.Atan2(a.X * b.Y - a.Y * b.X, a.X * b.X + a.Y * b.Y);
+                if (piece is ArcSegment arc && InCircularSegment(arc, p)) turns += Math.Sign(arc.Sweep);
+            }
         }
         return turns + (int)Math.Round(angle / (2 * Math.PI));
     }

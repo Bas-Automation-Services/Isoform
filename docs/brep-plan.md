@@ -246,14 +246,52 @@ core rounds it along the sweep and names it per side (`cap/face` and `cap/boss/r
 torus face, `cap/face` (9 faces), with the exact volume. Which one Isoform should name is a question for the F-rep
 side; `BlendTests` covers the kernel's.
 
-## Experiment 7: candidates (to decide)
+## Experiment 7: loop fillets and chamfers (done, 2026-10-26)
 
-1. **Partial revolves and loop fillets:** a torus piece round an arc of a profile (not a whole circle), meeting
-   straight fillets tangentially where a line runs into an arc. With mitres, this rounds a face's whole loop, which is
-   most of the fillets in real parts.
-2. **Cones:** chamfers round holes and bosses, and revolves of lines at an angle.
-3. **Ball corners:** three fillets meeting at a corner, a sphere carrier.
+**Kernel (`Blends.Loop`):** every edge round a flat face, one piece per edge with the spandrel (or chamfer
+triangle) as its section.
+- *Lines:* a prism along a line, stopped exactly where the next edge runs on tangentially, run on past a convex
+  corner so that straight pieces mitre there. A concave edge's piece fills and stops at the sides it ends on.
+- *Arcs:* a part turn of the section round the arc's axis (`Revolution` now turns through any angle and closes the
+  ends with the region), between tangent neighbours, or a whole turn for a loop of one circle.
+- *Applying:* the pieces go in one after another, every face's origins carried back to the body's or a piece's. One
+  area guard runs at the end.
+- *Refused, named:* reflex corners, sides not square to the face, arcs meeting a neighbour at a corner, chamfers
+  round arcs (cones).
+
+**Adapter:** `Fillet` and `Chamfer` with `Loop` name each piece after the face on the other side (`round/boss/a`), as
+the F-rep core does.
+
+**Fixes on the way:**
+- *Faces that only touch:* surfaces the kernel cannot intersect (a straight fillet's cylinder against the next arc's
+  torus, a torus against a side plane) are let through when neither face crosses the other's surface inside the other
+  face. This is checked on a grid over each face and along its loops, with crossings found by bisection and located
+  on the other face. A crossing finer than the grid could be missed; `BodyCheck` and the area guard stand behind it.
+- *Winding on a chord:* the winding of a loop round a point on an arc's chord was undecided. The chord is seen at ±π
+  and the point is on neither side of it, and this happens wherever the chord runs through other vertices (a cut
+  through the end of a stadium). Arcs are now measured in two halves.
+- *A finer F-rep mesh:* the `ExactBrep` comparison builds the F-rep side's exact B-rep at 0.5 mm cells. At 1 mm it
+  cannot cut some fillet faces open.
+
+**Results:** 4 more documents: a rectangle outline with a loop round (mitres), a pocket floor with a loop round
+(concave), a stadium boss with a loop round (lines and tori meeting tangentially), the rim of a stadium cut-out with
+a loop round (outer and inner loops). All 48 documents match the F-rep core, agree with `ExactBrep`, have exact
+volumes and read back in OCCT without healing. Tests: `tests/Isoform.Brep.Tests` 213 (17 s; `BlendTests` 13,
+`RevolutionTests` 6), `BrepKernelStepTests` 48.
+
+**A difference, kept out of the comparison:** a loop chamfer round a rectangle. Both kernels make the same solid (the
+volume is exact), but where four faces meet in one point at each corner, the F-rep core's topology splits the point
+into an edge, in an order-dependent pattern, and its own exact export then refuses its counts. `BlendTests` covers
+the kernel's.
+
+## Experiment 8: candidates (to decide)
+
+1. **Cones:** chamfers round holes and bosses (loop chamfers with arcs), revolves of lines at an angle.
+2. **Ball corners:** three fillets meeting at a corner, a sphere carrier.
+3. **Arcs meeting lines at a corner** in loop fillets: a torus mitring with a cylinder (a quartic, unless the radii
+   make it a circle or ellipse).
 4. **Inventor as a second STEP reader**, parked.
-5. **Two cylinders at an angle (cross bores)**, a quartic.
+5. **Speed:** vertex and edge matching are quadratic, every face pair is intersected after a box test, and loop
+   fillets run one boolean per edge. Fine at these sizes, not for a part with hundreds of faces.
 
-Recommended: 1, then 2.
+Recommended: 1 (it completes chamfers), then 5 before any real part goes through the kernel.

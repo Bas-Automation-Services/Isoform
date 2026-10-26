@@ -118,4 +118,30 @@ public class BlendTests(ITestOutputHelper output)
         MassProperties.Volume(r!.Body).Should().BeApproximately(Math.PI * 64 * 15 - 2 * Math.PI * (8 - Centroid(2)) * Spandrel(2), 1e-9);
         r.Body.Faces.Should().HaveCount(4);
     }
+
+    [Fact]
+    public void A_stadium_top_is_rounded_all_round()
+    {
+        var stadium = new ProfileLoop([new LineSegment(P(40, 20), P(60, 20)), new ArcSegment(P(60, 25), 5, -Math.PI / 2, Math.PI),
+            new LineSegment(P(60, 30), P(40, 30)), new ArcSegment(P(40, 25), 5, Math.PI / 2, Math.PI)]);
+        var boss = Extrusion.Extrude(new Region(stadium), RigidTransform3D.Identity, 10, 18).Result!.Body;
+        var (r, pieces, problem) = Blends.Loop(boss, Face(boss, new Vector3D(0, 0, 1), new Point3D(0, 0, 18)), 1, BlendKind.Fillet);
+        output.WriteLine(problem ?? "");
+        problem.Should().BeNull();
+        pieces.Should().HaveCount(4);
+        MassProperties.Volume(r!.Body).Should().BeApproximately((200 + Math.PI * 25) * 8 - 40 * Spandrel(1) - 2 * Math.PI * (5 - Centroid(1)) * Spandrel(1), 1e-9);
+    }
+
+    [Fact]
+    public void A_loop_chamfer_mitres_at_the_corners()
+    {
+        // Each corner gives back the overlap of the two prisms, d³/3. (Isoform's F-rep core splits the corner point,
+        // where four faces meet, into an edge; the solid is the same.)
+        var outline = Extrusion.Extrude(new Region(Rectangle(0, 0, 60, 40)), RigidTransform3D.Identity, 0, 10).Result!.Body;
+        var (r, pieces, problem) = Blends.Loop(outline, Face(outline, new Vector3D(0, 0, -1), new Point3D(0, 0, 0)), 1, BlendKind.Chamfer);
+        problem.Should().BeNull();
+        pieces.Should().HaveCount(4);
+        MassProperties.Volume(r!.Body).Should().BeApproximately(60 * 40 * 10 - 200 * 0.5 + 4.0 / 3, 1e-9);
+        r.Body.Faces.Should().HaveCount(10);
+    }
 }
