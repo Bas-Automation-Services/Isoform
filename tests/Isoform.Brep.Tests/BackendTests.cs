@@ -44,7 +44,7 @@ public class BackendTests(ITestOutputHelper output)
     }
 
     [Theory]
-    [MemberData(nameof(Documents.All), MemberType = typeof(Documents))]
+    [MemberData(nameof(Documents.ExactInTheFrep), MemberType = typeof(Documents))]
     public void The_exact_brep_agrees_with_the_one_derived_from_the_frep(string name, PartDocument document, double _)
     {
         var mine = StepConversion.ToStep(new BrepModeler(Settings).Regenerate(document).Bodies);

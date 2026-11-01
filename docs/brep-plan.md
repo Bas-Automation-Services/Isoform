@@ -537,12 +537,23 @@ Chosen from the candidates (1, its sphere half).
 top corners balled. All 85 have exact volumes and match the F-rep core and `ExactBrep`; OCCT reads them all back
 valid without healing (no pole on a corner ball). Tests: `tests/Isoform.Brep.Tests` 346, `BrepKernelStepTests` 85.
 
+## Experiment 16: pointed cones (done, 2026-11-01)
+
+A revolve's line at an angle that ends on the axis turns a cone closed at its apex: the apex is a `Pole` edge, as a
+sphere's pole is (its p-curve the line where the radius is zero, the cone's frame at the line's other end). The cone
+has a normal of its own, the same all along a generator (Su vanishes at the apex). An arc off the axis reaching it
+(a torus with no hole) is still refused.
+
+**Results:** 3 more documents: a pin with a drill point, a cone, a plate with a pointed conical dimple cut in. They
+match the F-rep core's names and topology and have exact volumes; `ExactBrep` cannot cut a cone open at its apex,
+so they are kept out of the exact-face comparison (`Documents.ExactInTheFrep`); OCCT reads them back valid with its
+healing, as for the other poles. Tests: `tests/Isoform.Brep.Tests` 353, `BrepKernelStepTests` 88.
+
 ## Next: candidates (to decide)
 
 What still stops the playground's examples, and what is left from before:
 
-1. **Pointed cones** (an apex as a pole of the cone), ball corners of other kinds (corners not square, unequal
-   radii), cuts through a sphere's pole.
+1. **Ball corners of other kinds** (corners not square, unequal radii) and cuts through a sphere's pole.
 3. **Arcs meeting lines at a corner** in loop fillets (a quartic, unless the radii make it a circle or ellipse).
 4. **Inventor as a second STEP reader**, parked.
 5. **Local booleans:** rebuild only the faces a boolean touches.

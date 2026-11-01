@@ -527,6 +527,20 @@ public static class Documents
         ]), 12000 - Spandrel2 * (2 * 36 + 2 * 26 + 4 * 8) - 4 * CornerCap),
     ];
 
+    // Pointed cones: a revolve's line at an angle that ends on the axis closes its cone at the apex, a pole.
+    static readonly (string Name, PartDocument Document, double Volume)[] Points =
+    [
+        ("drill point", new([new Revolve("pin", BooleanOp.New, Upright(0, 0), new Profile([0, 0],
+            [new ProfileEdge("bottom", [5, 0]), new ProfileEdge("wall", [5, 10]), new ProfileEdge("tip", [0, 15]), new ProfileEdge("axis", [0, 0])]))]),
+            Math.PI * 25 * 10 + Math.PI * 25 * 5 / 3),
+        ("cone", new([new Revolve("cone", BooleanOp.New, Upright(0, 0), new Profile([0, 0],
+            [new ProfileEdge("bottom", [5, 0]), new ProfileEdge("side", [0, 8]), new ProfileEdge("axis", [0, 0])]))]), Math.PI * 25 * 8 / 3),
+        // A cone cut point down into the plate, from its apex 4 below the top to radius 4 at the top.
+        ("conical dimple", new([Plate40, new Revolve("dimple", BooleanOp.Cut, Upright(20, 15), new Profile([0, 6],
+            [new ProfileEdge("side", [4, 10]), new ProfileEdge("over", [4, 11]), new ProfileEdge("top", [0, 11]), new ProfileEdge("axis", [0, 6])]))]),
+            12000 - Math.PI * 16 * 4 / 3),
+    ];
+
     public static IEnumerable<object[]> All =>
     [
         ["mounting plate", MountingPlate, MountingPlateVolume],
@@ -543,13 +557,20 @@ public static class Documents
         .. Offsets.Select(b => new object[] { b.Name, b.Document, b.Volume }),
         .. Shells.Select(b => new object[] { b.Name, b.Document, b.Volume }),
         .. Balls.Select(b => new object[] { b.Name, b.Document, b.Volume }),
+        .. Points.Select(b => new object[] { b.Name, b.Document, b.Volume }),
     ];
+
+    /// <summary>
+    /// The documents the F-rep core's own exact B-rep (<c>ExactBrep</c>) can be built for, to compare exact faces with:
+    /// not the pointed cones, whose apex it cannot cut open.
+    /// </summary>
+    public static IEnumerable<object[]> ExactInTheFrep => All.Where(d => !Points.Any(p => p.Name == (string)d[0]));
 
     public static PartDocument Named(string name) => name switch
     {
         "mounting plate" => MountingPlate,
         "bracket" => Bracket,
         "two pads" => TwoPads,
-        _ => Booleans.Concat(Holes).Concat(Angles).Concat(Rounds).Concat(Cones).Concat(Copies).Concat(Sweeps).Concat(Domes).Concat(Offsets).Concat(Shells).Concat(Balls).Single(b => b.Name == name).Document,
+        _ => Booleans.Concat(Holes).Concat(Angles).Concat(Rounds).Concat(Cones).Concat(Copies).Concat(Sweeps).Concat(Domes).Concat(Offsets).Concat(Shells).Concat(Balls).Concat(Points).Single(b => b.Name == name).Document,
     };
 }

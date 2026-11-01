@@ -175,6 +175,13 @@ public sealed record Cone(RigidTransform3D Frame, double Radius, double Slope) :
         return (Frame.XAxis * cos + Frame.YAxis * sin) * Slope + Frame.ZAxis;
     }
 
+    /// <summary>Its own, the same all along a generator: Su vanishes at the apex. Along e_u × Sv = e_r − Slope · Z.</summary>
+    public override Vector3D Normal(double u, double v)
+    {
+        var (sin, cos) = Math.SinCos(u);
+        return ((Frame.XAxis * cos + Frame.YAxis * sin) - Frame.ZAxis * Slope) / Math.Sqrt(1 + Slope * Slope);
+    }
+
     public override double? PeriodU => 2 * Math.PI;
 }
 

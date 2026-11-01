@@ -806,6 +806,9 @@ internal static class Uv
             case (Sphere o, Pole q):
                 // A pole: v at plus or minus a quarter turn, u runs with t.
                 return new Line2(new Point2D(0, Math.Sign((q.Point - o.Frame.Origin).Dot(o.Frame.ZAxis)) * Math.PI / 2), new Vector2D(1, 0));
+            case (Cone k, Pole):
+                // The apex: v where the radius is zero, u runs with t.
+                return new Line2(new Point2D(0, -k.Radius / k.Slope), new Vector2D(1, 0));
             default:
                 throw new NotSupportedException($"a {c.GetType().Name} on a {s.GetType().Name}");
         }

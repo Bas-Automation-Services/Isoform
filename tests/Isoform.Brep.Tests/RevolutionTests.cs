@@ -67,12 +67,23 @@ public class RevolutionTests(ITestOutputHelper output)
     }
 
     [Fact]
-    public void A_cone_coming_to_a_point_on_the_axis_is_refused()
+    public void A_cone_coming_to_a_point_on_the_axis_closes_at_its_apex()
     {
         var triangle = new ProfileLoop([new LineSegment(P(0, 0), P(5, 0)), new LineSegment(P(5, 0), P(0, 8)), new LineSegment(P(0, 8), P(0, 0))]);
         var (result, problem) = Revolution.Revolve(new Region(triangle), RigidTransform3D.Identity);
-        result.Should().BeNull();
-        problem.Should().Contain("apex");
+        problem.Should().BeNull();
+        MassProperties.Volume(result!.Body).Should().BeApproximately(Math.PI * 25 * 8 / 3, 1e-12);
+        result.Body.Edges.Should().ContainSingle(e => e.Curve is Pole);
+        BodyCheck.Problems(result.Body).Should().BeEmpty();
+    }
+
+    [Fact]
+    public void An_arc_off_the_axis_reaching_it_is_refused()
+    {
+        var bite = new ProfileLoop([new LineSegment(P(0, 0), P(5, 0)), new ArcSegment(P(0, 0), 5, 0, Math.PI / 2), new LineSegment(P(0, 5), P(0, 0))]);
+        var lens = new ProfileLoop([new LineSegment(P(0, 0), P(4, 0)), new ArcSegment(P(-1, 0), 5, 0, Math.Acos(0.2)), new LineSegment(P(0, Math.Sqrt(24)), P(0, 0))]);
+        Revolution.Revolve(new Region(bite), RigidTransform3D.Identity).Problem.Should().BeNull("an arc round a centre on the axis is a sphere");
+        Revolution.Revolve(new Region(lens), RigidTransform3D.Identity).Problem.Should().Contain("torus with no hole");
     }
 
     [Fact]
