@@ -419,6 +419,17 @@ What still stops the playground's examples, and what is left from before:
 5. **Arcs meeting lines at a corner** in loop fillets (a quartic, unless the radii make it a circle or ellipse).
 6. **Inventor as a second STEP reader**, parked.
 7. **Local booleans:** rebuild only the faces a boolean touches.
+8. **Mixed models (B-rep, then F-rep):** today one model goes through one engine, and the B-rep modeler refuses the
+   whole model at the first feature it does not take. Both share the document, `IModeler`, the face names and
+   topology (identical on every test document) and the exact output (`Isoform.Step.Brep`), which makes a hand-off
+   possible: run the history in the kernel while it can, and at the first F-rep-only feature (lattice, smooth blend,
+   shell, offset) turn the B-rep body into a field and go on in the F-rep core. Inside/outside is enough for lattices
+   and blends (the kernel's point classification); shells and offsets need the true distance to the nearest face,
+   closed-form on planes, cylinders, cones and tori. Faces the F-rep features leave alone keep their exact form, so
+   a part with an infill lattice could still export its skin exactly (`ExactBrep` refuses lattice and blend faces
+   today). The other way, F-rep faces into the B-rep, gives only triangles for lattices and blends. Worth it once
+   the kernel covers the common features; the product (playground, build tool, MCP, assemblies) uses the F-rep
+   result throughout, so the mixed result must look like an F-rep one to them.
 
 Blended extrudes and shells (smooth F-rep blends) and lattices stay with the F-rep core.
 
