@@ -115,16 +115,24 @@ public static class StepConversion
         return result;
     }
 
-    // An image with every u that rounding left a hair off a whole turn put on it: a seam at u = 0 written at −2e-16
-    // is read a turn away.
-    static UvCurve Snapped(UvCurve image) => image with
+    // An image with every u that rounding left a hair off a whole turn put on it (a seam at u = 0 written at −2e-16
+    // is read a turn away), and one that runs along v or u kept exactly straight (a seam whose u drifts down by 1e-15
+    // has OCCT's reader take its two images the wrong way round).
+    static UvCurve Snapped(UvCurve image)
     {
-        Poles = [.. image.Poles.Select(p =>
+        var (u0, v0) = image.Poles[0];
+        var alongV = image.Poles.All(p => Math.Abs(p.U - u0) <= 1e-12);
+        var alongU = image.Poles.All(p => Math.Abs(p.V - v0) <= 1e-12);
+        return image with
         {
-            var turn = 2 * Math.PI * Math.Round(p.U / (2 * Math.PI));
-            return Math.Abs(p.U - turn) <= 1e-12 ? (turn, p.V) : p;
-        })],
-    };
+            Poles = [.. image.Poles.Select(p =>
+            {
+                var u = alongV ? u0 : p.U;
+                var turn = 2 * Math.PI * Math.Round(u / (2 * Math.PI));
+                return (Math.Abs(u - turn) <= 1e-12 ? turn : u, alongU ? v0 : p.V);
+            })],
+        };
+    }
 
     static IsoSurface Surface(Surface s, int id, string source) => s switch
     {

@@ -25,6 +25,26 @@ public class RevolutionTests(ITestOutputHelper output)
     }
 
     [Fact]
+    public void A_rectangle_on_the_axis_is_a_solid_cylinder_with_disc_ends()
+    {
+        // The edge on the axis sweeps nothing; the ends are discs, each bounded by one circle.
+        var body = Revolve(Rectangle(0, 0, 5, 10));
+        MassProperties.Volume(body).Should().BeApproximately(Math.PI * 25 * 10, 1e-9);
+        body.Faces.Select(f => f.Surface.GetType().Name).Order().Should().Equal("Cylinder", "Plane", "Plane");
+        body.Faces.Where(f => f.Surface is Plane).Should().OnlyContain(f => f.Loops.Length == 1);
+        BodyCheck.Genus(body, new ShellId(0)).Should().Be(0);
+    }
+
+    [Fact]
+    public void A_cone_coming_to_a_point_on_the_axis_is_refused()
+    {
+        var triangle = new ProfileLoop([new LineSegment(P(0, 0), P(5, 0)), new LineSegment(P(5, 0), P(0, 8)), new LineSegment(P(0, 8), P(0, 0))]);
+        var (result, problem) = Revolution.Revolve(new Region(triangle), RigidTransform3D.Identity);
+        result.Should().BeNull();
+        problem.Should().Contain("apex");
+    }
+
+    [Fact]
     public void A_ring_of_round_section_is_a_torus()
     {
         var body = Revolve(Circle(20, 0, 3));

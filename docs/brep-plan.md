@@ -369,15 +369,57 @@ editing a body in place. Of the playground's examples, three build (in 0.2 s or 
 modeler does not take yet: Revolve (which the kernel can do), Extrude with a blend, Pattern, Sweep, and Lattice (which
 stays with the F-rep core).
 
+## Experiment 10: revolves and patterns (done, 2026-11-01)
+
+Chosen from the candidates (5), so that the playground's parts go through the kernel.
+
+**Kernel:** a region may now have edges on the axis it turns round (they sweep nothing; their place in the face
+numbering is kept) and lines across the axis that end on it, which sweep a disc (one circle) or, in a part turn, a
+sector; the part turn's two caps meet along the axis edge. A cone or arc reaching the axis needs an apex (a pointed
+cone, a dome) and is still refused by name.
+
+**Modeler:**
+- *Revolve:* round the sketch's y axis, or round a line of the sketch (`Axis`: the plane moved onto the line as the
+  F-rep core does it), whole or part turns; faces after their profile edges, the ends of a part turn `id/start` and
+  `id/end`. The loops are turned counter-clockwise (holes clockwise) before the kernel sees them, names with them, so
+  that the kernel's face numbering is the profile's.
+- *Pattern:* copies of blocks, extrudes, revolves, holes and plane cuts, each in the body of the feature it copies
+  (a new solid's copies join it), copy k of face s named `id/k:s`. A `Motion` places a copy: the feature's sketch
+  frame (or hole spot, or cut plane) moved; a mirror keeps the frame's moved origin, Z and X, so its Y turns over and
+  the profile is mirrored in its x axis to stay where the mirror puts it, and the kernel only ever sees right-handed
+  frames. Copies of cuts only are cut out together (in one boolean where they do not touch); others go copy by
+  copy, feature by feature, in the F-rep core's order.
+- *Tools unmerged:* a tool's faces are no longer merged on one surface when it is made, only when it is applied (a
+  boolean merges what it leaves; a new solid, or a join that meets nothing, is merged as it is added).
+
+**STEP:** an image along u or v is kept exactly straight. A cone's seam whose u drifted down by 1e-15 between its ends
+had OCCT's reader take the seam's two images the wrong way round (two of six countersinks in a bolt circle).
+
+**Results:** 8 more documents: the playground's pin (discs on the axis, a chamfered tip), a half turn closed on the
+axis, a tube revolved round a construction line, a row of revolved bores, a countersunk bolt circle, tabs round a
+disc (rotated blocks), a mirrored tab, and a mirrored boss with a hole through it (a join and a cut). All 59 documents
+match the F-rep core and `ExactBrep`, have exact volumes and read back in OCCT valid without healing. Tests:
+`tests/Isoform.Brep.Tests` 261, `BrepKernelStepTests` 59. Of the playground's examples, five build (the bracket's row
+of revolved bores and the flange's countersunk bolt circle among them).
+
+**Naming difference found:** a circle drawn as two named half arcs is one face named by both. When later cuts leave
+a piece of it within one half, the F-rep core names that piece by its arc alone; the kernel keeps both names, since
+it merged the halves when the solid was made. A sketch circle (one entity) is named the same by both.
+
 ## Next: candidates (to decide)
 
-1. **Ball corners:** three fillets meeting at a corner, a sphere carrier.
-2. **Arcs meeting lines at a corner** in loop fillets: a torus mitring with a cylinder (a quartic, unless the radii
-   make it a circle or ellipse).
-3. **Inventor as a second STEP reader**, parked.
-4. **Apexes:** revolves that reach the axis (a pointed cone, a disc), which need a degenerate edge.
-5. **The playground's features:** Revolve in the modeler (the kernel revolves already), then Pattern (copies of
-   features, which `Lumps` can cut or add in one boolean where they do not touch).
-6. **Local booleans:** rebuild only the faces a boolean touches (see what is left above).
+What still stops the playground's examples, and what is left from before:
 
-Recommended: 5, so that real parts go through the kernel and show what it refuses first.
+1. **Combine bodies:** a boolean between two bodies of the part (the kernel has it; the modeler does not take
+   `CombineBodies` yet). Small.
+2. **Sweeps** along lines and arcs: an extrude along each line and a part-turn revolve round each arc, joined.
+3. **Spheres and apexes:** a dome (an arc ending on the axis) and a pointed cone, which need a sphere carrier and a
+   degenerate edge; the same sphere gives ball corners where three fillets meet.
+4. **Offset**, which moves every face (planes along their normal, cylinders, cones and tori by radius).
+5. **Arcs meeting lines at a corner** in loop fillets (a quartic, unless the radii make it a circle or ellipse).
+6. **Inventor as a second STEP reader**, parked.
+7. **Local booleans:** rebuild only the faces a boolean touches.
+
+Blended extrudes and shells (smooth F-rep blends) and lattices stay with the F-rep core.
+
+Recommended: 1 and 2 together (both join what the kernel makes already), then 3.

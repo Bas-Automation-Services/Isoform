@@ -6,14 +6,15 @@ namespace Isoform.Brep;
 /// Solids of revolution: a region in the frame's (x, z) half-plane (x the distance from the axis, the frame's Z)
 /// turned round the axis, once or through an angle from the frame's X. A line across the axis sweeps a flat ring (or
 /// sector), one along it a cylinder, one at an angle a cone, an arc a torus; a whole turn gives each curved face a seam
-/// where the region lies (u = 0), a part turn closes the ends with the region itself. Regions that touch the axis are
-/// refused.
+/// where the region lies (u = 0), a part turn closes the ends with the region itself. The region may have edges on the
+/// axis (which sweep nothing) and lines across it that end on it (a disc, or a sector); a cone or torus reaching the
+/// axis (which needs an apex) is refused, as is a region crossing it.
 /// </summary>
 public static class Revolution
 {
     /// <summary>
-    /// The solid, with each face's origin (operand 0) the index of the profile segment that swept it, outer loop first,
-    /// and for a part turn the caps after them (the start, then the end).
+    /// The solid, with each face's origin (operand 0) the index of the profile segment that swept it, outer loop first
+    /// (a segment on the axis sweeps none), and for a part turn the caps after them (the start, then the end).
     /// </summary>
     public static (Shaped? Result, string? Problem) Revolve(Region region, RigidTransform3D frame, double tolerance = Body.DefaultTolerance, double angle = 2 * Math.PI)
     {
@@ -26,8 +27,8 @@ public static class Revolution
         foreach (var s in loops.SelectMany(l => l.Segments))
         {
             var (patch, why) = Sweep(s, frame, whole ? 2 * Math.PI : angle, whole, index++);
-            if (patch is null) return (null, why);
-            patches.Add(patch);
+            if (why is not null) return (null, why);
+            if (patch is not null) patches.Add(patch);
         }
         if (!whole)
         {
@@ -76,8 +77,14 @@ public static class Revolution
     static (Patch?, string?) Sweep(Segment segment, RigidTransform3D frame, double angle, bool whole, int index)
     {
         var (a, b) = (segment.Start, segment.End);
-        if (Math.Min(a.X, b.X) <= Intersections.Snap || segment is ArcSegment arc0 && arc0.Center.X - arc0.Radius <= Intersections.Snap)
-            return (null, "the region touches or crosses the axis it turns round");
+        bool OnAxis(Point2D p) => Math.Abs(p.X) <= Intersections.Snap;
+        if (segment is LineSegment && OnAxis(a) && OnAxis(b)) return (null, null);
+        // The segment's least distance from the axis: an arc's ends, or its leftmost point where it passes it.
+        var least = segment is ArcSegment bend && bend.Covers(Math.PI) ? bend.Center.X - bend.Radius : Math.Min(a.X, b.X);
+        if (least < -Intersections.Snap) return (null, "the region crosses the axis it turns round");
+        var across = segment is LineSegment && Math.Abs(a.Y - b.Y) <= Intersections.Snap;
+        if (!across && least <= Intersections.Snap)
+            return (null, "a cone or arc reaching the axis needs an apex there, which the managed kernel does not make yet");
         var z = frame.ZAxis;
         RigidTransform3D At(double height) => RigidTransform3D.FromFrame(frame.Apply(new Point3D(0, 0, height)), z, frame.XAxis);
         Circle3 Ring(Point2D p) => new(At(p.Y), p.X);
@@ -87,22 +94,27 @@ public static class Revolution
 
         switch (segment)
         {
-            case LineSegment when Math.Abs(a.Y - b.Y) <= Intersections.Snap:
+            case LineSegment when across:
             {
-                // Across the axis: a flat ring (or sector). Material above when the line runs outwards.
+                // Across the axis: a flat ring (or sector), a disc where it starts on the axis. Material above when the
+                // line runs outwards.
                 var plane = new Plane(At(a.Y));
                 var outwards = b.X > a.X;
-                var (outer, inner) = outwards ? (Ring(b), Ring(a)) : (Ring(a), Ring(b));
+                var (outer, inner) = outwards ? (Ring(b), OnAxis(a) ? null : Ring(a)) : (Ring(a), OnAxis(b) ? null : Ring(b));
                 List<IReadOnlyList<Use>> uv;
                 if (whole)
-                    uv = [[new Use(outer, 0, angle, Uv.Pcurve(plane, outer))], [new Use(inner, angle, 0, Uv.Pcurve(plane, inner))]];
+                    uv = inner is null ? [[new Use(outer, 0, angle, Uv.Pcurve(plane, outer))]]
+                        : [[new Use(outer, 0, angle, Uv.Pcurve(plane, outer))], [new Use(inner, angle, 0, Uv.Pcurve(plane, inner))]];
                 else
                 {
                     // Counter-clockwise round the sector: out along the outer arc, in along the end, back along the
-                    // inner arc, out along the start. The meridian runs with the segment, outwards or inwards.
+                    // inner arc (none at the axis), out along the start. The meridian runs with the segment, outwards or
+                    // inwards.
                     var (lo, hi) = outwards ? (t0, t1) : (t1, t0);
-                    uv = [[new Use(outer, 0, angle, Uv.Pcurve(plane, outer)), new Use(seamEnd, hi, lo, Uv.Pcurve(plane, seamEnd)),
-                           new Use(inner, angle, 0, Uv.Pcurve(plane, inner)), new Use(seam0, lo, hi, Uv.Pcurve(plane, seam0))]];
+                    List<Use> loop = [new Use(outer, 0, angle, Uv.Pcurve(plane, outer)), new Use(seamEnd, hi, lo, Uv.Pcurve(plane, seamEnd))];
+                    if (inner is not null) loop.Add(new Use(inner, angle, 0, Uv.Pcurve(plane, inner)));
+                    loop.Add(new Use(seam0, lo, hi, Uv.Pcurve(plane, seam0)));
+                    uv = [loop];
                 }
                 return (new Patch(plane, !outwards, [.. uv.Select(u => Arrangement.Sensed(u, !outwards))], origin), null);
             }

@@ -7,12 +7,15 @@ namespace Isoform.Brep.Modeling;
 
 /// <summary>
 /// Isoform documents on the managed B-rep kernel: blocks, plain extrudes (an inline profile, or the regions of a
-/// sketch on a plane or on a flat face of the part), holes (through, or blind with a floor; along Z, into a face, or
-/// at a sketch's points), plane cuts (face <c>id/face</c>), and fillets and chamfers on the edge between two flat
-/// faces or round a cylinder square to a flat face (face <c>id/face</c>, a cone for a chamfer there). Each starts a body, joins it or cuts it, working on the current body as Isoform's
-/// <see cref="Feature.Body"/> says. Faces carry Isoform's names: sides after their profile edge, caps <c>id/start</c>
-/// and <c>id/end</c>, blocks <c>id/x-</c> … <c>id/z+</c>, holes <c>id/wall</c> and <c>id/floor</c>, faces merged on
-/// one surface named by all their sources. Anything else is refused with <see cref="Diagnostic.BackendFailed"/>.
+/// sketch on a plane or on a flat face of the part), plain revolves (round the sketch's y axis or a line of it; edges
+/// on the axis sweep nothing), holes (through, or blind with a floor; along Z, into a face, or at a sketch's points),
+/// plane cuts (face <c>id/face</c>), patterns of those (linear, circular or mirrored; copy k of face s is
+/// <c>id/k:s</c>), and fillets and chamfers on the edge between two flat faces or round a cylinder square to a flat
+/// face (face <c>id/face</c>, a cone for a chamfer there). Each starts a body, joins it or cuts it, working on the
+/// current body as Isoform's <see cref="Feature.Body"/> says. Faces carry Isoform's names: sides after their profile
+/// edge, caps <c>id/start</c> and <c>id/end</c>, blocks <c>id/x-</c> … <c>id/z+</c>, holes <c>id/wall</c> and
+/// <c>id/floor</c>, faces merged on one surface named by all their sources. Anything else is refused with
+/// <see cref="Diagnostic.BackendFailed"/>.
 /// </summary>
 public sealed class BrepModeler(ModelingSettings settings) : IModeler
 {
@@ -28,6 +31,7 @@ public sealed class BrepModeler(ModelingSettings settings) : IModeler
 
         var solids = new List<(NamedBody Solid, string Body)>();
         var sketches = new Dictionary<string, Placed>();
+        var bodyOf = new Dictionary<string, string>();
         string? current = null;
         foreach (var feature in document.Features)
         {
@@ -38,6 +42,7 @@ public sealed class BrepModeler(ModelingSettings settings) : IModeler
             }
             if (DocumentRules.StartsBody(feature)) current = feature.Body ?? feature.Id;
             else if (feature.Body is { } named) current = named;
+            bodyOf[feature.Id] = current!;
 
             if (feature is Fillet or Chamfer)
             {
@@ -45,19 +50,56 @@ public sealed class BrepModeler(ModelingSettings settings) : IModeler
                 continue;
             }
 
-            var (tools, op, failed) = feature switch
+            if (feature is Pattern pattern)
             {
-                Block { Blend: 0 } b => Guard(b.Id, () => [BlockTool(b)], b.Op),
-                Extrude { Blend: 0 } e => Tools(e, sketches) is var (t, p) ? (t, e.Op, p) : default,
-                Hole h => HoleTools(h, sketches, [.. solids.Where(s => s.Body == current).Select(s => s.Solid)]) is var (t, p) ? (t, BooleanOp.Cut, p) : default,
-                PlaneCut c => Guard(c.Id, () => [PlaneTool(c, [.. solids.Where(s => s.Body == current).Select(s => s.Solid)])], BooleanOp.Cut),
-                _ => (null, BooleanOp.New, Unsupported(feature.Id, $"{feature.GetType().Name} is not supported by the managed B-rep kernel yet")),
-            };
+                if (Copies(pattern) is { } problemCopying) return Failed(problemCopying);
+                continue;
+            }
+
+            var (tools, op, failed) = Tools(feature, current!, Motion.None);
             if (failed is not null) return Failed(failed);
             if (Apply(solids, current!, tools!, op, feature.Id) is { } problemApplying) return Failed(problemApplying);
         }
         var bodies = solids.Select(s => s.Solid).ToList();
         return new BrepResult([], TopologyOf(bodies), bodies);
+
+        // A solid-making feature's tools, placed by a motion, against the solids of the body it works on.
+        (List<NamedBody>? Tools, BooleanOp Op, Diagnostic? Problem) Tools(Feature feature, string body, Motion motion)
+        {
+            List<NamedBody> Part() => [.. solids.Where(s => s.Body == body).Select(s => s.Solid)];
+            return feature switch
+            {
+                Block { Blend: 0 } b => Guard(b.Id, () => [BlockTool(b, motion)], b.Op),
+                Extrude { Blend: 0 } e => Extruded(e, sketches, motion) is var (t, p) ? (t, e.Op, p) : default,
+                Revolve { Blend: 0 } r => Revolved(r, sketches, motion) is var (t, p) ? (t, r.Op, p) : default,
+                Hole h => HoleTools(h, sketches, Part(), motion) is var (t, p) ? (t, BooleanOp.Cut, p) : default,
+                PlaneCut c => Guard(c.Id, () => [PlaneTool(c, Part(), motion)], BooleanOp.Cut),
+                _ => (null, BooleanOp.New, Unsupported(feature.Id, $"{feature.GetType().Name} is not supported by the managed B-rep kernel yet")),
+            };
+        }
+
+        // A pattern's copies, each in the body of the feature it copies (joined to it where the original started it),
+        // copy k of face s named id/k:s. Copies of cuts only are cut out together; others go copy by copy, feature by
+        // feature, as the F-rep core applies them.
+        Diagnostic? Copies(Pattern p)
+        {
+            var count = p.Motion is MirrorMotion ? 1 : p.Motion switch { LinearMotion l => l.Count, CircularMotion c => c.Count, _ => 1 } - 1;
+            var copies = (from k in Enumerable.Range(1, count) from id in p.Features select (K: k, Source: document[id])).ToList();
+            var cutsOnly = copies.All(c => c.Source is Hole or PlaneCut or Block { Op: BooleanOp.Cut } or Extrude { Op: BooleanOp.Cut } or Revolve { Op: BooleanOp.Cut })
+                           && copies.Select(c => bodyOf[c.Source.Id]).Distinct().Count() == 1;
+            var batch = new List<NamedBody>();
+            foreach (var (k, source) in copies)
+            {
+                var body = bodyOf[source.Id];
+                var (tools, op, failed) = Tools(source, body, Motion.Of(p.Motion, k));
+                if (failed is not null) return failed with { FeatureId = p.Id };
+                var renamed = tools!.Select(t => new NamedBody(t.Body, t.Names.ToDictionary(n => n.Key,
+                    n => (IReadOnlyList<string>)[.. n.Value.Select(name => $"{p.Id}/{k}:{name}")]))).ToList();
+                if (cutsOnly) batch.AddRange(renamed);
+                else if (Apply(solids, body, renamed, op == BooleanOp.New ? BooleanOp.Join : op, p.Id) is { } problem) return problem;
+            }
+            return cutsOnly && batch.Count > 0 ? Apply(solids, bodyOf[copies[0].Source.Id], batch, BooleanOp.Cut, p.Id) : null;
+        }
 
         Diagnostic? Prepare(Sketch s)
         {
@@ -112,14 +154,15 @@ public sealed class BrepModeler(ModelingSettings settings) : IModeler
     static RigidTransform3D FrameOf(SketchPlane plane) => RigidTransform3D.FromFrame(P(plane.Origin), V(plane.Normal), V(plane.X));
 
     // A block: its rectangle swept up Z, sides named by the side of the box they face.
-    NamedBody BlockTool(Block b)
+    NamedBody BlockTool(Block b, Motion motion)
     {
         var (x0, y0, z0) = (b.Origin[0], b.Origin[1], b.Origin[2]);
         var (x1, y1, z1) = (x0 + b.Size[0], y0 + b.Size[1], z0 + b.Size[2]);
         Point2D Q(double x, double y) => new(x, y);
         var loop = new ProfileLoop([new LineSegment(Q(x0, y0), Q(x1, y0)), new LineSegment(Q(x1, y0), Q(x1, y1)),
             new LineSegment(Q(x1, y1), Q(x0, y1)), new LineSegment(Q(x0, y1), Q(x0, y0))]);
-        return Swept(b.Id, new Region(loop), RigidTransform3D.Identity, z0, z1, [["y-", "x+", "y+", "x-"]], "z-", "z+");
+        var (frame, region) = motion.Place(RigidTransform3D.Identity, new Region(loop));
+        return Swept(b.Id, region, frame, z0, z1, [["y-", "x+", "y+", "x-"]], "z-", "z+");
     }
 
     // A region swept along the frame's Z, its faces named: sides by `sides`, caps `start` and `end`.
@@ -131,11 +174,11 @@ public sealed class BrepModeler(ModelingSettings settings) : IModeler
         for (var l = 0; l < sides.Count; l++)
         for (var s = 0; s < sides[l].Count; s++)
             names[result.Sides[l][s]] = [$"{id}/{sides[l][s]}"];
-        return Named(Booleans.Merge(result.Body), [new NamedBody(result.Body, names)]);
+        return new NamedBody(result.Body, names);
     }
 
     // The extrude's tool bodies, one per region, named.
-    (List<NamedBody>? Tools, Diagnostic? Problem) Tools(Extrude e, Dictionary<string, Placed> sketches)
+    (List<NamedBody>? Tools, Diagnostic? Problem) Extruded(Extrude e, Dictionary<string, Placed> sketches, Motion motion)
     {
         var (plane, regions, problem) = Shape(e, sketches);
         if (problem is not null) return (null, new Diagnostic(SketchSolution.Invalid, e.Id, $"{e.Id}: {problem}"));
@@ -143,14 +186,41 @@ public sealed class BrepModeler(ModelingSettings settings) : IModeler
         var (tools, _, failed) = Guard(e.Id, () => [.. regions!.Select(region =>
         {
             var (loops, names) = ProfileConversion.Loops(region, settings.Tolerance);
-            return Swept(e.Id, new Region(loops[0], loops.Skip(1).ToList()), frame, e.Start, e.End, names, "start", "end");
+            var (placed, moved) = motion.Place(frame, new Region(loops[0], loops.Skip(1).ToList()));
+            return Swept(e.Id, moved, placed, e.Start, e.End, names, "start", "end");
         })], e.Op);
+        return (tools, failed);
+    }
+
+    // The revolve's tool bodies, one per region turned round the sketch's y axis (or the line it names), faces named
+    // after their profile edges and, below a whole turn, the ends id/start and id/end.
+    (List<NamedBody>? Tools, Diagnostic? Problem) Revolved(Revolve r, Dictionary<string, Placed> sketches, Motion motion)
+    {
+        var (plane, regions, problem) = Shape(r, sketches);
+        if (problem is not null) return (null, new Diagnostic(SketchSolution.Invalid, r.Id, $"{r.Id}: {problem}"));
+        var (tools, _, failed) = Guard(r.Id, () => [.. regions!.Select(region =>
+        {
+            var (loops, names) = ProfileConversion.Loops(region, settings.Tolerance);
+            var (sketch, moved) = motion.Place(FrameOf(plane!), new Region(loops[0], loops.Skip(1).ToList()));
+            loops = [.. moved.Loops];
+            // The kernel turns (x, z) round its frame's Z from its X: the sketch's x round its y, towards −normal.
+            var frame = RigidTransform3D.FromFrame(sketch.Origin, sketch.YAxis, sketch.XAxis);
+            // Outer loop counter-clockwise, holes clockwise: the kernel would turn them so, and number their faces so.
+            for (var l = 0; l < loops.Count; l++)
+                if (loops[l].SignedArea > 0 != (l == 0)) (loops[l], names[l]) = (loops[l].Reversed(), [.. Enumerable.Reverse(names[l])]);
+            var (result, why) = Revolution.Revolve(new Region(loops[0], loops.Skip(1).ToList()), frame, settings.Tolerance, Math.Min(r.Angle, 360) * Math.PI / 180);
+            if (result is null) throw new BooleanFailure($"{r.Id} cannot be revolved: {why}");
+            List<string> source = [.. names.SelectMany(n => n.Select(e => $"{r.Id}/{e}")), $"{r.Id}/start", $"{r.Id}/end"];
+            var faces = Enumerable.Range(0, result.Body.Faces.Length).ToDictionary(f => new FaceId(f),
+                f => (IReadOnlyList<string>)[.. result.Origins[f].Select(o => source[o.Face.Index])]);
+            return new NamedBody(result.Body, faces);
+        })], r.Op);
         return (tools, failed);
     }
 
     // A drill per spot: a cylinder along the outward normal where it goes in, from its floor (or from beyond the
     // part, for through all) out past the part.
-    (List<NamedBody>? Tools, Diagnostic? Problem) HoleTools(Hole h, Dictionary<string, Placed> sketches, List<NamedBody> body)
+    (List<NamedBody>? Tools, Diagnostic? Problem) HoleTools(Hole h, Dictionary<string, Placed> sketches, List<NamedBody> body, Motion motion)
     {
         List<(Point3D At, Vector3D Out, string Spot)> spots;
         if (h.On is null && h.Sketch is null) spots = [(new Point3D(h.Center[0], h.Center[1], 0), new Vector3D(0, 0, 1), "")];
@@ -168,6 +238,7 @@ public sealed class BrepModeler(ModelingSettings settings) : IModeler
             spots = [.. h.Points!.Select(p => (frame.Apply(new Point3D(placed.Solution.Points[p].X, placed.Solution.Points[p].Y, 0)), frame.ZAxis, p + ":"))];
         }
 
+        spots = [.. spots.Select(s => (motion.Apply(s.At), motion.Apply(s.Out), s.Spot))];
         var corners = body.SelectMany(b => b.Body.Vertices.Select(v => v.Point)).ToList();
         var reach = body.SelectMany(b => b.Body.Faces).Select(f => Reach(f.Surface)).DefaultIfEmpty(0).Max() + h.Diameter + 1;
         var (tools, _, failed) = Guard(h.Id, () => [.. spots.Select(spot =>
@@ -184,9 +255,9 @@ public sealed class BrepModeler(ModelingSettings settings) : IModeler
 
     // A plane cut: a box standing on the plane on the side its normal points to, reaching past the body; its base is
     // the cut face, id/face.
-    NamedBody PlaneTool(PlaneCut c, List<NamedBody> body)
+    NamedBody PlaneTool(PlaneCut c, List<NamedBody> body, Motion motion)
     {
-        var (at, n) = (P(c.Point), V(c.Normal).Normalized());
+        var (at, n) = (motion.Apply(P(c.Point)), motion.Apply(V(c.Normal)).Normalized());
         var reach = body.SelectMany(b => b.Body.Vertices).Select(v => (v.Point - at).Length).DefaultIfEmpty(0).Max()
                     + body.SelectMany(b => b.Body.Faces).Select(f => Reach(f.Surface)).DefaultIfEmpty(0).Max() + 1;
         var x = Math.Abs(n.X) < 0.9 ? new Vector3D(1, 0, 0) : new Vector3D(0, 1, 0);
@@ -268,7 +339,8 @@ public sealed class BrepModeler(ModelingSettings settings) : IModeler
         switch (op)
         {
             case BooleanOp.New:
-                solids.AddRange(tools.Select(t => (t, current)));
+                // Faces on one surface merged, as a boolean leaves them.
+                solids.AddRange(tools.Select(t => (Named(Booleans.Merge(t.Body), [t]), current)));
                 return null;
             case BooleanOp.Join:
                 foreach (var tool in tools)
@@ -283,7 +355,7 @@ public sealed class BrepModeler(ModelingSettings settings) : IModeler
                         joined = Named(one, [solids[i].Solid, joined]);
                         solids.RemoveAt(i--);
                     }
-                    solids.Add((joined, current));
+                    solids.Add((joined == tool ? Named(Booleans.Merge(tool.Body), [tool]) : joined, current));
                 }
                 return null;
             case BooleanOp.Cut:
@@ -328,15 +400,42 @@ public sealed class BrepModeler(ModelingSettings settings) : IModeler
         Enumerable.Range(0, shaped.Body.Faces.Length).ToDictionary(f => new FaceId(f), f => (IReadOnlyList<string>)
             [.. shaped.Origins[f].SelectMany(o => operands[o.Operand].Names[o.Face]).Distinct().Order(StringComparer.Ordinal)]));
 
-    // The plane and regions an extrude sweeps: its inline profile, or the regions of its sketch where it was solved.
-    static (SketchPlane? Plane, IReadOnlyList<SketchRegion>? Regions, string? Problem) Shape(Extrude e, Dictionary<string, Placed> sketches)
+    // The plane and regions an extrude or revolve sweeps: its inline profile, or the regions of its sketch where it
+    // was solved (for a revolve round a line of the sketch, put round that line).
+    static (SketchPlane? Plane, IReadOnlyList<SketchRegion>? Regions, string? Problem) Shape(Feature f, Dictionary<string, Placed> sketches)
     {
-        if (e.Sketch is null) return (e.Plane, [new SketchRegion(e.Profile!, [])], null);
-        var placed = sketches[e.Sketch];
+        var (plane, profile, sketch, wanted) = f switch
+        {
+            Extrude e => (e.Plane, e.Profile, e.Sketch, e.Regions),
+            Revolve r => (r.Plane, r.Profile, r.Sketch, r.Regions),
+            _ => throw new ArgumentException(f.Id),
+        };
+        if (sketch is null) return (plane, [new SketchRegion(profile!, [])], null);
+        var placed = sketches[sketch];
         var (all, problem) = SketchRegions.Of(placed.Sketch, placed.Solution);
         if (problem is not null) return (null, null, $"its sketch {placed.Sketch.Id}: {problem}");
-        var (regions, why) = SketchRegions.Select(all, e.Regions);
-        return why is null ? (placed.Plane, regions, null) : (null, null, why);
+        var (regions, why) = SketchRegions.Select(all, wanted);
+        if (why is not null) return (null, null, why);
+        return f is Revolve { Axis: { } axis } ? AboutAxis(placed, regions!, axis) : (placed.Plane, regions, null);
+    }
+
+    // Regions to turn round a line of their sketch, as the F-rep core puts them: the plane moved to the line's first
+    // point, its y along the line and its x square to it on the regions' side, the regions in those coordinates.
+    static (SketchPlane, IReadOnlyList<SketchRegion>, string?) AboutAxis(Placed placed, IReadOnlyList<SketchRegion> regions, string axis)
+    {
+        var line = placed.Sketch.Entities.OfType<SketchLine>().First(l => l.Id == axis);
+        var (a, b) = (placed.Solution.Points[line.From], placed.Solution.Points[line.To]);
+        var length = Math.Sqrt((b.X - a.X) * (b.X - a.X) + (b.Y - a.Y) * (b.Y - a.Y));
+        var (dx, dy) = ((b.X - a.X) / length, (b.Y - a.Y) / length);
+        double Across(double[] p) => (p[0] - a.X) * dy - (p[1] - a.Y) * dx;
+        var side = regions.SelectMany(r => r.Outer.Edges).Sum(e => Across(e.To)) >= 0 ? 1 : -1;
+        double[] To(double[] p) => [side * Across(p), side * ((p[0] - a.X) * dx + (p[1] - a.Y) * dy)];
+        Profile Map(Profile p) => new(To(p.Start), [.. p.Edges.Select(e => e with { To = To(e.To) })]);
+        var frame = FrameOf(placed.Plane);
+        var origin = frame.Apply(new Point3D(a.X, a.Y, 0));
+        var x = frame.XAxis * (side * dy) + frame.YAxis * (-side * dx);
+        var plane = new SketchPlane([origin.X, origin.Y, origin.Z], [x.X, x.Y, x.Z], placed.Plane.Normal);
+        return (plane, [.. regions.Select(r => new SketchRegion(Map(r.Outer), [.. r.Holes.Select(Map)]))], null);
     }
 
     // Isoform's topology: a face per kernel face; an edge per chain of kernel edges between the same two faces (a

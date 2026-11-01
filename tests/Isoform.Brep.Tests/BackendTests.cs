@@ -65,7 +65,7 @@ public class BackendTests(ITestOutputHelper output)
         var corners = Corners(mine);
         var theirCorners = Corners(theirs);
         corners.Should().HaveSameCount(theirCorners);
-        corners.Max(c => theirCorners.Min(t => (t - c).Length)).Should().BeLessThan(1e-9);
+        corners.Where(c => theirCorners.Min(t => (t - c).Length) >= 1e-9).Should().BeEmpty();
         output.WriteLine($"{name}: {faces.Count} faces, {corners.Count} corners agree");
     }
 

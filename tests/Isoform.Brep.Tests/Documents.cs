@@ -2,7 +2,7 @@ using Isoform.Document;
 
 namespace Isoform.Brep.Tests;
 
-/// <summary>Isoform part documents the managed kernel builds (experiments 1 to 8), with their exact volumes.</summary>
+/// <summary>Isoform part documents the managed kernel builds (experiments 1 to 10), with their exact volumes.</summary>
 public static class Documents
 {
     static readonly SketchPlane Xy = new([0, 0, 0], [1, 0, 0], [0, 0, 1]);
@@ -265,6 +265,70 @@ public static class Documents
             new Hole("pin", [50, 25], 6)), 50_000 + 12_000 - Math.PI * 9 * 30),
     ];
 
+    // Experiment 10: revolves and patterns. A vertical half-plane through x: the sketch's x along world x, its y up.
+    static SketchPlane Upright(double x, double y) => new([x, y, 0], [1, 0, 0], [0, -1, 0]);
+
+    // A profile closed along the axis, from (0, y0): out to r, up to y1, back in.
+    static Profile Turned(double r, double y0, double y1) =>
+        new([0, y0], [new("bottom", [r, y0]), new("wall", [r, y1]), new("top", [0, y1]), new("axis", [0, y0])]);
+
+    // A tab 15 × 6 from x = 15 on a disc of radius 20: the part outside the disc, ∫ (30 − √(400 − y²)) dy over |y| ≤ 3.
+    static readonly double TabOutside = 180 - 3 * Math.Sqrt(391) - 400 * Math.Asin(0.15);
+
+    static readonly (string Name, PartDocument Document, double Volume)[] Copies =
+    [
+        // The playground's pin: tip and cap are discs (their edge on the axis sweeps nothing), the lead a cone.
+        ("revolved pin", new([new Revolve("pin", BooleanOp.New, Upright(0, 0), new Profile([0, 0],
+            [
+                new ProfileEdge("tip", [2.9, 0]), new ProfileEdge("shank", [2.9, 24]), new ProfileEdge("head", [5, 24]),
+                new ProfileEdge("collar", [5, 27]), new ProfileEdge("cap", [0, 27]), new ProfileEdge("axis", [0, 0]),
+            ])), new Chamfer("lead", ["pin/tip", "pin/shank"], 1)]),
+            Math.PI * (2.9 * 2.9 * 24 + 25 * 3) - 2 * Math.PI * (2.9 - 1.0 / 3) * Triangle(1)),
+        ("half turn closed on the axis", new([new Revolve("half", BooleanOp.New, Upright(0, 0), Turned(5, 0, 10), 180)]), Math.PI * 25 * 10 / 2),
+        // A rectangle 12 to 15 out along the sketch's x, turned round a construction line at x = 10: a tube.
+        ("revolved round a sketch line", new(
+        [
+            new Sketch("section", new SketchPlacement(Upright(0, 0)), new Dictionary<string, double[]>
+                {
+                    ["p0"] = [12, 0], ["p1"] = [15, 0], ["p2"] = [15, 10], ["p3"] = [12, 10], ["a0"] = [10, 0], ["a1"] = [10, 10],
+                },
+                [
+                    new SketchLine("lower", "p0", "p1"), new SketchLine("outer", "p1", "p2"), new SketchLine("upper", "p2", "p3"),
+                    new SketchLine("inner", "p3", "p0"), new SketchLine("axis", "a0", "a1") { Construction = true },
+                ],
+                []),
+            new Revolve("tube", BooleanOp.New, null, null) { Sketch = "section", Axis = "axis" },
+        ]), Math.PI * (25 - 4) * 10),
+        ("row of revolved bores", OnSlab(new Revolve("bore", BooleanOp.Cut, Upright(20, 25), Turned(3, -1, 11)),
+            new Pattern("row", ["bore"], new LinearMotion([1, 0, 0], 20, 3))), 50_000 - 3 * Math.PI * 9 * 10),
+        // The playground's flange holes on a plain disc 8 thick: a bore of radius 3 to 7 high, then a countersink
+        // widening to 4 at the top (a frustum π/3 (9 + 12 + 16)).
+        ("countersunk bolt circle", new(
+        [
+            new Extrude("flange", BooleanOp.New, Xy, Circle(0, 0, 40), 0, 8),
+            new Revolve("bolt", BooleanOp.Cut, Upright(30, 0), new Profile([0, -1],
+            [
+                new ProfileEdge("bottom", [3, -1]), new ProfileEdge("wall", [3, 7]), new ProfileEdge("sink", [5, 9]),
+                new ProfileEdge("top", [0, 9]), new ProfileEdge("axis", [0, -1]),
+            ])),
+            new Pattern("circle", ["bolt"], new CircularMotion([0, 0, 0], [0, 0, 1], 6)),
+        ]), Math.PI * 1_600 * 8 - 6 * Math.PI * (9 * 7 + 37.0 / 3)),
+        // The disc a sketch circle (one face): a circle drawn as two half arcs is one face named by both, which the
+        // kernel keeps for every piece the tabs cut it into, where the F-rep core names each by the arcs it lies on.
+        ("tabs round a disc", new(
+        [
+            new Sketch("round", new SketchPlacement(Xy), new Dictionary<string, double[]> { ["c"] = [0, 0] }, [new SketchCircle("rim", "c", 20)], []),
+            new Extrude("disc", BooleanOp.New, null, null, 0, 5) { Sketch = "round" },
+            new Block("tab", BooleanOp.Join, [15, -3, 0], [15, 6, 5]),
+            new Pattern("ring", ["tab"], new CircularMotion([0, 0, 0], [0, 0, 1], 3)),
+        ]), Math.PI * 400 * 5 + 3 * 5 * TabOutside),
+        ("mirrored tab", OnSlab(new Block("tab", BooleanOp.Join, [-10, 10, 0], [10, 10, 5]),
+            new Pattern("mirror", ["tab"], new MirrorMotion([50, 0, 0], [1, 0, 0]))), 50_000 + 2 * 500),
+        // A boss with a hole down through it and the slab, mirrored: a join and a cut, copied in order.
+        ("mirrored boss with a hole", OnSlab(new Extrude("boss", BooleanOp.Join, Top, Circle(20, 25, 5), 0, 5), new Hole("hole", [20, 25], 4),
+            new Pattern("mirror", ["boss", "hole"], new MirrorMotion([50, 0, 0], [1, 0, 0]))), 50_000 + 2 * Math.PI * 25 * 5 - 2 * Math.PI * 4 * 15),
+    ];
+
     public static IEnumerable<object[]> All =>
     [
         ["mounting plate", MountingPlate, MountingPlateVolume],
@@ -275,6 +339,7 @@ public static class Documents
         .. Angles.Select(b => new object[] { b.Name, b.Document, b.Volume }),
         .. Rounds.Select(b => new object[] { b.Name, b.Document, b.Volume }),
         .. Cones.Select(b => new object[] { b.Name, b.Document, b.Volume }),
+        .. Copies.Select(b => new object[] { b.Name, b.Document, b.Volume }),
     ];
 
     public static PartDocument Named(string name) => name switch
@@ -282,6 +347,6 @@ public static class Documents
         "mounting plate" => MountingPlate,
         "bracket" => Bracket,
         "two pads" => TwoPads,
-        _ => Booleans.Concat(Holes).Concat(Angles).Concat(Rounds).Concat(Cones).Single(b => b.Name == name).Document,
+        _ => Booleans.Concat(Holes).Concat(Angles).Concat(Rounds).Concat(Cones).Concat(Copies).Single(b => b.Name == name).Document,
     };
 }
