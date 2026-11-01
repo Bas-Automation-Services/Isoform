@@ -518,12 +518,15 @@ Chosen from the candidates (1, its sphere half).
   ball is named `id/corner:a+b+c` after the three fillets, sorted, the last one's id first. Unequal radii, other
   angles, chamfers and concave edges are still refused there.
 - *How:* the three fillets run on past the corner, as they always have, and cross in a mitre that holds the ball;
-  then a cap is cut away: the cube from the ball's centre 3r/2 along the three faces' normals, less the ball. The cap
-  is built face by face and sewn (three sides, each a square less a quarter circle, three far squares, and the
-  ball's piece bounded by three quarter great circles), not by a boolean of a cube and a ball: a plane through a
-  sphere at an angle to its axis now meets it in a circle, but the boolean of such a cube and ball still fails (a
-  side face loses its arc), which is left for later. The fillet cylinders only touch the ball, so the cut needs no
-  new surface pair.
+  then a cap is cut away: the cube from the ball's centre 3r/2 along the three faces' normals, less the ball (a
+  boolean: a plane at any angle meets a sphere in a circle now). The fillet cylinders only touch the ball, so the
+  cut needs no new surface pair.
+- *Fixed on the way:* a sphere face's box now holds the whole sphere (a ball's only edges are its seam and poles, so
+  a box of its edges missed most of it, and pieces inside it were taken as outside); a plane's circle on a sphere
+  starts square to its axis (a meridian started at a pole had no half-plane); a meridian's piece beyond a pole takes
+  the mirrored line (u + π, ±π − v).
+- *Not yet:* a cut through a sphere's pole (a plane through a dome's axis): the pole's edge would have to be split by
+  u, not by a point.
 - *Sphere:* its axis square to the corner's diagonal and in none of the side planes ((x − 2y + z)/√6 in the
   corner's directions), so the poles and the seam stay off the piece. `ExactBrep` turns its corner balls the same
   way, to a different axis; spheres are compared by centre and radius.
@@ -532,14 +535,14 @@ Chosen from the candidates (1, its sphere half).
 
 **Results:** 3 more documents: a corner of three fillets, the same with the upright edge first, a plate with all four
 top corners balled. All 85 have exact volumes and match the F-rep core and `ExactBrep`; OCCT reads them all back
-valid without healing (no pole on a corner ball). Tests: `tests/Isoform.Brep.Tests` 344, `BrepKernelStepTests` 85.
+valid without healing (no pole on a corner ball). Tests: `tests/Isoform.Brep.Tests` 346, `BrepKernelStepTests` 85.
 
 ## Next: candidates (to decide)
 
 What still stops the playground's examples, and what is left from before:
 
-1. **Pointed cones** (an apex as a pole of the cone), and ball corners of other kinds (corners not square; a
-   sphere against planes and cylinders at an angle in booleans).
+1. **Pointed cones** (an apex as a pole of the cone), ball corners of other kinds (corners not square, unequal
+   radii), cuts through a sphere's pole.
 3. **Arcs meeting lines at a corner** in loop fillets (a quartic, unless the radii make it a circle or ellipse).
 4. **Inventor as a second STEP reader**, parked.
 5. **Local booleans:** rebuild only the faces a boolean touches.

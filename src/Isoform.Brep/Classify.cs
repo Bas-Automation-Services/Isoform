@@ -35,8 +35,13 @@ internal sealed class FlatFace
 
         // The edges' ends and the points where they turn back along an axis, grown to hold the whole face: a plane,
         // cylinder or cone face lies between its edges (on lines across it); a torus face reaches at most the tube's
-        // diameter from them.
+        // diameter from them; a sphere face may bulge anywhere on the sphere (a ball's edges are only its seam and poles).
         var points = Edges.SelectMany(e => Extremes(body[e])).ToList();
+        if (Surface is Sphere o)
+        {
+            var r = new Vector3D(o.Radius, o.Radius, o.Radius);
+            points.AddRange([o.Frame.Origin - r, o.Frame.Origin + r]);
+        }
         var pad = (Surface is Torus t ? 2 * t.Minor : 0) + Intersections.Snap;
         Box = (new Point3D(points.Min(p => p.X) - pad, points.Min(p => p.Y) - pad, points.Min(p => p.Z) - pad),
                new Point3D(points.Max(p => p.X) + pad, points.Max(p => p.Y) + pad, points.Max(p => p.Z) + pad));

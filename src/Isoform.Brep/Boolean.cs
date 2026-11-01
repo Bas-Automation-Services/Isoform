@@ -330,7 +330,7 @@ public static class Booleans
                 if (!face.SameSense) uses = [.. uses.Select(u => u.Reversed())];
                 foreach (var (curve, t0, t1) in Distinct(cuts[f]))
                 {
-                    var pc = Uv.Pcurve(face.Surface, curve);
+                    var pc = Uv.Within(face.Surface, Uv.Pcurve(face.Surface, curve), (t0 + t1) / 2);
                     var (du, dv) = flat.ShiftInto(pc.At((t0 + t1) / 2));
                     pc = Uv.Shift(pc, du, dv);
                     var use = new Use(curve, t0, t1, pc);

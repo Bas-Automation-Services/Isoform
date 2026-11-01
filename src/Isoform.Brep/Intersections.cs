@@ -136,7 +136,8 @@ internal static class Intersections
         if (Math.Abs(n.Dot(o.Frame.ZAxis)) >= 1 - Parallel) return PlaneTorus(p, AsTorus(o));
         var s = n.Dot(o.Frame.Origin - p.Frame.Origin);
         if (Math.Abs(s) >= o.Radius - Snap) return SurfaceMeeting.Nothing;
-        var x = (Math.Abs(n.X) < 0.9 ? new Vector3D(1, 0, 0) : new Vector3D(0, 1, 0)).Cross(n).Normalized();
+        // Starting square to the sphere's axis: a meridian then starts on the equator, not at a pole.
+        var x = n.Cross(o.Frame.ZAxis).Normalized();
         return SurfaceMeeting.Along(new Circle3(RigidTransform3D.FromFrame(o.Frame.Origin - n * s, n, x), Math.Sqrt(o.Radius * o.Radius - s * s)));
     }
 
@@ -808,6 +809,21 @@ internal static class Uv
             default:
                 throw new NotSupportedException($"a {c.GetType().Name} on a {s.GetType().Name}");
         }
+    }
+
+    /// <summary>
+    /// A meridian's p-curve for the piece round <paramref name="t"/>: a meridian's line runs on in v past the poles,
+    /// where the sphere's point at (u, v) is the one at (u + π, ±π − v), so a piece beyond a pole takes that line.
+    /// </summary>
+    public static Curve2 Within(Surface s, Curve2 pc, double t)
+    {
+        if (s is not Sphere || pc is not Line2 { Direction.X: 0 } l) return pc;
+        var v = l.At(t).Y;
+        var turns = 2 * Math.PI * Math.Round(v / (2 * Math.PI));
+        (l, v) = (l with { Origin = new Point2D(l.Origin.X, l.Origin.Y - turns) }, v - turns);
+        if (Math.Abs(v) <= Math.PI / 2) return l;
+        var side = Math.Sign(v) * Math.PI;
+        return new Line2(new Point2D(l.Origin.X + Math.PI, side - l.Origin.Y), new Vector2D(0, -l.Direction.Y));
     }
 
     /// <summary>The p-curve moved by <paramref name="du"/> in u (and <paramref name="dv"/> in v).</summary>

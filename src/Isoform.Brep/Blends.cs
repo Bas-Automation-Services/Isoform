@@ -143,67 +143,27 @@ public static class Blends
 
     /// <summary>
     /// The corner a ball of radius r round <paramref name="centre"/> takes off a square corner whose faces look along
-    /// x, y and z (unit, square to each other): the cube from the centre 3r/2 along each, less the ball, built face by
-    /// face and sewn (each side a square less a quarter circle, the ball's piece three quarter circles of great
-    /// circles). The ball's axis is square to the corner's diagonal and in none of the side planes, so its poles lie
-    /// off the piece. Origins: operand 0 the cube's faces, 1 the ball's.
+    /// x, y and z (unit, square to each other): the cube from the centre 3r/2 along each, less the ball. The ball's
+    /// axis is square to the corner's diagonal and in none of the cube's sides, so neither pole nor its seam (opposite
+    /// the diagonal) lies on the corner's piece of it. Origins: operand 0 the cube's faces, 1 the ball's.
     /// </summary>
     static (Shaped?, string?) Cap(Point3D centre, Vector3D x, Vector3D y, Vector3D z, double r, double tolerance)
     {
-        if (x.Cross(y).Dot(z) < 0) (x, y) = (y, x);
         var side = 1.5 * r;
-        Vector3D[] e = [x, y, z];
+        var frame = RigidTransform3D.FromFrame(centre, z, x);
+        var turn = frame.YAxis.Dot(y) > 0 ? 1 : -1;
+        Point2D Q(double u, double v) => new(u, v * turn);
+        var square = new ProfileLoop([new LineSegment(Q(0, 0), Q(side, 0)), new LineSegment(Q(side, 0), Q(side, side)),
+            new LineSegment(Q(side, side), Q(0, side)), new LineSegment(Q(0, side), Q(0, 0))]);
+        var (cube, why) = Extrusion.Extrude(new Region(turn > 0 ? square : square.Reversed()), frame, 0, side, tolerance);
+        if (cube is null) return (null, why);
         var diagonal = (x + y + z).Normalized();
-        var sphere = new Sphere(RigidTransform3D.FromFrame(centre, (x - y * 2 + z).Normalized(), -diagonal), r);
-        // In the plane square to e[i], the quarter circle from e[i + 1] (t = 0) to e[i + 2] (t = π/2).
-        Circle3 Quarter(int i) => new(RigidTransform3D.FromFrame(centre, e[i], e[(i + 1) % 3]), r);
-        var patches = new List<Patch>();
-        void Add(Surface surface, Vector3D outward, List<(Curve3 Curve, double From, double To)> loop, int operand, int face)
-        {
-            // Counter-clockwise round the outward normal (Newell's normal of points along it).
-            var points = loop.SelectMany(u => Enumerable.Range(0, 4).Select(k => u.Curve.At(u.From + (u.To - u.From) * k / 4))).ToList();
-            var normal = new Vector3D(0, 0, 0);
-            for (var k = 0; k < points.Count; k++)
-            {
-                var (p, q) = (points[k] - centre, points[(k + 1) % points.Count] - centre);
-                normal += p.Cross(q);
-            }
-            IReadOnlyList<Use> uses = [.. loop.Select(u => new Use(u.Curve, u.From, u.To, Uv.Pcurve(surface, u.Curve)))];
-            if (normal.Dot(outward) < 0) uses = Arrangement.Sensed(uses, false);
-            if (surface is Sphere)
-            {
-                // All three in the period round the piece's middle.
-                var middle = Uv.Of(surface, centre + diagonal * r).X;
-                uses = [.. uses.Select(u => u with { Pcurve = Uv.Shift(u.Pcurve, 2 * Math.PI * Math.Round((middle - u.Pcurve.At((u.From + u.To) / 2).X) / (2 * Math.PI))) })];
-            }
-            var sameSense = surface switch { Plane q => q.Frame.ZAxis.Dot(outward) > 0, _ => false };
-            patches.Add(new Patch(surface, sameSense, [uses], new HashSet<Origin> { new(operand, new FaceId(face)) }));
-        }
-        for (var i = 0; i < 3; i++)
-        {
-            var (j, k) = (e[(i + 1) % 3], e[(i + 2) % 3]);
-            // The side through the centre, square to e[i]: out along j, across, back, in along k, round the quarter circle.
-            Add(new Plane(RigidTransform3D.FromFrame(centre, e[i], j)), -e[i],
-            [
-                (new Line3(centre, j), r, side), (new Line3(centre + j * side, k), 0, side),
-                (new Line3(centre + k * side, j), side, 0), (new Line3(centre, k), side, r), (Quarter(i), Math.PI / 2, 0),
-            ], 0, i);
-            // The far side, a whole square.
-            var far = centre + e[i] * side;
-            Add(new Plane(RigidTransform3D.FromFrame(far, e[i], j)), e[i],
-            [
-                (new Line3(far, j), 0, side), (new Line3(far + j * side, k), 0, side), (new Line3(far + k * side, j), side, 0), (new Line3(far, k), side, 0),
-            ], 0, 3 + i);
-        }
-        Add(sphere, -diagonal, [(Quarter(2), 0, Math.PI / 2), (Quarter(0), 0, Math.PI / 2), (Quarter(1), 0, Math.PI / 2)], 1, 0);
-        try
-        {
-            return Sewing.Sew(patches, tolerance) is [var one] ? (one, null) : (null, "the cube less the ball is not one piece");
-        }
-        catch (BooleanFailure failure)
-        {
-            return (null, failure.Message);
-        }
+        var half = new ProfileLoop([new ArcSegment(new Point2D(0, 0), r, -Math.PI / 2, Math.PI), new LineSegment(new Point2D(0, r), new Point2D(0, -r))]);
+        var (ball, whyBall) = Revolution.Revolve(new Region(half), RigidTransform3D.FromFrame(centre, (x - y * 2 + z).Normalized(), -diagonal), tolerance);
+        if (ball is null) return (null, whyBall);
+        var (left, failed) = Booleans.Subtract(cube.Body, ball.Body);
+        if (failed is not null) return (null, failed);
+        return left is [var one] ? (one, null) : (null, "the cube less the ball is not one piece");
     }
 
     // The circle where a flat face meets a cylinder square to it: the spandrel (or the chamfer's triangle) in the

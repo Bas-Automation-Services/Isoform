@@ -212,4 +212,22 @@ public class BooleanTests(ITestOutputHelper output)
         r.Bodies.Should().BeNull();
         r.Problem.Should().Contain("not parallel");
     }
+
+    [Theory]
+    [InlineData(1, -2, 1)]
+    [InlineData(0, -1, 1)]
+    public void A_ball_round_a_cube_corner_takes_its_octant(double ax, double ay, double az)
+    {
+        // Planes through the ball's centre at an angle to its axis cut it in great circles; the cube keeps 27 − π·4/3.
+        var centre = new Point3D(38, 28, 8);
+        var cube = Extrusion.Extrude(new Region(Rectangle(0, 0, 3, 3)), RigidTransform3D.FromFrame(centre, new Vector3D(0, 0, 1), new Vector3D(1, 0, 0)), 0, 3).Result!.Body;
+        var diagonal = new Vector3D(1, 1, 1).Normalized();
+        var axis = new Vector3D(ax, ay, az).Normalized();
+        var half = new ProfileLoop([new ArcSegment(new Point2D(0, 0), 2, -Math.PI / 2, Math.PI), new LineSegment(new Point2D(0, 2), new Point2D(0, -2))]);
+        var ball = Revolution.Revolve(new Region(half), RigidTransform3D.FromFrame(centre, axis, (diagonal * -1 - axis * axis.Dot(diagonal * -1)).Normalized())).Result!.Body;
+        var (left, problem) = Booleans.Subtract(cube, ball);
+        problem.Should().BeNull();
+        MassProperties.Volume(left!.Single().Body).Should().BeApproximately(27 - Math.PI * 4 / 3, 1e-12);
+        left.Single().Body.Faces.Should().ContainSingle(f => f.Surface is Sphere);
+    }
 }
