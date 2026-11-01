@@ -44,7 +44,7 @@ public class BackendTests(ITestOutputHelper output)
     }
 
     [Theory]
-    [MemberData(nameof(Documents.All), MemberType = typeof(Documents))]
+    [MemberData(nameof(Documents.ExactInTheFrep), MemberType = typeof(Documents))]
     public void The_exact_brep_agrees_with_the_one_derived_from_the_frep(string name, PartDocument document, double _)
     {
         var mine = StepConversion.ToStep(new BrepModeler(Settings).Regenerate(document).Bodies);
@@ -131,7 +131,7 @@ public class BackendTests(ITestOutputHelper output)
     [Fact]
     public void What_the_kernel_cannot_do_yet_is_refused_by_name()
     {
-        var withCut = new PartDocument([.. Documents.TwoPads.Features, new Isoform.Document.Shell("h", 1)]);
+        var withCut = new PartDocument([.. Documents.TwoPads.Features, new Lattice("h", "gyroid", 10, 1)]);
         var result = new BrepModeler(Settings).Regenerate(withCut);
         result.Topology.Should().BeNull();
         result.Diagnostics.Should().ContainSingle(d => d.Code == Diagnostic.BackendFailed && d.FeatureId == "h");

@@ -483,6 +483,29 @@ reflex corner turns round). All 74 documents match the F-rep core and `ExactBrep
 them all back valid. Tests: `tests/Isoform.Brep.Tests` 311, `BrepKernelStepTests` 74. Nine of the playground's 13
 examples build; the other four are a blended extrude with a shell and three lattices.
 
+## Experiment 14: shells (done, 2026-11-01)
+
+Chosen from the candidates (2).
+
+- *Cavity:* the history before the shell rebuilt with every face moved in by the wall (cut tools grown by it, so a
+  bore leaves a tube through the cavity and a pocket a dent in its roof), corners met sharp, its faces named
+  `id/inner:face`, cut out of the solid as a void. It is the offsets' rebuild with no round corners.
+- *Sharp, as CAD shells:* each inner face is an outer face moved, so the cavity has no faces of its own. The F-rep
+  core's cavity is a level set of its distance field, round where that field is round (opposite a reflex corner of a
+  profile, round a grown cut's convex corner); it names that round as the two flat faces either side, and its own
+  exact export refuses those parts ("off its plane"). The kernel follows the names: same faces, same topology. The
+  two such documents are kept out of the exact-face comparison with `ExactBrep` (`Documents.ExactInTheFrep`).
+- *STEP:* the writer turns a void's faces round, so for a seam on a cavity's face the first use as written decides
+  (as `ExactBrep.SeamsForwardLast` has it): the first seam on a void face, the tube round a bore.
+- *Refused:* a shell after an offset or another shell, an offset after a shell, a shell of a part with more than one
+  body.
+
+**Results:** 6 more documents: an L hollowed, a plate with a bore, with a pocket, with a fillet (the cavity's round
+the fillet moved in), a domed post (a pole inside too), a plate rounded after shelling. All 80 have exact volumes and
+match the F-rep core's names and topology; 78 its exact faces; OCCT reads all back valid. Tests:
+`tests/Isoform.Brep.Tests` 327, `BrepKernelStepTests` 80. Still nine of the 13 examples: "Smooth blends and a shell"
+stops at its blended extrude.
+
 ## Next: candidates (to decide)
 
 What still stops the playground's examples, and what is left from before:
@@ -490,8 +513,8 @@ What still stops the playground's examples, and what is left from before:
 1. **Ball corners:** where three fillets meet, a piece of a sphere bounded by the three fillets' ends (circles that
    are not its parallels), which `ExactBrep` writes with the sphere's poles turned away from the piece. Then pointed
    cones (an apex as a pole of the cone).
-2. **Shell** (a closed skin): the cavity is the history rebuilt shrunk by the wall, its faces named
-   `id/inner:face`, cut out of the solid. Cheap now that offsets rebuild the history.
+2. **The F-rep's round shell corners:** decide which is right, the F-rep mesh's round (a true constant wall) or the
+   names' and CAD's sharp corner, and make the two engines agree.
 3. **Arcs meeting lines at a corner** in loop fillets (a quartic, unless the radii make it a circle or ellipse).
 4. **Inventor as a second STEP reader**, parked.
 5. **Local booleans:** rebuild only the faces a boolean touches.
@@ -508,4 +531,4 @@ What still stops the playground's examples, and what is left from before:
 
 Blended extrudes and shells (smooth F-rep blends) and lattices stay with the F-rep core.
 
-Recommended: 2 (shell, small now), then 1 (ball corners).
+Recommended: 1 (ball corners); 2 is a decision for Bas.

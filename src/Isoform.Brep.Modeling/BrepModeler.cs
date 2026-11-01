@@ -13,7 +13,8 @@ namespace Isoform.Brep.Modeling;
 /// (linear, circular or mirrored; copy k of face s is <c>id/k:s</c>), bodies joined or cut into others, fillets and
 /// chamfers on the edge between two flat faces or round a cylinder square to a flat
 /// face (face <c>id/face</c>, a cone for a chamfer there), and offsets of one body (the history rebuilt with every
-/// face moved; round corners <c>id/corner:a+b</c>). Each starts a body, joins it or cuts it, working on the
+/// face moved; round corners <c>id/corner:a+b</c>) and closed shells of one (inner faces <c>id/inner:face</c>). Each
+/// starts a body, joins it or cuts it, working on the
 /// current body as Isoform's <see cref="Feature.Body"/> says. Faces carry Isoform's names: sides after their profile
 /// edge, caps <c>id/start</c> and <c>id/end</c>, blocks <c>id/x-</c> … <c>id/z+</c>, holes <c>id/wall</c> and
 /// <c>id/floor</c>, faces merged on one surface named by all their sources. Anything else is refused with
@@ -43,6 +44,8 @@ public sealed class BrepModeler(ModelingSettings settings) : IModeler
         var owner = new string?[features.Count];
         var facePlanes = new Dictionary<string, SketchPlane>();
         var convex = new Dictionary<string, bool>();
+        // While a shell's cavity is built: every face moved in by the wall.
+        var hollow = 0.0;
         for (var i = 0; i < features.Count; i++)
         {
             if (features[i] is Offset offset)
@@ -63,7 +66,8 @@ public sealed class BrepModeler(ModelingSettings settings) : IModeler
             if (DocumentRules.StartsBody(feature)) current = feature.Body ?? feature.Id;
             else if (feature.Body is { } named) current = named;
             bodyOf[feature.Id] = current!;
-            if (feature is Fillet or Chamfer) return Blend(feature, solids, grow[i], convex);
+            if (feature is Fillet or Chamfer) return Blend(feature, solids, grow[i] + hollow, convex);
+            if (feature is Isoform.Document.Shell shell) return Hollowed(shell, i);
             if (feature is Pattern pattern) return Copies(pattern, i);
             if (feature is CombineBodies combine) return Combined(combine);
             var (tools, op, failed) = Tools(feature, current!, Motion.None, s => s, i);
@@ -77,6 +81,8 @@ public sealed class BrepModeler(ModelingSettings settings) : IModeler
         {
             if (features.Take(at).Any(f => f is CombineBodies || f.Body is { } b && b != current) || solids.Any(s => s.Body != current))
                 return Unsupported(o.Id, $"{o.Id}: an offset of a part with more than one body is not followed by the managed B-rep kernel yet");
+            if (features.Take(at).Any(f => f is Isoform.Document.Shell))
+                return Unsupported(o.Id, $"{o.Id}: an offset of a shelled part is not followed by the managed B-rep kernel yet");
             for (var j = 0; j < at; j++)
             {
                 grow[j] += o.Distance;
@@ -91,12 +97,41 @@ public sealed class BrepModeler(ModelingSettings settings) : IModeler
             return null;
         }
 
+        // A closed skin: the solid less its cavity, which is the history before the shell rebuilt with every face moved
+        // in by the wall (cut tools grown by it) and corners met sharp, so that each inner face is an outer face moved,
+        // id/inner:face, as the F-rep core names them.
+        Diagnostic? Hollowed(Isoform.Document.Shell sh, int at)
+        {
+            if (features.Take(at).Any(f => f is CombineBodies || f.Body is { } b && b != current) || solids.Any(s => s.Body != current))
+                return Unsupported(sh.Id, $"{sh.Id}: a shell of a part with more than one body is not followed by the managed B-rep kernel yet");
+            if (features.Take(at).Any(f => f is Offset or Isoform.Document.Shell))
+                return Unsupported(sh.Id, $"{sh.Id}: a shell after an offset or another shell is not followed by the managed B-rep kernel yet");
+            var (kept, keptBodies, keptCurrent) = (solids.ToList(), bodyOf.ToList(), current);
+            solids.Clear();
+            bodyOf.Clear();
+            current = null;
+            hollow = -sh.Thickness;
+            Diagnostic? problem = null;
+            for (var j = 0; j < at && problem is null; j++) problem = Build(j);
+            hollow = 0;
+            var cavity = solids.Select(c => new NamedBody(c.Solid.Body, c.Solid.Names.ToDictionary(n => n.Key,
+                n => (IReadOnlyList<string>)[.. n.Value.Select(name => $"{sh.Id}/inner:{name}")]))).ToList();
+            solids.Clear();
+            solids.AddRange(kept);
+            bodyOf.Clear();
+            foreach (var (feature, body) in keptBodies) bodyOf[feature] = body;
+            current = keptCurrent;
+            if (problem is not null)
+                return problem with { FeatureId = sh.Id, Message = $"{sh.Id}: its cavity cannot be built: {problem.Message}" };
+            return Apply(solids, current!, cavity, BooleanOp.Cut, sh.Id);
+        }
+
         // A solid-making feature's tools, placed by a motion and named by `name`, against the solids of the body it
         // works on, grown as the offsets after feature `at` (itself, or the pattern copying it) move its faces.
         (List<NamedBody>? Tools, BooleanOp Op, Diagnostic? Problem) Tools(Feature feature, string body, Motion motion, Func<string, string> name, int at)
         {
             List<NamedBody> Part() => [.. solids.Where(s => s.Body == body).Select(s => s.Solid)];
-            var g = new Growth(grow[at], owner[at], name);
+            var g = new Growth(grow[at] + hollow, owner[at], name, Round: hollow == 0);
             var op = feature switch { Block b => b.Op, Extrude e => e.Op, Revolve r => r.Op, Sweep w => w.Op, _ => BooleanOp.Cut };
             // A cut's tool shrinks as the part grows.
             if (op == BooleanOp.Cut) g = g with { By = -g.By };
@@ -201,9 +236,10 @@ public sealed class BrepModeler(ModelingSettings settings) : IModeler
     /// <summary>
     /// How a feature's tool is made: grown by <see cref="By"/> (the offsets after it, turned round for a cut's tool),
     /// its round corners named after <see cref="Owner"/>, the offset that first grew it, and its faces named by
-    /// <see cref="Name"/> (a pattern's copy names them id/k:face).
+    /// <see cref="Name"/> (a pattern's copy names them id/k:face). Without <see cref="Round"/> (a shell's cavity)
+    /// corners always meet sharp.
     /// </summary>
-    sealed record Growth(double By, string? Owner, Func<string, string> Name)
+    sealed record Growth(double By, string? Owner, Func<string, string> Name, bool Round = true)
     {
         // The round corner between two faces of a profile, named as they are.
         public string Corner(string a, string b) => $"{Owner}/corner:{a}+{b}";
@@ -250,7 +286,7 @@ public sealed class BrepModeler(ModelingSettings settings) : IModeler
             // Material on the left of an outer loop counter-clockwise and of a hole clockwise: grown, it moves right.
             var right = loops[l].SignedArea > 0 == (l == 0) ? g.By : -g.By;
             var by = loops[l].Segments.Select(s => s is LineSegment && OnAxis(s.Start) && OnAxis(s.End) ? 0 : right).ToList();
-            var (grown, origins, problem) = ProfileOffset.Grow(loops[l], by, OnAxis, settings.Tolerance);
+            var (grown, origins, problem) = ProfileOffset.Grow(loops[l], by, p => !g.Round || OnAxis(p), settings.Tolerance);
             if (problem is not null) throw new BooleanFailure($"{id} cannot grow by {g.By}: {problem}");
             var n = names[l].Count;
             names[l] = [.. origins.Select(o => o >= 0 ? names[l][o] : g.Corner(names[l][~o], names[l][(~o + 1) % n]))];

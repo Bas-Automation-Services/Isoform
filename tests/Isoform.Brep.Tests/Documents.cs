@@ -2,7 +2,7 @@ using Isoform.Document;
 
 namespace Isoform.Brep.Tests;
 
-/// <summary>Isoform part documents the managed kernel builds (experiments 1 to 13), with their exact volumes.</summary>
+/// <summary>Isoform part documents the managed kernel builds (experiments 1 to 14), with their exact volumes.</summary>
 public static class Documents
 {
     static readonly SketchPlane Xy = new([0, 0, 0], [1, 0, 0], [0, 0, 1]);
@@ -413,7 +413,7 @@ public static class Documents
 
     // Experiment 13: offsets. Every face so far moves out: blocks grow, cut tools shrink, fillets get rounder, and a
     // profile's corners that part as it grows turn round (named id/corner:a+b after the two faces).
-    static Profile Ell(double z) => new([5, 5],
+    static Profile Ell => new([5, 5],
     [
         new ProfileEdge("a", [30, 5]), new ProfileEdge("b", [30, 12]), new ProfileEdge("c", [12, 12]),
         new ProfileEdge("d", [12, 40]), new ProfileEdge("e", [5, 40]), new ProfileEdge("f", [5, 5]),
@@ -427,7 +427,7 @@ public static class Documents
         ("mirrored ribs grown", new(
         [
             new Block("plate", BooleanOp.New, [0, 0, 0], [100, 50, 10]),
-            new Extrude("rib", BooleanOp.Join, Top, Ell(10), 0, 6),
+            new Extrude("rib", BooleanOp.Join, Top, Ell, 0, 6),
             new Pattern("mirror", ["rib"], new MirrorMotion([50, 0, 0], [1, 0, 0])),
             new Offset("grow", 1),
         ]), 102 * 52 * 12 + 2 * 6 * (371 + 120 - 1 + 5 * Math.PI / 4)),
@@ -453,7 +453,36 @@ public static class Documents
         ]), 42 * 32 * 12 - 9 * (1 - Math.PI / 4) * 32),
         // Shrunk, the L's reflex corner turns round instead: arms 23 × 5 and 5 × 28, and the corner square less a
         // quarter circle; 4 high.
-        ("ell shrunk", new([new Extrude("rib", BooleanOp.New, Xy, Ell(0), 0, 6), new Offset("shrink", -1)]), 4 * (256 - Math.PI / 4)),
+        ("ell shrunk", new([new Extrude("rib", BooleanOp.New, Xy, Ell, 0, 6), new Offset("shrink", -1)]), 4 * (256 - Math.PI / 4)),
+    ];
+
+    // Experiment 14: shells. The cavity is every face moved in by the wall (a cut's tool grown by it), corners met
+    // sharp, its faces named id/inner:face.
+    static readonly Block Plate40 = new("plate", BooleanOp.New, [0, 0, 0], [40, 30, 10]);
+
+    static readonly (string Name, PartDocument Document, double Volume)[] Shells =
+    [
+        // The L shrunk by 1 with its reflex corner sharp (arms 23 × 5 and 5 × 28), 4 high.
+        ("hollow ell", new([new Extrude("rib", BooleanOp.New, Xy, Ell, 0, 6), new Isoform.Document.Shell("hollow", 1)]), 371 * 6 - 4 * 255),
+        // A tube of radius 3 round the bore stands through the cavity.
+        ("hollow plate with a bore", new([Plate40, new Hole("bore", [20, 15], 4), new Isoform.Document.Shell("hollow", 1)]),
+            12000 - Math.PI * 4 * 10 - (38 * 28 * 8 - Math.PI * 9 * 8)),
+        // The pocket's tool grown by 1 (22 × 12, down to 5) dents the cavity's top 4 deep.
+        ("hollow plate with a pocket", new(
+        [
+            Plate40,
+            new Extrude("pocket", BooleanOp.Cut, Top, new Profile([10, 10],
+                [new ProfileEdge("a", [30, 10]), new ProfileEdge("b", [30, 20]), new ProfileEdge("c", [10, 20]), new ProfileEdge("d", [10, 10])]), -4, 3),
+            new Isoform.Document.Shell("hollow", 1),
+        ]), 12000 - 20 * 10 * 4 - (38 * 28 * 8 - 22 * 12 * 4)),
+        // The cavity's round is the fillet moved in: radius 2 along 28.
+        ("hollow filleted plate", new([Plate40, new Fillet("round", ["plate/z+", "plate/x+"], 3), new Isoform.Document.Shell("hollow", 1)]),
+            12000 - 9 * (1 - Math.PI / 4) * 30 - (38 * 28 * 8 - 4 * (1 - Math.PI / 4) * 28)),
+        // A cavity of radius 4 from 1 up, under a dome of radius 4 round the same centre.
+        ("hollow domed post", new([DomedPost("post"), new Isoform.Document.Shell("hollow", 1)]), DomedPostVolume - (Math.PI * 16 * 9 + 2 * Math.PI / 3 * 64)),
+        // Rounded after the shell, outside only.
+        ("plate rounded after shelling", new([Plate40, new Isoform.Document.Shell("hollow", 2), new Fillet("round", ["plate/z+", "plate/x+"], 1)]),
+            12000 - (1 - Math.PI / 4) * 30 - 36 * 26 * 6),
     ];
 
     public static IEnumerable<object[]> All =>
@@ -470,13 +499,22 @@ public static class Documents
         .. Sweeps.Select(b => new object[] { b.Name, b.Document, b.Volume }),
         .. Domes.Select(b => new object[] { b.Name, b.Document, b.Volume }),
         .. Offsets.Select(b => new object[] { b.Name, b.Document, b.Volume }),
+        .. Shells.Select(b => new object[] { b.Name, b.Document, b.Volume }),
     ];
+
+    // Shells the F-rep core meshes with a round where its distance field rounds (opposite a reflex corner, round a
+    // grown cut's corner) but names as the two flat faces either side, so its own exact export refuses them. The
+    // kernel shells as CAD does, every inner face an outer one moved and corners met sharp.
+    static readonly HashSet<string> RoundInTheFrep = ["hollow ell", "hollow plate with a pocket"];
+
+    /// <summary>The documents whose F-rep result <c>ExactBrep</c> can export, to compare exact faces with.</summary>
+    public static IEnumerable<object[]> ExactInTheFrep => All.Where(d => !RoundInTheFrep.Contains((string)d[0]));
 
     public static PartDocument Named(string name) => name switch
     {
         "mounting plate" => MountingPlate,
         "bracket" => Bracket,
         "two pads" => TwoPads,
-        _ => Booleans.Concat(Holes).Concat(Angles).Concat(Rounds).Concat(Cones).Concat(Copies).Concat(Sweeps).Concat(Domes).Concat(Offsets).Single(b => b.Name == name).Document,
+        _ => Booleans.Concat(Holes).Concat(Angles).Concat(Rounds).Concat(Cones).Concat(Copies).Concat(Sweeps).Concat(Domes).Concat(Offsets).Concat(Shells).Single(b => b.Name == name).Document,
     };
 }

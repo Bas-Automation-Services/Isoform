@@ -37,12 +37,12 @@ public static class StepConversion
                 if (edgeOf[i] >= 0) edges.Add(Finish(edges.Count, body.Edges[i], body, v0));
             }
 
-            BrepShell Shell(Shell shell) => new([.. shell.Faces.Select(f =>
+            BrepShell Shell(Shell shell, bool isVoid) => new([.. shell.Faces.Select(f =>
             {
                 var face = body[f];
                 var surface = Surface(face.Surface, faceOffset + f.Index, string.Join("+", names[f]));
                 // Each coedge, or for a pole how far it turns u.
-                var loops = face.Loops.Select(l => SeamFirst(body, l, face.SameSense).Select(c =>
+                var loops = face.Loops.Select(l => SeamFirst(body, l, face.SameSense, isVoid).Select(c =>
                 {
                     if (edgeOf[body[c].Edge.Index] >= 0) return (Coedge: (BrepCoedge?)new BrepCoedge(edgeOf[body[c].Edge.Index], body[c].Forward, null), Turn: 0.0);
                     var (from, to) = body.ParametersOf(c);
@@ -51,7 +51,7 @@ public static class StepConversion
                 return new BrepFace(faceOffset + f.Index, names[f], surface, face.SameSense, WithImages(surface, loops, edges));
             })]);
 
-            solids.Add(new BrepSolid(bodies.Count == 1 ? name : $"{name}-{b + 1}", Shell(body.Shells[0]), [.. body.Shells.Skip(1).Select(Shell)]));
+            solids.Add(new BrepSolid(bodies.Count == 1 ? name : $"{name}-{b + 1}", Shell(body.Shells[0], false), [.. body.Shells.Skip(1).Select(s => Shell(s, true))]));
             faceOffset += body.Faces.Length;
         }
         return new Step.Brep(vertices, edges, solids);
@@ -59,13 +59,14 @@ public static class StepConversion
 
     // A loop's coedges, started so that a seam's last use as written runs as the face is oriented (along the edge on a
     // face with its surface's sense, against it otherwise): OCCT's reader gives a seam's p-curves to its uses one at a
-    // time and the last decides (ExactBrep.SeamsForwardLast turns the edge round for the same reason).
-    static IEnumerable<CoedgeId> SeamFirst(Body body, LoopId loop, bool sameSense)
+    // time and the last decides (ExactBrep.SeamsForwardLast turns the edge round for the same reason). The writer turns
+    // a void's loops round, so there it is the first use.
+    static IEnumerable<CoedgeId> SeamFirst(Body body, LoopId loop, bool sameSense, bool turned)
     {
         var coedges = body.CoedgesOf(loop).ToList();
         var seam = coedges.GroupBy(c => body[c].Edge).FirstOrDefault(g => g.Count() == 2);
         if (seam is null) return coedges;
-        var first = coedges.FindIndex(c => body[c].Edge == seam.Key && body[c].Forward != sameSense);
+        var first = coedges.FindIndex(c => body[c].Edge == seam.Key && body[c].Forward != sameSense != turned);
         return [.. coedges.Skip(first), .. coedges.Take(first)];
     }
 
