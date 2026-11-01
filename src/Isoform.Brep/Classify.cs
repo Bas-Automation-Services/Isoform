@@ -24,6 +24,7 @@ internal sealed class FlatFace
             var (from, to) = body.ParametersOf(c);
             return Uv.Flat(Surface, body[c].Pcurve, from, to);
         })]))];
+        boxes = [.. Loops.Select(BoxOf)];
         // The windows of a periodic u or v: from the lowest the face's p-curves reach.
         var ends = face.Loops.SelectMany(body.CoedgesOf).SelectMany(c =>
         {
@@ -112,10 +113,31 @@ internal sealed class FlatFace
 
     public Place Locate(Point2D flat)
     {
-        foreach (var loop in Loops)
-            if (loop.Segments.Any(s => Distances.To(s, flat) <= Intersections.Snap)) return Place.Boundary;
-        return Loops.Sum(l => l.Winding(flat)) != 0 ? Place.Inside : Place.Outside;
+        // A loop whose box the point is outside is neither near it nor round it.
+        var near = Enumerable.Range(0, Loops.Count).Where(l => Within(boxes[l], flat)).ToList();
+        foreach (var l in near)
+            if (Loops[l].Segments.Any(s => Distances.To(s, flat) <= Intersections.Snap)) return Place.Boundary;
+        return near.Sum(l => Loops[l].Winding(flat)) != 0 ? Place.Inside : Place.Outside;
     }
+
+    // Each loop's box in flat (u, v), grown by the snap and, round a curve's samples, by a tenth of the loop's size.
+    (Point2D Min, Point2D Max)[] boxes = [];
+
+    static (Point2D, Point2D) BoxOf(ProfileLoop loop)
+    {
+        var points = loop.Segments.SelectMany(s => s switch
+        {
+            CurveSegment c => c.Samples(),
+            ArcSegment a => Enumerable.Range(0, 17).Select(i => a.PointAt(a.StartAngle + a.Sweep * i / 16)),
+            _ => [s.Start, s.End],
+        }).ToList();
+        var (lo, hi) = (new Point2D(points.Min(p => p.X), points.Min(p => p.Y)), new Point2D(points.Max(p => p.X), points.Max(p => p.Y)));
+        var curved = loop.Segments.Any(s => s is not LineSegment);
+        var pad = Intersections.Snap + (curved ? 0.1 * Math.Max(hi.X - lo.X, hi.Y - lo.Y) : 0);
+        return (new Point2D(lo.X - pad, lo.Y - pad), new Point2D(hi.X + pad, hi.Y + pad));
+    }
+
+    static bool Within((Point2D Min, Point2D Max) box, Point2D p) => p.X >= box.Min.X && p.X <= box.Max.X && p.Y >= box.Min.Y && p.Y <= box.Max.Y;
 
     /// <summary>
     /// Whether this face crosses the other's surface at a point inside the other face: on a grid over this face (and

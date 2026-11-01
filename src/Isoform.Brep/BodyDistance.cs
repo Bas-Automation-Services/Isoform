@@ -24,7 +24,7 @@ public sealed class BodyDistance(Body body)
         foreach (var f in Enumerable.Range(0, solid.Faces.Length).OrderBy(f => Away(solid.Faces[f].Box, p)))
         {
             if (Away(solid.Faces[f].Box, p) >= best) break;
-            var (q, onFace) = Nearest(f, p);
+            if (Nearest(f, p, best) is not var (q, onFace)) continue;
             var d = (p - q).Length;
             if (d < best) (best, face, nearest, inside) = (d, f, q, onFace);
         }
@@ -36,6 +36,48 @@ public sealed class BodyDistance(Body body)
         return (sign * best, new FaceId(face), gradient);
     }
 
+    /// <summary>
+    /// The face whose surface alone gives the distance everywhere within <paramref name="r"/> of <paramref name="c"/>,
+    /// or null: each point's nearest point on that surface lies inside the face, and no other face comes nearer. On a
+    /// plane a point's foot moves no farther than the point; on a cylinder or sphere at most R / (ρ − r) times farther
+    /// round the axis or centre (ρ the distance from it), so the feet stay inside when the face's edges are farther
+    /// from c's foot than that. Other faces must lie more than 2r beyond the nearest from c.
+    /// </summary>
+    public FaceId? Alone(Point3D c, double r)
+    {
+        var (best, face, foot, inside) = (double.MaxValue, -1, c, false);
+        foreach (var f in Enumerable.Range(0, solid.Faces.Length).OrderBy(f => Away(solid.Faces[f].Box, c)))
+        {
+            if (Away(solid.Faces[f].Box, c) >= best) break;
+            if (Nearest(f, c, best) is not var (q, onFace)) continue;
+            var d = (c - q).Length;
+            if (d < best) (best, face, foot, inside) = (d, f, q, onFace);
+        }
+        if (!inside) return null;
+        double? Around(Point3D centre, Vector3D? axis, double radius)
+        {
+            var w = c - centre;
+            var rho = (axis is { } z ? w - z * w.Dot(z) : w).Length;
+            return rho > r && r < radius / 2 ? r * (1 + radius / (rho - r)) : null;
+        }
+        double? reach = solid.Faces[face].Surface switch
+        {
+            Plane => r,
+            Cylinder k => Around(k.Frame.Origin, k.Frame.ZAxis, k.Radius),
+            Sphere o => Around(o.Frame.Origin, null, o.Radius),
+            _ => null,
+        };
+        if (reach is not { } stretch) return null;
+        foreach (var e in solid.Faces[face].Edges)
+            if ((OnEdge(Body[e], foot) - foot).Length <= stretch) return null;
+        foreach (var g in Enumerable.Range(0, solid.Faces.Length))
+        {
+            if (g == face || Away(solid.Faces[g].Box, c) > best + 2 * r) continue;
+            if (Nearest(g, c, best + 2 * r + 1e-9) is var (q, _) && (c - q).Length <= best + 2 * r) return null;
+        }
+        return new FaceId(face);
+    }
+
     // How far a point is from a box (0 inside it).
     static double Away((Point3D Min, Point3D Max) box, Point3D p)
     {
@@ -44,11 +86,13 @@ public sealed class BodyDistance(Body body)
         return Math.Sqrt(dx * dx + dy * dy + dz * dz);
     }
 
-    // The face's nearest point, and whether it lies inside the face (not on its edges).
-    (Point3D Point, bool Inside) Nearest(int f, Point3D p)
+    // The face's nearest point, and whether it lies inside the face (not on its edges); null when even its surface is
+    // no nearer than `within` (the face is never nearer than its surface).
+    (Point3D Point, bool Inside)? Nearest(int f, Point3D p, double within)
     {
         var face = solid.Faces[f];
         var foot = Foot(face.Surface, p);
+        if ((p - foot).Length >= within) return null;
         if (face.Locate(foot) != Place.Outside) return (foot, true);
         var (best, nearest) = (double.MaxValue, p);
         foreach (var e in face.Edges)

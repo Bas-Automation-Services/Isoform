@@ -82,6 +82,17 @@ sealed class BrepField : FacesField
 
     public override FieldSample? SampleSurface(int owner, Point3D p) => byId.TryGetValue(owner, out var leaf) ? leaf.Sample(p) : null;
 
+    // Within a box near one face only, away from its edges and from the other solids, that face's own leaf: the
+    // mesher then evaluates a surface, not the body.
+    public override Field Simplify(Box3D box)
+    {
+        var (c, r) = (box.Center, (box.Max - box.Min).Length / 2);
+        var values = solids.Select(s => s.Distance.Sample(c).Value).ToList();
+        var k = values.IndexOf(values.Min());
+        if (values.Where((v, j) => j != k).Any(v => v - r <= values[k] + r)) return this;
+        return solids[k].Distance.Alone(c, r) is { } face ? byId[solids[k].Owner[face.Index]] : this;
+    }
+
     // A distance changes no faster than the point moves.
     public override Interval Bounds(Box3D box)
     {

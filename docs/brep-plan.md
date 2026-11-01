@@ -605,8 +605,15 @@ patches whose names follow the lattice. `MixedTests`: a plate with a boss and a 
 outline with a slot, smooth blends and a shell, a strut lattice in a cube. Slower than the F-rep core alone (1–2 s
 against 0.1–0.3 s on the examples): the distance is found face by face at every sample.
 
-**Next:** speed (a body's field simplified, in a box near one face only, to that face's leaf, so the mesher sees
-ordinary leaves away from edges); faces the F-rep features leave alone exported exactly from the kernel's B-rep.
+**Speed:** a body's field simplifies, in a box near one face only (`BodyDistance.Alone`: the feet of the box's points
+stay inside the face, which holds on a plane where its edges are farther than the box's reach, on a cylinder or
+sphere that reach stretched by R / (ρ − r); every other face, and every other solid, more than 2r beyond), to that
+face's own leaf, so the mesher evaluates a surface there; a face is skipped where even its surface is no nearer than
+the best so far; a face's inside test skips loops whose box the point is outside (which also speeds the kernel's
+booleans: 400 holes one by one 6.5 → 5.3 s processor). The examples went from 5–10 to 1.2–4 times the F-rep core's
+time; what is left is the kernel building the part first and the distance near edges.
+
+**Next:** faces the F-rep features leave alone exported exactly from the kernel's B-rep.
 
 ## Next: candidates (to decide)
 

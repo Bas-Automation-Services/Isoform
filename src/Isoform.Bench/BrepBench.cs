@@ -33,7 +33,7 @@ static class BrepBench
             foreach (var (name, doc) in Examples.All)
                 Time(name.Length > 28 ? name[..28] : name, doc);
         if (which is "mixed")
-            foreach (var (name, doc) in Examples.All)
+            foreach (var (name, doc) in Examples.All.Where(e => sizes.Count == 0 || sizes.Contains(Array.IndexOf([.. Examples.All], e))))
                 Mixed(name.Length > 28 ? name[..28] : name, doc);
     }
 
