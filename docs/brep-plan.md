@@ -613,7 +613,10 @@ the best so far; a face's inside test skips loops whose box the point is outside
 booleans: 400 holes one by one 6.5 → 5.3 s processor). The examples went from 5–10 to 1.2–4 times the F-rep core's
 time; what is left is the kernel building the part first and the distance near edges.
 
-**Next:** faces the F-rep features leave alone exported exactly from the kernel's B-rep.
+**Exact export:** the kernel's faces are registered as the F-rep core's own analytic surfaces, so `ExactBrep` exports
+a mixed part exactly wherever every face has a closed form (tested: a plate with a boss and a hole, the rounded
+outline with a slot). Blend and lattice faces have none in either engine; a skin exact round a lattice would need
+STEP's tessellated faces beside the exact ones, a question of the file format, not of the kernels.
 
 ## Next: candidates (to decide)
 

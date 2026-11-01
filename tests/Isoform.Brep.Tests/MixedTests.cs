@@ -63,6 +63,18 @@ public class MixedTests(ITestOutputHelper output)
         Volume(mixed.Mesh!).Should().BeApproximately(Volume(frep.Mesh!), 1e-5 * Volume(frep.Mesh!));
     }
 
+    [Theory]
+    [InlineData("a plate with a boss and a hole")]
+    [InlineData("a rounded outline with a slot")]
+    public void A_mixed_part_of_closed_form_faces_exports_exactly(string name)
+    {
+        // The kernel's faces are registered as the F-rep core's own surfaces, which its exact export takes as they are.
+        var document = (PartDocument)Parts.Single(p => (string)p[0] == name)[1];
+        var fine = new ModelingSettings { CellSize = 0.5 };
+        var mixed = new MixedModeler(fine).Regenerate(document);
+        Isoform.Step.ExactBrep.Build(mixed, fine).Solids.Sum(s => s.Faces.Count).Should().Be(mixed.Topology!.Faces.Count);
+    }
+
     [Fact]
     public void How_far_the_kernel_gets_is_the_head()
     {
