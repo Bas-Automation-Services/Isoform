@@ -7,8 +7,9 @@ namespace Isoform.Brep;
 /// turned round the axis, once or through an angle from the frame's X. A line across the axis sweeps a flat ring (or
 /// sector), one along it a cylinder, one at an angle a cone, an arc a torus; a whole turn gives each curved face a seam
 /// where the region lies (u = 0), a part turn closes the ends with the region itself. The region may have edges on the
-/// axis (which sweep nothing) and lines across it that end on it (a disc, or a sector); a cone or torus reaching the
-/// axis (which needs an apex) is refused, as is a region crossing it.
+/// axis (which sweep nothing), lines across it that end on it (a disc, or a sector) and arcs round a centre on it (a
+/// sphere, closed at a pole where the arc ends on the axis); a cone or torus reaching the axis (which needs an apex)
+/// is refused, as is a region crossing it.
 /// </summary>
 public static class Revolution
 {
@@ -83,11 +84,13 @@ public static class Revolution
         var least = segment is ArcSegment bend && bend.Covers(Math.PI) ? bend.Center.X - bend.Radius : Math.Min(a.X, b.X);
         if (least < -Intersections.Snap) return (null, "the region crosses the axis it turns round");
         var across = segment is LineSegment && Math.Abs(a.Y - b.Y) <= Intersections.Snap;
-        if (!across && least <= Intersections.Snap)
+        var sphere = segment is ArcSegment round && Math.Abs(round.Center.X) <= Intersections.Snap;
+        if (!across && !sphere && least <= Intersections.Snap)
             return (null, "a cone or arc reaching the axis needs an apex there, which the managed kernel does not make yet");
         var z = frame.ZAxis;
         RigidTransform3D At(double height) => RigidTransform3D.FromFrame(frame.Apply(new Point3D(0, 0, height)), z, frame.XAxis);
-        Circle3 Ring(Point2D p) => new(At(p.Y), p.X);
+        // The circle a profile point sweeps, or the pole where it lies on the axis.
+        Curve3 Ring(Point2D p) => OnAxis(p) ? new Pole(At(p.Y).Origin) : new Circle3(At(p.Y), p.X);
         var origin = new HashSet<Origin> { new(0, new FaceId(index)) };
         var (t0, t1) = Span(segment);
         var (seam0, seamEnd) = (MeridianCurve(frame, 0, segment), MeridianCurve(frame, angle, segment));
@@ -125,6 +128,9 @@ public static class Revolution
                 // At an angle: a cone, its frame at the line's start; material inside when the line runs up, as for a
                 // cylinder.
                 return (Band(new Cone(At(a.Y), a.X, (b.X - a.X) / (b.Y - a.Y)), Ring(a), Ring(b), seam0, seamEnd, t0, t1, angle, b.Y > a.Y, origin), null);
+            case ArcSegment arc when sphere:
+                // An arc round a centre on the axis: a sphere, closed at a pole where the arc reaches the axis.
+                return (Band(new Sphere(At(arc.Center.Y), arc.Radius), Ring(a), Ring(b), seam0, seamEnd, t0, t1, angle, arc.Sweep > 0, origin), null);
             case ArcSegment arc:
                 // An arc: a torus round the axis through its centre, material in the tube when it runs counter-clockwise.
                 return (Band(new Torus(At(arc.Center.Y), arc.Center.X, arc.Radius), Ring(a), Ring(b), seam0, seamEnd, t0, t1, angle, arc.Sweep > 0, origin), null);
@@ -133,10 +139,10 @@ public static class Revolution
         }
     }
 
-    // A curved face turned from one segment: the circle (or arc) at its start, the meridian along it at u = angle,
-    // the circle at its end back, the meridian back at u = 0; counter-clockwise in (u, v) when the meridian runs up v.
+    // A curved face turned from one segment: the circle (or arc, or pole) at its start, the meridian along it at
+    // u = angle, the circle at its end back, the meridian back at u = 0; counter-clockwise in (u, v) when the meridian runs up v.
     // A whole turn's two meridians are one seam.
-    static Patch Band(Surface surface, Circle3 start, Circle3 end, Curve3 seam0, Curve3 seamEnd, double t0, double t1, double angle, bool sameSense, HashSet<Origin> origin)
+    static Patch Band(Surface surface, Curve3 start, Curve3 end, Curve3 seam0, Curve3 seamEnd, double t0, double t1, double angle, bool sameSense, HashSet<Origin> origin)
     {
         var turn = 2 * Math.PI;
         Curve2 At(Curve3 meridian, double u)
@@ -146,7 +152,7 @@ public static class Revolution
         }
         var (pc0, pcEnd) = (At(seam0, 0), At(seamEnd, angle));
         // The circles' v (round a torus's tube) taken to where the meridian has it at each end.
-        Curve2 Along(Circle3 c, double t)
+        Curve2 Along(Curve3 c, double t)
         {
             var pc = Uv.Pcurve(surface, c);
             return surface.PeriodV is null ? pc : Uv.Shift(pc, 0, turn * Math.Round((pc0.At(t).Y - pc.At(0).Y) / turn));

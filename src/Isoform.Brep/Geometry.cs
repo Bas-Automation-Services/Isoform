@@ -26,6 +26,16 @@ public sealed record Line3(Point3D Origin, Vector3D Direction) : Curve3
 }
 
 /// <summary>
+/// A degenerate curve, one point for every t: the edge where a face's (u, v) boundary runs along a pole of its surface
+/// (a sphere's), used once, by that face. t is the u it runs over.
+/// </summary>
+public sealed record Pole(Point3D Point) : Curve3
+{
+    public override Point3D At(double t) => Point;
+    public override Vector3D Derivative(double t) => new(0, 0, 0);
+}
+
+/// <summary>
 /// A circle in its frame's XY plane round the frame's origin, counter-clockwise about the frame's Z:
 /// <c>Origin + Radius · (cos t · X + sin t · Y)</c>. <c>t</c> is the angle from X.
 /// </summary>
@@ -93,7 +103,7 @@ public abstract record Surface
     public abstract Vector3D DerivativeV(double u, double v);
 
     /// <summary>The unit normal, along Su × Sv.</summary>
-    public Vector3D Normal(double u, double v) => DerivativeU(u, v).Cross(DerivativeV(u, v)).Normalized();
+    public virtual Vector3D Normal(double u, double v) => DerivativeU(u, v).Cross(DerivativeV(u, v)).Normalized();
 
     /// <summary>The period of u for a surface closed round u (2π for a cylinder), else null.</summary>
     public virtual double? PeriodU => null;
@@ -252,4 +262,42 @@ public sealed record Wave2(double U0, double V0, int Slope, double Amplitude, do
     public override Point2D At(double t) => new(U0 + Slope * t, V0 + Amplitude * Math.Cos(t + Phase));
 
     public override Vector2D Derivative(double t) => new(Slope, -Amplitude * Math.Sin(t + Phase));
+}
+
+/// <summary>
+/// A sphere round the frame's origin: <c>S(u, v) = Origin + Radius · (cos v · (cos u · X + sin u · Y) + sin v · Z)</c>.
+/// u is the angle round Z (periodic), v the latitude in [−π/2, π/2]; at the poles, ±Z, u runs over a single point. The
+/// normal points out. A dome where a revolve's arc ends on its axis is a piece of one.
+/// </summary>
+public sealed record Sphere(RigidTransform3D Frame, double Radius) : Surface
+{
+    public override Point3D At(double u, double v)
+    {
+        var (su, cu) = Math.SinCos(u);
+        var (sv, cv) = Math.SinCos(v);
+        return Frame.Origin + (Frame.XAxis * cu + Frame.YAxis * su) * (Radius * cv) + Frame.ZAxis * (Radius * sv);
+    }
+
+    public override Vector3D DerivativeU(double u, double v)
+    {
+        var (su, cu) = Math.SinCos(u);
+        return (Frame.YAxis * cu - Frame.XAxis * su) * (Radius * Math.Cos(v));
+    }
+
+    public override Vector3D DerivativeV(double u, double v)
+    {
+        var (su, cu) = Math.SinCos(u);
+        var (sv, cv) = Math.SinCos(v);
+        return (Frame.XAxis * cu + Frame.YAxis * su) * (-Radius * sv) + Frame.ZAxis * (Radius * cv);
+    }
+
+    /// <summary>Outwards, the poles included (where Su vanishes).</summary>
+    public override Vector3D Normal(double u, double v)
+    {
+        var (su, cu) = Math.SinCos(u);
+        var (sv, cv) = Math.SinCos(v);
+        return (Frame.XAxis * cu + Frame.YAxis * su) * cv + Frame.ZAxis * sv;
+    }
+
+    public override double? PeriodU => 2 * Math.PI;
 }

@@ -35,6 +35,11 @@ internal static class Intersections
         (Cylinder c, Torus t) => CylinderTorus(c, t),
         (Torus t, Cylinder c) => CylinderTorus(c, t),
         (Torus t, Torus u) => SameTorus(t, u) ? SurfaceMeeting.Same : SurfaceMeeting.Refused("two tori that are not the same"),
+        (Plane p, Sphere o) => PlaneSphere(p, o),
+        (Sphere o, Plane p) => PlaneSphere(p, o),
+        (Cylinder c, Sphere o) => CylinderSphere(c, o),
+        (Sphere o, Cylinder c) => CylinderSphere(c, o),
+        (Sphere o, Sphere q) => SameSphere(o, q) ? SurfaceMeeting.Same : SurfaceMeeting.Refused("two spheres that are not the same"),
         (Plane p, Cone k) => PlaneCone(p, k),
         (Cone k, Plane p) => PlaneCone(p, k),
         (Cone k, _) => Coaxial(k, b),
@@ -120,6 +125,26 @@ internal static class Intersections
         return Rings(t, h, Math.Abs(h) > t.Minor + Snap ? null : Math.Sqrt(Math.Max(0, t.Minor * t.Minor - h * h)), radial: true);
     }
 
+    // A sphere is a torus without a hole (its section a circle on the axis): a plane square to its axis meets it in a
+    // circle round the axis, a cylinder round its axis in two. Other planes and cylinders meet it in circles that are
+    // not parallels, refused.
+    static Torus AsTorus(Sphere o) => new(o.Frame, 0, o.Radius);
+
+    static SurfaceMeeting PlaneSphere(Plane p, Sphere o) => Math.Abs(p.Frame.ZAxis.Dot(o.Frame.ZAxis)) < 1 - Parallel
+        ? SurfaceMeeting.Refused("a plane at an angle to a sphere's axis")
+        : PlaneTorus(p, AsTorus(o));
+
+    static SurfaceMeeting CylinderSphere(Cylinder c, Sphere o)
+    {
+        var w = c.Frame.Origin - o.Frame.Origin;
+        return c.Frame.ZAxis.Cross(o.Frame.ZAxis).Length >= Parallel || (w - o.Frame.ZAxis * w.Dot(o.Frame.ZAxis)).Length > Snap
+            ? SurfaceMeeting.Refused("a cylinder that is not round a sphere's axis")
+            : CylinderTorus(c, AsTorus(o));
+    }
+
+    static bool SameSphere(Sphere o, Sphere q) => (o.Frame.Origin - q.Frame.Origin).Length <= Snap && Math.Abs(o.Radius - q.Radius) <= Snap &&
+                                                 o.Frame.ZAxis.Cross(q.Frame.ZAxis).Length < Parallel;
+
     // A cylinder round the torus's axis cuts the tube in two circles at heights either side of its middle.
     static SurfaceMeeting CylinderTorus(Cylinder c, Torus t)
     {
@@ -194,6 +219,7 @@ internal static class Intersections
             Cylinder c => c.Frame,
             Cone m => m.Frame,
             Torus t => t.Frame,
+            Sphere o => o.Frame,
             _ => throw new NotSupportedException(other.GetType().Name),
         };
         var w = frame.Origin - k.Frame.Origin;
@@ -213,9 +239,10 @@ internal static class Intersections
                     return Math.Abs(r0 - k.Radius) <= Snap ? SurfaceMeeting.Same : SurfaceMeeting.Nothing;
                 return Ring(k, (r0 - k.Radius) / (k.Slope - b));
             }
-            case Torus t:
+            case Torus or Sphere:
             {
-                // The line against the tube's section, the circle of radius r round (M, h0): the foot of the
+                var t = other as Torus ?? AsTorus((Sphere)other);
+                // The line against the tube's section (a sphere's on the axis), the circle of radius r round (M, h0): the foot of the
                 // perpendicular from its centre, and half a chord either side of it along the line.
                 var norm = Math.Sqrt(1 + k.Slope * k.Slope);
                 var gap = (k.RadiusAt(h0) - t.Major) / norm;
@@ -264,6 +291,8 @@ internal static class Intersections
         (Line3 p, Ellipse3 e) => (LineConic(p, e), false),
         (Ellipse3 e, Line3 p) => (LineConic(p, e), false),
         (Ellipse3 or Circle3, Ellipse3 or Circle3) => ConicConic(a, b),
+        (Pole q, _) => (OnConic(b, q.Point) ? [q.Point] : [], false),
+        (_, Pole q) => (OnConic(a, q.Point) ? [q.Point] : [], false),
         _ => throw new NotSupportedException($"{a.GetType().Name} against {b.GetType().Name}"),
     };
 
@@ -275,6 +304,7 @@ internal static class Intersections
         _ => throw new NotSupportedException(c.GetType().Name),
     };
 
+    // Whether a point lies on a curve (a whole circle or ellipse, a whole line, a pole's point).
     static bool OnConic(Curve3 c, Point3D p) => (c.At(Param(c, p)) - p).Length <= Snap;
 
     static List<Point3D> LineConic(Line3 line, Curve3 conic)
@@ -398,6 +428,7 @@ internal static class Intersections
         Line3 l => (p - l.Origin).Dot(l.Direction),
         Circle3 k => Math.Atan2((p - k.Frame.Origin).Dot(k.Frame.YAxis), (p - k.Frame.Origin).Dot(k.Frame.XAxis)),
         Ellipse3 e => Math.Atan2((p - e.Frame.Origin).Dot(e.Frame.YAxis) / e.Minor, (p - e.Frame.Origin).Dot(e.Frame.XAxis) / e.Major),
+        Pole => 0,
         _ => throw new NotSupportedException(c.GetType().Name),
     };
 
@@ -407,6 +438,7 @@ internal static class Intersections
     /// </summary>
     public static double? On(Curve3 c, double t0, double t1, Point3D p)
     {
+        if (c is Pole pole) return (pole.Point - p).Length <= Snap ? t0 : null;
         var t = Param(c, p);
         if (c.Period is not null)
         {
@@ -495,6 +527,17 @@ internal static class Intersections
             case Cone k:
                 foreach (var hit in ConeHits(p, d, k)) yield return hit;
                 break;
+            case Sphere o:
+            {
+                // |p + t d - O|^2 = R^2, d a unit vector.
+                var from = p - o.Frame.Origin;
+                var (half, rest) = (from.Dot(d), from.Dot(from) - o.Radius * o.Radius);
+                var under = half * half - rest;
+                if (under < 0) yield break;
+                yield return -half - Math.Sqrt(under);
+                yield return -half + Math.Sqrt(under);
+                break;
+            }
             default:
                 throw new NotSupportedException(s.GetType().Name);
         }
@@ -584,6 +627,7 @@ internal static class Uv
         Torus t => TorusUv(t, p),
         Cone k => new(Math.Atan2((p - k.Frame.Origin).Dot(k.Frame.YAxis), (p - k.Frame.Origin).Dot(k.Frame.XAxis)),
             (p - k.Frame.Origin).Dot(k.Frame.ZAxis)),
+        Sphere o => TorusUv(new Torus(o.Frame, 0, o.Radius), p),
         _ => throw new NotSupportedException(s.GetType().Name),
     };
 
@@ -595,10 +639,10 @@ internal static class Uv
 
     /// <summary>How flat (u, v) scales u: the radius on a cylinder, the major radius on a torus, the radius at the
     /// frame's origin on a cone.</summary>
-    public static double Scale(Surface s) => s switch { Cylinder c => c.Radius, Torus t => t.Major, Cone k => k.Radius, _ => 1 };
+    public static double Scale(Surface s) => s switch { Cylinder c => c.Radius, Torus t => t.Major, Cone k => k.Radius, Sphere o => o.Radius, _ => 1 };
 
-    /// <summary>How flat (u, v) scales v: the minor radius on a torus.</summary>
-    public static double ScaleV(Surface s) => s is Torus t ? t.Minor : 1;
+    /// <summary>How flat (u, v) scales v: the minor radius on a torus, the radius on a sphere.</summary>
+    public static double ScaleV(Surface s) => s switch { Torus t => t.Minor, Sphere o => o.Radius, _ => 1 };
 
     /// <summary>Which side of the surface a point is on: signed distance from a plane along its normal, from a cylinder
     /// or a torus's tube outwards.</summary>
@@ -608,6 +652,7 @@ internal static class Uv
         Cylinder c => Radial(c, p) - c.Radius,
         Torus t => TorusSide(t, p),
         Cone k => ConeSide(k, p),
+        Sphere o => (p - o.Frame.Origin).Length - o.Radius,
         _ => throw new NotSupportedException(s.GetType().Name),
     };
 
@@ -632,6 +677,7 @@ internal static class Uv
         Cylinder c => Math.Abs(Radial(c, p) - c.Radius),
         Torus t => TorusDistance(t, p),
         Cone k => Math.Abs(ConeSide(k, p)),
+        Sphere o => Math.Abs((p - o.Frame.Origin).Length - o.Radius),
         _ => throw new NotSupportedException(s.GetType().Name),
     };
 
@@ -728,6 +774,28 @@ internal static class Uv
                 var turning = radial * -Math.Sin(psi) + t.Frame.ZAxis * Math.Cos(psi);
                 return new Line2(new Point2D(u, psi), new Vector2D(0, y.Dot(turning) > 0 ? 1 : -1));
             }
+            case (Sphere o, Circle3 k) when k.Frame.ZAxis.Cross(o.Frame.ZAxis).Length < 1e-9:
+            {
+                // A parallel: v fixed, u runs with t.
+                var x = k.Frame.XAxis;
+                var phase = Math.Atan2(x.Dot(o.Frame.YAxis), x.Dot(o.Frame.XAxis));
+                var v = Of(o, k.At(0)).Y;
+                return new Line2(new Point2D(phase, v), new Vector2D(k.Frame.ZAxis.Dot(o.Frame.ZAxis) > 0 ? 1 : -1, 0));
+            }
+            case (Sphere o, Circle3 k):
+            {
+                // A meridian (a great circle through the poles, round the centre): u fixed by the half-plane its X
+                // points into, v runs with t.
+                var (x, y, z) = (k.Frame.XAxis, k.Frame.YAxis, o.Frame.ZAxis);
+                var radial = (x - z * x.Dot(z)).Normalized();
+                var u = Math.Atan2(radial.Dot(o.Frame.YAxis), radial.Dot(o.Frame.XAxis));
+                var psi = Math.Atan2(x.Dot(z), x.Dot(radial));
+                var turning = radial * -Math.Sin(psi) + z * Math.Cos(psi);
+                return new Line2(new Point2D(u, psi), new Vector2D(0, y.Dot(turning) > 0 ? 1 : -1));
+            }
+            case (Sphere o, Pole q):
+                // A pole: v at plus or minus a quarter turn, u runs with t.
+                return new Line2(new Point2D(0, Math.Sign((q.Point - o.Frame.Origin).Dot(o.Frame.ZAxis)) * Math.PI / 2), new Vector2D(1, 0));
             default:
                 throw new NotSupportedException($"a {c.GetType().Name} on a {s.GetType().Name}");
         }

@@ -428,12 +428,42 @@ match the F-rep core and `ExactBrep`, have exact volumes and read back in OCCT v
 `tests/Isoform.Brep.Tests` 279, `BrepKernelStepTests` 65, the F-rep core's sweep tests 76. Seven of the playground's
 13 examples build.
 
+## Experiment 12: spheres and poles (done, 2026-11-01)
+
+Chosen from the candidates (1, its sphere half), for the playground's turned shaft.
+
+- *Carrier:* `Sphere`, round its frame's Z: u round the axis, v the latitude in [−π/2, π/2]; its normal is its own
+  (Su vanishes at the poles).
+- *Poles:* where a face runs up to a pole its (u, v) boundary runs along v = ±π/2 over a single point. That is a
+  degenerate edge on a `Pole` curve (one point for every t, t the u it runs over), used once, by that face: it closes
+  the loop in (u, v), so tracing, locating, sewing and `MassProperties` take it unchanged (it runs along u alone and
+  adds nothing to the integrals). `BodyCheck` allows it one use and leaves it out of the Euler–Poincaré count;
+  sewing gives it no partner; the topology skips it; STEP leaves it out (a loop through a pole closes there, as
+  Isoform's export has it), carrying the u it turns on to the next image.
+- *Intersections:* a sphere is a torus without a hole (its section a circle on the axis), so a plane square to its
+  axis and a cylinder or cone round it meet it through the torus's routines; other planes and cylinders (circles
+  that are not parallels) are refused. Ray hits, (u, v), side and distance, parallels and meridians as p-curves.
+- *Mass properties:* closed form on a sphere too, R² cos v (c · n + R) for the volume, R² cos v for the area.
+- *Revolve:* an arc round a centre on the axis sweeps a sphere, a cap closed at a pole where it ends on the axis, a
+  whole ball where both ends do; part turns close the poles with their ends.
+
+**Results:** 4 more documents: the playground's turned shaft (dome, cone, undercut fillet, chamfered lead), a ball,
+a domed post with a bore down its axis (the cylinder takes the pole away), a domed post cut flat square to its axis.
+All 69 documents match the F-rep core and `ExactBrep` and have exact volumes; OCCT reads all back valid, without
+healing but for the two with a pole (a ball, the shaft's dome), which need it exactly as Isoform's own export of a
+dome does (`StepExportTests` marks them so: STEP cannot say a degenerate edge). Tests: `tests/Isoform.Brep.Tests` 294,
+`BrepKernelStepTests` 69. Eight of the playground's 13 examples build.
+
+Not yet: pointed cones (`ExactBrep` has no apex either, so nothing to compare with), spheres off a revolve's axis
+(ball corners).
+
 ## Next: candidates (to decide)
 
 What still stops the playground's examples, and what is left from before:
 
-1. **Spheres and apexes:** a dome (an arc ending on the axis) and a pointed cone, which need a sphere carrier and a
-   degenerate edge; the same sphere gives ball corners where three fillets meet.
+1. **Ball corners:** where three fillets meet, a piece of a sphere bounded by the three fillets' ends (circles that
+   are not its parallels), which `ExactBrep` writes with the sphere's poles turned away from the piece. Then pointed
+   cones (an apex as a pole of the cone).
 2. **Offset**, which moves every face (planes along their normal, cylinders, cones and tori by radius).
 3. **Arcs meeting lines at a corner** in loop fillets (a quartic, unless the radii make it a circle or ellipse).
 4. **Inventor as a second STEP reader**, parked.
@@ -452,4 +482,4 @@ What still stops the playground's examples, and what is left from before:
 
 Blended extrudes and shells (smooth F-rep blends) and lattices stay with the F-rep core.
 
-Recommended: 1 (the turned shaft, and ball corners), then 2 (offset, the last playground feature with exact faces).
+Recommended: 2 (offset, the last playground feature with exact faces: it unblocks "Mirror and offset"), then 1.

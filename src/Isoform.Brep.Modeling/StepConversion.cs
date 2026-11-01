@@ -27,16 +27,27 @@ public static class StepConversion
         for (var b = 0; b < bodies.Count; b++)
         {
             var (body, names) = (bodies[b].Body, bodies[b].Names);
-            var (v0, e0) = (vertices.Count, edges.Count);
+            var v0 = vertices.Count;
             foreach (var v in body.Vertices) vertices.Add(new BrepVertex(vertices.Count, v.Point));
-            foreach (var e in body.Edges) edges.Add(Finish(edges.Count, e, body, v0));
+            // A pole's edge is not written (a loop through a pole closes there, as Isoform's export has it).
+            var edgeOf = new int[body.Edges.Length];
+            for (var i = 0; i < body.Edges.Length; i++)
+            {
+                edgeOf[i] = body.Edges[i].Curve is Pole ? -1 : edges.Count;
+                if (edgeOf[i] >= 0) edges.Add(Finish(edges.Count, body.Edges[i], body, v0));
+            }
 
             BrepShell Shell(Shell shell) => new([.. shell.Faces.Select(f =>
             {
                 var face = body[f];
                 var surface = Surface(face.Surface, faceOffset + f.Index, string.Join("+", names[f]));
-                var loops = face.Loops.Select((l, i) => new BrepLoop([.. SeamFirst(body, l, face.SameSense).Select(c =>
-                    new BrepCoedge(e0 + body[c].Edge.Index, body[c].Forward, null))], Outer: i == 0)).ToList();
+                // Each coedge, or for a pole how far it turns u.
+                var loops = face.Loops.Select(l => SeamFirst(body, l, face.SameSense).Select(c =>
+                {
+                    if (edgeOf[body[c].Edge.Index] >= 0) return (Coedge: (BrepCoedge?)new BrepCoedge(edgeOf[body[c].Edge.Index], body[c].Forward, null), Turn: 0.0);
+                    var (from, to) = body.ParametersOf(c);
+                    return (null, body[c].Pcurve.At(to).X - body[c].Pcurve.At(from).X);
+                }).ToList()).ToList();
                 return new BrepFace(faceOffset + f.Index, names[f], surface, face.SameSense, WithImages(surface, loops, edges));
             })]);
 
@@ -88,19 +99,25 @@ public static class StepConversion
         }
     }
 
-    // A curved face's loops with every coedge's image, each starting where the one before it ended.
-    static List<BrepLoop> WithImages(IsoSurface s, List<BrepLoop> loops, List<BrepEdge> edges)
+    // A curved face's loops with every coedge's image, each starting where the one before it ended (or across a pole,
+    // where the one before it ended moved along u as far as the pole turns).
+    static List<BrepLoop> WithImages(IsoSurface s, List<List<(BrepCoedge? Coedge, double Turn)>> loops, List<BrepEdge> edges)
     {
-        if (s.Kind == SurfaceKind.Plane) return loops;
+        if (s.Kind == SurfaceKind.Plane) return [.. loops.Select((l, i) => new BrepLoop([.. l.Select(c => c.Coedge!.Value)], Outer: i == 0))];
         var images = new Dictionary<int, UvCurve>();
         (double U, double V)? anchor = null;
         var result = new List<BrepLoop>();
-        foreach (var loop in loops)
+        foreach (var (loop, index) in loops.Select((l, i) => (l, i)))
         {
             var coedges = new List<BrepCoedge>();
             var last = anchor;
-            foreach (var c in loop.Coedges)
+            foreach (var (coedge, turn) in loop)
             {
+                if (coedge is not { } c)
+                {
+                    if (last is { } at) last = (at.U + turn, at.V);
+                    continue;
+                }
                 var e = edges[c.Edge];
                 if (!images.TryGetValue(c.Edge, out var image)) images[c.Edge] = image = SurfaceParameters.Image(s, e.Curve, e.T0, e.T1);
                 var from = c.Forward ? image.Start : image.End;
@@ -110,7 +127,7 @@ public static class StepConversion
                 anchor ??= c.Forward ? image.Start : image.End;
                 last = c.Forward ? image.End : image.Start;
             }
-            result.Add(loop with { Coedges = coedges });
+            result.Add(new BrepLoop(coedges, Outer: index == 0));
         }
         return result;
     }
@@ -141,6 +158,7 @@ public static class StepConversion
         Torus t => new IsoSurface(id, source, SurfaceKind.Torus, t.Frame.Origin, t.Frame.ZAxis, t.Major, t.Minor),
         // Isoform's cone stands on its apex and opens along its axis; the normals agree, both away from the axis.
         Cone k => new IsoSurface(id, source, SurfaceKind.Cone, k.Apex, k.Frame.ZAxis * Math.Sign(k.Slope), Angle: Math.Atan(Math.Abs(k.Slope))),
+        Sphere o => new IsoSurface(id, source, SurfaceKind.Sphere, o.Frame.Origin, o.Frame.ZAxis, o.Radius),
         _ => throw new NotSupportedException(s.GetType().Name),
     };
 }

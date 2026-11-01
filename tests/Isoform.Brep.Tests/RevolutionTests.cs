@@ -35,6 +35,37 @@ public class RevolutionTests(ITestOutputHelper output)
         BodyCheck.Genus(body, new ShellId(0)).Should().Be(0);
     }
 
+    // Experiment 12: an arc round a centre on the axis turns into a sphere, closed at a pole where it reaches the axis.
+    static ProfileLoop DomedPost => new([new LineSegment(P(0, 0), P(5, 0)), new LineSegment(P(5, 0), P(5, 10)),
+        new ArcSegment(P(0, 10), 5, 0, Math.PI / 2), new LineSegment(P(0, 15), P(0, 0))]);
+
+    [Fact]
+    public void A_half_circle_on_the_axis_turns_into_a_ball()
+    {
+        var body = Revolve(new ProfileLoop([new ArcSegment(P(0, 0), 5, -Math.PI / 2, Math.PI), new LineSegment(P(0, 5), P(0, -5))]));
+        MassProperties.Volume(body).Should().BeApproximately(4.0 / 3 * Math.PI * 125, 1e-9);
+        body.Faces.Should().ContainSingle().Which.Surface.Should().BeOfType<Sphere>();
+        MassProperties.Area(body, new FaceId(0)).Should().BeApproximately(4 * Math.PI * 25, 1e-9);
+        BodyCheck.Genus(body, new ShellId(0)).Should().Be(0);
+    }
+
+    [Fact]
+    public void A_post_with_a_dome()
+    {
+        var body = Revolve(DomedPost);
+        MassProperties.Volume(body).Should().BeApproximately(Math.PI * 25 * 10 + 2.0 / 3 * Math.PI * 125, 1e-9);
+        body.Faces.Select(f => f.Surface.GetType().Name).Order().Should().Equal("Cylinder", "Plane", "Sphere");
+    }
+
+    [Fact]
+    public void Half_a_domed_post_closes_its_pole_with_the_ends()
+    {
+        var (r, problem) = Revolution.Revolve(new Region(DomedPost), RigidTransform3D.Identity, angle: Math.PI);
+        problem.Should().BeNull();
+        MassProperties.Volume(r!.Body).Should().BeApproximately((Math.PI * 25 * 10 + 2.0 / 3 * Math.PI * 125) / 2, 1e-9);
+        BodyCheck.Problems(r.Body).Should().BeEmpty();
+    }
+
     [Fact]
     public void A_cone_coming_to_a_point_on_the_axis_is_refused()
     {

@@ -531,6 +531,7 @@ public sealed class BrepModeler(ModelingSettings settings) : IModeler
             for (var i = 0; i < body.Edges.Length; i++)
             {
                 var uses = body.UsesOf(new EdgeId(i));
+                if (uses.Length < 2) continue; // a pole's, not an edge between faces
                 var (fa, fb) = (body.FaceOf(uses[0]).Index, body.FaceOf(uses[1]).Index);
                 if (fa == fb) continue;
                 var key = (Math.Min(fa, fb), Math.Max(fa, fb));
@@ -575,7 +576,7 @@ public sealed class BrepModeler(ModelingSettings settings) : IModeler
 
     // How far a face's surface can stand from its corners: a whole circle round a cylinder's or a cone's axis is
     // that far out (a cone's radius here taken at its frame, which lies on the face), a torus's tube further.
-    static double Reach(Surface s) => s switch { Cylinder c => c.Radius, Cone k => k.Radius, Torus t => t.Major + t.Minor, _ => 0 };
+    static double Reach(Surface s) => s switch { Cylinder c => c.Radius, Cone k => k.Radius, Torus t => t.Major + t.Minor, Sphere o => o.Radius, _ => 0 };
 
     static Point3D P(double[] a) => new(a[0], a[1], a[2]);
     static Vector3D V(double[] a) => new(a[0], a[1], a[2]);
@@ -614,6 +615,7 @@ public sealed class BrepResult(IReadOnlyList<Diagnostic> diagnostics, Topology? 
         Cylinder c => Math.Abs(Math.Sqrt(Square(c.Frame.ApplyInverse(p).X) + Square(c.Frame.ApplyInverse(p).Y)) - c.Radius),
         Torus t => Math.Abs(Math.Sqrt(Square(Math.Sqrt(Square(t.Frame.ApplyInverse(p).X) + Square(t.Frame.ApplyInverse(p).Y)) - t.Major) + Square(t.Frame.ApplyInverse(p).Z)) - t.Minor),
         Cone k => Math.Abs(Math.Sqrt(Square(k.Frame.ApplyInverse(p).X) + Square(k.Frame.ApplyInverse(p).Y)) - k.RadiusAt(k.Frame.ApplyInverse(p).Z)) / Math.Sqrt(1 + Square(k.Slope)),
+        Sphere o => Math.Abs((p - o.Frame.Origin).Length - o.Radius),
         _ => throw new NotSupportedException(s.GetType().Name),
     };
 

@@ -168,6 +168,12 @@ internal static class Sewing
         for (var i = 0; i < uses.Count; i++)
         {
             if (partner[i] >= 0) continue;
+            // A pole's use is the only one of its edge.
+            if (uses[i].Use.Curve is Pole)
+            {
+                partner[i] = i;
+                continue;
+            }
             foreach (var j in byStart[end[i]])
             {
                 if (j == i || partner[j] >= 0 || end[j] != start[i] || !Opposite(uses[i].Use, uses[j].Use)) continue;
@@ -223,7 +229,7 @@ internal static class Sewing
                                 var alpha = (w.From - w.To) / (u.To - u.From);
                                 var beta = w.From - alpha * u.To;
                                 edgeOf[i] = e = (edge, forward, Uv.Reparametrised(u.Pcurve, 1, d));
-                                edgeOf[partner[i]] = (edge, !forward, Uv.Reparametrised(w.Pcurve, Math.Round(alpha), beta + alpha * d));
+                                if (partner[i] != i) edgeOf[partner[i]] = (edge, !forward, Uv.Reparametrised(w.Pcurve, Math.Round(alpha), beta + alpha * d));
                             }
                             loopUses.Add(new BodyBuilder.Use(e.Edge, e.Forward, e.Pcurve));
                         }

@@ -8,7 +8,8 @@ namespace Isoform.Occt.Tests;
 
 /// <summary>
 /// The managed B-rep kernel's bodies, written as STEP by Isoform and read back by OCCT: valid solids with the kernel's
-/// face, edge and corner counts and its exact volume, both with OCCT's shape healing and without it.
+/// face, edge and corner counts and its exact volume, both with OCCT's shape healing and without it (but for a sphere
+/// cap holding a pole, which needs it).
 /// </summary>
 public class BrepKernelStepTests(ITestOutputHelper output)
 {
@@ -37,6 +38,9 @@ public class BrepKernelStepTests(ITestOutputHelper output)
         shape.SolidCount.Should().Be(t.BodyCount);
         StepExportTests.Counts(shape).Should().Be((t.Faces.Count, t.Edges.Count, t.Vertices.Count));
         shape.Volume.Should().BeApproximately(volume, volume * 1e-11);
+        // A sphere cap holding a pole needs the reader's healing, as Isoform's own export does (StepExportTests): the
+        // degenerate edge there is one STEP cannot say.
+        if (result.Bodies.Any(b => b.Body.Edges.Any(e => e.Curve is Isoform.Brep.Pole))) return;
         raw.IsValid.Should().BeTrue("the file needs no healing");
         raw.MaxTolerance.Should().BeLessThanOrEqualTo(1e-7);
         raw.Volume.Should().BeApproximately(volume, volume * 1e-11);

@@ -7,7 +7,7 @@ namespace Isoform.Brep;
 /// boundary integral over its loops in (u, v) by Green's theorem: <c>∬ f du dv = ∮ Q dv</c> with
 /// <c>Q(u, v) = ∫ f(s, v) ds</c> from a fixed u*. Q is in closed form on the kernel's surfaces (f is a constant or a
 /// sine and cosine of u there), the loop integral Gauss–Legendre, so the result is exact for planes and to rounding
-/// for the curved surfaces.
+/// for the curved surfaces. A pole's piece of a loop runs along u alone and adds nothing.
 /// </summary>
 public static class MassProperties
 {
@@ -60,6 +60,12 @@ public static class MassProperties
             var rho = s.Major + s.Minor * cos;
             return rho * s.Minor * (-c.Dot(Along(s.Frame, u)) * cos + (c.Dot(s.Frame.ZAxis) * sin + rho * cos + s.Minor * sin * sin) * u);
         },
+        // n = cos v e + sin v Z. Su x Sv = R^2 cos v n, S - p = c + R n: R^2 cos v (c . e cos v + c . Z sin v + R).
+        Sphere s => (u, v) =>
+        {
+            var (c, (sin, cos)) = (s.Frame.Origin - p, Math.SinCos(v));
+            return s.Radius * s.Radius * cos * (-c.Dot(Along(s.Frame, u)) * cos + (c.Dot(s.Frame.ZAxis) * sin + s.Radius) * u);
+        },
         _ => Numeric(surface, (u, v) => (surface.At(u, v) - p).Dot(surface.DerivativeU(u, v).Cross(surface.DerivativeV(u, v)))),
     };
 
@@ -70,6 +76,7 @@ public static class MassProperties
         Cylinder s => (u, _) => s.Radius * u,
         Cone s => (u, v) => Math.Abs(s.RadiusAt(v)) * Math.Sqrt(1 + s.Slope * s.Slope) * u,
         Torus s => (u, v) => Math.Abs(s.Major + s.Minor * Math.Cos(v)) * s.Minor * u,
+        Sphere s => (u, v) => s.Radius * s.Radius * Math.Cos(v) * u,
         _ => Numeric(surface, (u, v) => surface.DerivativeU(u, v).Cross(surface.DerivativeV(u, v)).Length),
     };
 

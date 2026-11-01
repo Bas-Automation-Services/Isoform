@@ -51,8 +51,9 @@ public static class BodyCheck
         {
             var edge = body.Edges[e];
             var uses = body.UsesOf(new EdgeId(e));
-            if (uses.Length != 2) Add(ProblemKind.EdgeUses, $"edge {e}", $"used {uses.Length} times, a closed manifold shell uses every edge twice");
-            else if (body[uses[0]].Forward == body[uses[1]].Forward) Add(ProblemKind.EdgeSenses, $"edge {e}", "both uses run the same way");
+            var pole = edge.Curve is Pole;
+            if (uses.Length != (pole ? 1 : 2)) Add(ProblemKind.EdgeUses, $"edge {e}", $"used {uses.Length} times, a closed manifold shell uses every edge twice (a pole's once)");
+            else if (!pole && body[uses[0]].Forward == body[uses[1]].Forward) Add(ProblemKind.EdgeSenses, $"edge {e}", "both uses run the same way");
 
             if (!(edge.T1 > edge.T0)) Add(ProblemKind.EdgeEnds, $"edge {e}", $"empty parameter range [{edge.T0}, {edge.T1}]");
             CheckEnd(e, edge.Start, edge.T0, "start");
@@ -122,13 +123,9 @@ public static class BodyCheck
             if (faces.IsEmpty) continue;
             if (!Connected(body, shell)) Add(ProblemKind.ShellDisconnected, $"shell {s}", "its faces are not one connected piece");
 
-            var coedges = faces.SelectMany(f => body[f].Loops).SelectMany(body.CoedgesOf).ToList();
-            var v = coedges.Select(body.StartOf).Distinct().Count();
-            var e = coedges.Select(c => body[c].Edge).Distinct().Count();
-            var l = faces.Sum(f => body[f].Loops.Length);
-            var twiceEuler = v - e + 2 * faces.Length - l; // V − E + F − (L − F) = 2(1 − G)
+            var twiceEuler = TwiceEuler(body, shell); // V − E + F − (L − F) = 2(1 − G)
             if (twiceEuler % 2 != 0 || twiceEuler > 2)
-                Add(ProblemKind.ShellEuler, $"shell {s}", $"V − E + 2F − L = {twiceEuler} ({v} − {e} + 2·{faces.Length} − {l}) fits no genus");
+                Add(ProblemKind.ShellEuler, $"shell {s}", $"V − E + 2F − L = {twiceEuler} fits no genus");
 
             var volume = MassProperties.Volume(body, shell);
             if (s == 0 ? volume <= 0 : volume >= 0)
@@ -138,14 +135,17 @@ public static class BodyCheck
     }
 
     /// <summary>The genus of a closed shell from the Euler–Poincaré formula (0 for a block, 1 for a plate with a hole).</summary>
-    public static int Genus(Body body, ShellId shell)
+    public static int Genus(Body body, ShellId shell) => 1 - TwiceEuler(body, shell) / 2;
+
+    // V − E + 2F − L, a pole's edge (where a loop runs along a surface's pole) not counted.
+    static int TwiceEuler(Body body, ShellId shell)
     {
         var faces = body[shell].Faces;
         var coedges = faces.SelectMany(f => body[f].Loops).SelectMany(body.CoedgesOf).ToList();
         var v = coedges.Select(body.StartOf).Distinct().Count();
-        var e = coedges.Select(c => body[c].Edge).Distinct().Count();
+        var e = coedges.Select(c => body[c].Edge).Distinct().Count(edge => body[edge].Curve is not Pole);
         var l = faces.Sum(f => body[f].Loops.Length);
-        return 1 - (v - e + 2 * faces.Length - l) / 2;
+        return v - e + 2 * faces.Length - l;
     }
 
     static bool Connected(Body body, ShellId shell)

@@ -2,7 +2,7 @@ using Isoform.Document;
 
 namespace Isoform.Brep.Tests;
 
-/// <summary>Isoform part documents the managed kernel builds (experiments 1 to 11), with their exact volumes.</summary>
+/// <summary>Isoform part documents the managed kernel builds (experiments 1 to 12), with their exact volumes.</summary>
 public static class Documents
 {
     static readonly SketchPlane Xy = new([0, 0, 0], [1, 0, 0], [0, 0, 1]);
@@ -376,6 +376,41 @@ public static class Documents
             new CombineBodies("weld", "boss", BooleanOp.Join) { Body = "plate" }), 50_000 + 20 * 20 * 8),
     ];
 
+    // Experiment 12: spheres. An arc round a centre on the axis turns into a sphere, closed at a pole where it reaches
+    // the axis. A post of radius 5 and 10 high under a dome of radius 5 (a hemisphere, 2π/3 · 125).
+    static Revolve DomedPost(string id) => new(id, BooleanOp.New, Upright(0, 0), new Profile([0, 0],
+    [
+        new ProfileEdge("bottom", [5, 0]), new ProfileEdge("wall", [5, 10]), new ProfileEdge("dome", [0, 15], Math.Tan(Math.PI / 8)), new ProfileEdge("axis", [0, 0]),
+    ]));
+
+    static readonly double DomedPostVolume = Math.PI * 25 * 10 + 2 * Math.PI / 3 * 125;
+
+    static readonly (string Name, PartDocument Document, double Volume)[] Domes =
+    [
+        // The playground's turned shaft: a quarter circle of radius 4 round (0, 52) closes it on the axis; an undercut
+        // fillet at the step and a chamfered lead at the base.
+        ("turned shaft", new(
+        [
+            new Revolve("shaft", BooleanOp.New, Upright(0, 0), new Profile([0, 0],
+            [
+                new ProfileEdge("base", [12, 0]), new ProfileEdge("big", [12, 20]), new ProfileEdge("step", [7, 20]),
+                new ProfileEdge("small", [7, 45]), new ProfileEdge("cone", [4, 52]), new ProfileEdge("dome", [0, 56], Math.Tan(Math.PI / 8)),
+                new ProfileEdge("axis", [0, 0]),
+            ])),
+            new Fillet("undercut", ["shaft/step", "shaft/small"], 1.5),
+            new Chamfer("lead", ["shaft/base", "shaft/big"], 1),
+        ]), Math.PI * (144 * 20 + 49 * 25 + 7.0 / 3 * (49 + 28 + 16) + 2.0 / 3 * 64)
+            + 2 * Math.PI * (7 + Centroid(1.5)) * Spandrel(1.5) - 2 * Math.PI * (12 - 1.0 / 3) * Triangle(1)),
+        ("ball", new([new Revolve("ball", BooleanOp.New, Upright(0, 0), new Profile([0, -5], [new ProfileEdge("round", [0, 5], 1), new ProfileEdge("axis", [0, -5])]))]),
+            4 * Math.PI / 3 * 125),
+        // A bore of radius 2 down the axis takes the pole away: the cylinder meets the dome in a circle at
+        // 10 + √21; the dome loses ∫ 2πr √(25 − r²) dr over r ≤ 2.
+        ("domed post with a bore", new([DomedPost("post"), new Hole("bore", [0, 0], 4)]),
+            DomedPostVolume - Math.PI * 4 * 10 - 2 * Math.PI / 3 * (125 - 21 * Math.Sqrt(21))),
+        // Cut square to the axis 3 above the dome's centre: the slice π ∫ (25 − z²) dz over 0 ≤ z ≤ 3 is left.
+        ("domed post cut flat", new([DomedPost("post"), new PlaneCut("cut", [0, 0, 13], [0, 0, 1])]), Math.PI * 25 * 10 + Math.PI * (75 - 9)),
+    ];
+
     public static IEnumerable<object[]> All =>
     [
         ["mounting plate", MountingPlate, MountingPlateVolume],
@@ -388,6 +423,7 @@ public static class Documents
         .. Cones.Select(b => new object[] { b.Name, b.Document, b.Volume }),
         .. Copies.Select(b => new object[] { b.Name, b.Document, b.Volume }),
         .. Sweeps.Select(b => new object[] { b.Name, b.Document, b.Volume }),
+        .. Domes.Select(b => new object[] { b.Name, b.Document, b.Volume }),
     ];
 
     public static PartDocument Named(string name) => name switch
@@ -395,6 +431,6 @@ public static class Documents
         "mounting plate" => MountingPlate,
         "bracket" => Bracket,
         "two pads" => TwoPads,
-        _ => Booleans.Concat(Holes).Concat(Angles).Concat(Rounds).Concat(Cones).Concat(Copies).Concat(Sweeps).Single(b => b.Name == name).Document,
+        _ => Booleans.Concat(Holes).Concat(Angles).Concat(Rounds).Concat(Cones).Concat(Copies).Concat(Sweeps).Concat(Domes).Single(b => b.Name == name).Document,
     };
 }
