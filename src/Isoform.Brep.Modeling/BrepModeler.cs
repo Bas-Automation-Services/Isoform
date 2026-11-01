@@ -8,9 +8,9 @@ namespace Isoform.Brep.Modeling;
 /// <summary>
 /// Isoform documents on the managed B-rep kernel: blocks, plain extrudes (an inline profile, or the regions of a
 /// sketch on a plane or on a flat face of the part), plain revolves (round the sketch's y axis or a line of it; edges
-/// on the axis sweep nothing), holes (through, or blind with a floor; along Z, into a face, or at a sketch's points),
-/// plane cuts (face <c>id/face</c>), patterns of those (linear, circular or mirrored; copy k of face s is
-/// <c>id/k:s</c>), and fillets and chamfers on the edge between two flat faces or round a cylinder square to a flat
+/// on the axis sweep nothing), sweeps along lines and arcs (sides <c>id/path:profile</c>), holes (through, or blind
+/// with a floor; along Z, into a face, or at a sketch's points), plane cuts (face <c>id/face</c>), patterns of those
+/// (linear, circular or mirrored; copy k of face s is <c>id/k:s</c>), bodies joined or cut into others, and fillets and chamfers on the edge between two flat faces or round a cylinder square to a flat
 /// face (face <c>id/face</c>, a cone for a chamfer there). Each starts a body, joins it or cuts it, working on the
 /// current body as Isoform's <see cref="Feature.Body"/> says. Faces carry Isoform's names: sides after their profile
 /// edge, caps <c>id/start</c> and <c>id/end</c>, blocks <c>id/x-</c> … <c>id/z+</c>, holes <c>id/wall</c> and
@@ -56,6 +56,12 @@ public sealed class BrepModeler(ModelingSettings settings) : IModeler
                 continue;
             }
 
+            if (feature is CombineBodies combine)
+            {
+                if (Combined(combine) is { } problemCombining) return Failed(problemCombining);
+                continue;
+            }
+
             var (tools, op, failed) = Tools(feature, current!, Motion.None);
             if (failed is not null) return Failed(failed);
             if (Apply(solids, current!, tools!, op, feature.Id) is { } problemApplying) return Failed(problemApplying);
@@ -72,6 +78,7 @@ public sealed class BrepModeler(ModelingSettings settings) : IModeler
                 Block { Blend: 0 } b => Guard(b.Id, () => [BlockTool(b, motion)], b.Op),
                 Extrude { Blend: 0 } e => Extruded(e, sketches, motion) is var (t, p) ? (t, e.Op, p) : default,
                 Revolve { Blend: 0 } r => Revolved(r, sketches, motion) is var (t, p) ? (t, r.Op, p) : default,
+                Sweep w => SweepTools(w, sketches, motion) is var (t, p) ? (t, w.Op, p) : default,
                 Hole h => HoleTools(h, sketches, Part(), motion) is var (t, p) ? (t, BooleanOp.Cut, p) : default,
                 PlaneCut c => Guard(c.Id, () => [PlaneTool(c, Part(), motion)], BooleanOp.Cut),
                 _ => (null, BooleanOp.New, Unsupported(feature.Id, $"{feature.GetType().Name} is not supported by the managed B-rep kernel yet")),
@@ -85,7 +92,7 @@ public sealed class BrepModeler(ModelingSettings settings) : IModeler
         {
             var count = p.Motion is MirrorMotion ? 1 : p.Motion switch { LinearMotion l => l.Count, CircularMotion c => c.Count, _ => 1 } - 1;
             var copies = (from k in Enumerable.Range(1, count) from id in p.Features select (K: k, Source: document[id])).ToList();
-            var cutsOnly = copies.All(c => c.Source is Hole or PlaneCut or Block { Op: BooleanOp.Cut } or Extrude { Op: BooleanOp.Cut } or Revolve { Op: BooleanOp.Cut })
+            var cutsOnly = copies.All(c => c.Source is Hole or PlaneCut or Block { Op: BooleanOp.Cut } or Extrude { Op: BooleanOp.Cut } or Revolve { Op: BooleanOp.Cut } or Sweep { Op: BooleanOp.Cut })
                            && copies.Select(c => bodyOf[c.Source.Id]).Distinct().Count() == 1;
             var batch = new List<NamedBody>();
             foreach (var (k, source) in copies)
@@ -99,6 +106,19 @@ public sealed class BrepModeler(ModelingSettings settings) : IModeler
                 else if (Apply(solids, body, renamed, op == BooleanOp.New ? BooleanOp.Join : op, p.Id) is { } problem) return problem;
             }
             return cutsOnly && batch.Count > 0 ? Apply(solids, bodyOf[copies[0].Source.Id], batch, BooleanOp.Cut, p.Id) : null;
+        }
+
+        // Another body joined into the current one or cut out of it, used up unless kept (its features then belong
+        // to the current body); its faces keep their names.
+        Diagnostic? Combined(CombineBodies c)
+        {
+            var tools = solids.Where(s => s.Body == c.Tool).Select(s => s.Solid).ToList();
+            if (!c.Keep)
+            {
+                solids.RemoveAll(s => s.Body == c.Tool);
+                foreach (var id in bodyOf.Where(kv => kv.Value == c.Tool).Select(kv => kv.Key).ToList()) bodyOf[id] = current!;
+            }
+            return Apply(solids, current!, tools, c.Op, c.Id);
         }
 
         Diagnostic? Prepare(Sketch s)
@@ -202,20 +222,75 @@ public sealed class BrepModeler(ModelingSettings settings) : IModeler
         {
             var (loops, names) = ProfileConversion.Loops(region, settings.Tolerance);
             var (sketch, moved) = motion.Place(FrameOf(plane!), new Region(loops[0], loops.Skip(1).ToList()));
-            loops = [.. moved.Loops];
             // The kernel turns (x, z) round its frame's Z from its X: the sketch's x round its y, towards −normal.
             var frame = RigidTransform3D.FromFrame(sketch.Origin, sketch.YAxis, sketch.XAxis);
-            // Outer loop counter-clockwise, holes clockwise: the kernel would turn them so, and number their faces so.
-            for (var l = 0; l < loops.Count; l++)
-                if (loops[l].SignedArea > 0 != (l == 0)) (loops[l], names[l]) = (loops[l].Reversed(), [.. Enumerable.Reverse(names[l])]);
-            var (result, why) = Revolution.Revolve(new Region(loops[0], loops.Skip(1).ToList()), frame, settings.Tolerance, Math.Min(r.Angle, 360) * Math.PI / 180);
-            if (result is null) throw new BooleanFailure($"{r.Id} cannot be revolved: {why}");
-            List<string> source = [.. names.SelectMany(n => n.Select(e => $"{r.Id}/{e}")), $"{r.Id}/start", $"{r.Id}/end"];
-            var faces = Enumerable.Range(0, result.Body.Faces.Length).ToDictionary(f => new FaceId(f),
-                f => (IReadOnlyList<string>)[.. result.Origins[f].Select(o => source[o.Face.Index])]);
-            return new NamedBody(result.Body, faces);
+            return Turned(r.Id, [.. moved.Loops], names, frame, Math.Min(r.Angle, 360) * Math.PI / 180, "start", "end");
         })], r.Op);
         return (tools, failed);
+    }
+
+    // Loops turned round the frame's Z (see Revolution), faces named id/<name> after their segments and a part turn's
+    // ends id/start and id/end.
+    NamedBody Turned(string id, List<ProfileLoop> loops, List<List<string>> names, RigidTransform3D frame, double angle, string start, string end)
+    {
+        // Outer loop counter-clockwise, holes clockwise: the kernel would turn them so, and number their faces so.
+        for (var l = 0; l < loops.Count; l++)
+            if (loops[l].SignedArea > 0 != (l == 0)) (loops[l], names[l]) = (loops[l].Reversed(), [.. Enumerable.Reverse(names[l])]);
+        var (result, why) = Revolution.Revolve(new Region(loops[0], loops.Skip(1).ToList()), frame, settings.Tolerance, angle);
+        if (result is null) throw new BooleanFailure($"{id} cannot be revolved: {why}");
+        List<string> source = [.. names.SelectMany(n => n.Select(e => $"{id}/{e}")), $"{id}/{start}", $"{id}/{end}"];
+        var faces = Enumerable.Range(0, result.Body.Faces.Length).ToDictionary(f => new FaceId(f),
+            f => (IReadOnlyList<string>)[.. result.Origins[f].Select(o => source[o.Face.Index])]);
+        return new NamedBody(result.Body, faces);
+    }
+
+    // A sweep, one tool per region: the profile extruded along each line of the path and turned round each arc's
+    // axis (as Sweeps.Plan places them, with the F-rep core), the pieces joined where they meet across the path. Sides
+    // id/<path entity>:<profile entity>, an open path's ends id/start and id/end.
+    (List<NamedBody>? Tools, Diagnostic? Problem) SweepTools(Sweep sw, Dictionary<string, Placed> sketches, Motion motion)
+    {
+        var (plane, regions, problem) = Shape(sw, sketches);
+        if (problem is not null) return (null, new Diagnostic(SketchSolution.Invalid, sw.Id, $"{sw.Id}: {problem}"));
+        var path = sketches[sw.Path.Sketch];
+        var (chain, closed, lost) = SketchRegions.Chain(path.Sketch, path.Solution, sw.Path.Entities, sw.Path.From);
+        if (lost is not null) return (null, new Diagnostic(SketchSolution.Invalid, sw.Id, $"{sw.Id} cannot follow its path: {lost}"));
+        var (pieces, sections, refused) = Sweeps.Plan(plane!, regions!, path.Plane, chain!, closed, motion.Frame);
+        if (refused is not null)
+            return (null, new Diagnostic(Diagnostic.InvalidParameter, sw.Id, $"{sw.Id} cannot sweep sketch {sw.Sketch} along {sw.Path.Sketch}: {refused}"));
+        var (tools, _, failed) = Guard(sw.Id, () => [.. sections!.Select(section =>
+        {
+            var parts = pieces!.Select((piece, k) => PieceOf(sw.Id, piece, section,
+                k == 0 && !closed ? "start" : $"{piece.Id}:from", k == pieces!.Count - 1 && !closed ? "end" : $"{piece.Id}:to")).ToList();
+            // Each piece joined on: they meet in their ends across the path, which the union drops.
+            var joined = parts[0];
+            foreach (var part in parts.Skip(1))
+            {
+                var (result, why) = Booleans.Unite(joined.Body, part.Body);
+                if (why is not null) throw new BooleanFailure($"{sw.Id}: its pieces do not join: {why}");
+                if (result is not [var one]) throw new BooleanFailure($"{sw.Id}: its pieces do not join into one solid");
+                joined = Named(one, [joined, part]);
+            }
+            return joined;
+        })], sw.Op);
+        return (tools, failed);
+    }
+
+    // One piece of a sweep: the section (a left of travel, b along the path plane's normal) extruded along a line, or
+    // in (distance from the axis, height) turned round an arc's axis, which mirrors it.
+    NamedBody PieceOf(string id, Isoform.Geometry.SweepPiece piece, SketchRegion section, string start, string end)
+    {
+        double[] At(double[] x)
+        {
+            var (u, v) = piece.Section(x[0], x[1]);
+            return [u, v];
+        }
+        Profile Map(Profile p) => piece.Arc ? new(At(p.Start), [.. p.Edges.Select(e => e with { To = At(e.To), Bulge = -e.Bulge })]) : p;
+        var (loops, names) = ProfileConversion.Loops(new SketchRegion(Map(section.Outer), [.. section.Holes.Select(Map)]), settings.Tolerance);
+        var sides = names.Select(l => l.Select(n => $"{piece.Id}:{n}").ToList()).ToList();
+        var f = piece.Frame;
+        return piece.Arc
+            ? Turned(id, loops, sides, RigidTransform3D.FromFrame(f.Origin, f.Y, f.X), piece.Angle, start, end)
+            : Swept(id, new Region(loops[0], loops.Skip(1).ToList()), RigidTransform3D.FromFrame(f.Origin, f.Z, f.X), 0, piece.Length, sides, start, end);
     }
 
     // A drill per spot: a cylinder along the outward normal where it goes in, from its floor (or from beyond the
@@ -408,6 +483,7 @@ public sealed class BrepModeler(ModelingSettings settings) : IModeler
         {
             Extrude e => (e.Plane, e.Profile, e.Sketch, e.Regions),
             Revolve r => (r.Plane, r.Profile, r.Sketch, r.Regions),
+            Sweep w => (null, null, w.Sketch, w.Regions),
             _ => throw new ArgumentException(f.Id),
         };
         if (sketch is null) return (plane, [new SketchRegion(profile!, [])], null);

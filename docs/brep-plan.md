@@ -406,20 +406,39 @@ of revolved bores and the flange's countersunk bolt circle among them).
 a piece of it within one half, the F-rep core names that piece by its arc alone; the kernel keeps both names, since
 it merged the halves when the solid was made. A sketch circle (one entity) is named the same by both.
 
+## Experiment 11: sweeps and combined bodies (done, 2026-11-01)
+
+Chosen from the candidates (1 and 2): both join what the kernel makes already.
+
+- *Sweeps:* the F-rep core's sweep planning is now `Sweeps.Plan` (public, unchanged): from the profile's plane and the
+  path it gives the pieces (`SweepPiece`, one per path entity, from where the plane crosses the path square, with the
+  same refusals) and the regions in section coordinates. The modeler builds each piece in the kernel (the section
+  extruded along a line, turned round an arc's axis in the piece's (distance, height) coordinates, which mirrors it)
+  and joins them in order; the joints, where neighbouring pieces' ends lie on one plane and their sides touch
+  tangentially, go through the booleans as fillets did. Sides `id/<path entity>:<profile entity>`, an open path's
+  ends `id/start` and `id/end`; a closed path has none (a circle path is one whole turn). Patterns copy sweeps too.
+- *Combined bodies:* `CombineBodies` joins another body into the current one or cuts it out, used up (its features
+  then belong to the current body) or kept; faces keep their names.
+- *Comparison:* corners are compared by place: the F-rep side's solids share the vertices where they touch (a clamp
+  in its seat), the kernel's each have their own.
+
+**Results:** 6 more documents: the playground's pipe bend (cylinders and a torus) with and without its flange, a bar
+round a closed stadium path, a ring swept round a circle, a body cutting its seat and kept, a body joined in. All 65
+match the F-rep core and `ExactBrep`, have exact volumes and read back in OCCT valid without healing. Tests:
+`tests/Isoform.Brep.Tests` 279, `BrepKernelStepTests` 65, the F-rep core's sweep tests 76. Seven of the playground's
+13 examples build.
+
 ## Next: candidates (to decide)
 
 What still stops the playground's examples, and what is left from before:
 
-1. **Combine bodies:** a boolean between two bodies of the part (the kernel has it; the modeler does not take
-   `CombineBodies` yet). Small.
-2. **Sweeps** along lines and arcs: an extrude along each line and a part-turn revolve round each arc, joined.
-3. **Spheres and apexes:** a dome (an arc ending on the axis) and a pointed cone, which need a sphere carrier and a
+1. **Spheres and apexes:** a dome (an arc ending on the axis) and a pointed cone, which need a sphere carrier and a
    degenerate edge; the same sphere gives ball corners where three fillets meet.
-4. **Offset**, which moves every face (planes along their normal, cylinders, cones and tori by radius).
-5. **Arcs meeting lines at a corner** in loop fillets (a quartic, unless the radii make it a circle or ellipse).
-6. **Inventor as a second STEP reader**, parked.
-7. **Local booleans:** rebuild only the faces a boolean touches.
-8. **Mixed models (B-rep, then F-rep):** today one model goes through one engine, and the B-rep modeler refuses the
+2. **Offset**, which moves every face (planes along their normal, cylinders, cones and tori by radius).
+3. **Arcs meeting lines at a corner** in loop fillets (a quartic, unless the radii make it a circle or ellipse).
+4. **Inventor as a second STEP reader**, parked.
+5. **Local booleans:** rebuild only the faces a boolean touches.
+6. **Mixed models (B-rep, then F-rep):** today one model goes through one engine, and the B-rep modeler refuses the
    whole model at the first feature it does not take. Both share the document, `IModeler`, the face names and
    topology (identical on every test document) and the exact output (`Isoform.Step.Brep`), which makes a hand-off
    possible: run the history in the kernel while it can, and at the first F-rep-only feature (lattice, smooth blend,
@@ -433,4 +452,4 @@ What still stops the playground's examples, and what is left from before:
 
 Blended extrudes and shells (smooth F-rep blends) and lattices stay with the F-rep core.
 
-Recommended: 1 and 2 together (both join what the kernel makes already), then 3.
+Recommended: 1 (the turned shaft, and ball corners), then 2 (offset, the last playground feature with exact faces).

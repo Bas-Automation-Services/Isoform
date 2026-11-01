@@ -61,7 +61,8 @@ public class BackendTests(ITestOutputHelper output)
         foreach (var f in faces)
             other.Where(o => Name(o) == Name(f)).Should().Contain(o => Same(f.Surface, o.Surface), Name(f));
 
-        // Corners (where three or more edges other than seams end) within 1e-9.
+        // Corners (where three or more edges other than seams end) within 1e-9, by place: the F-rep side's solids share
+        // the vertices where they touch, the kernel's each have their own.
         var corners = Corners(mine);
         var theirCorners = Corners(theirs);
         corners.Should().HaveSameCount(theirCorners);
@@ -86,7 +87,10 @@ public class BackendTests(ITestOutputHelper output)
     static List<Point3D> Corners(Step.Brep b)
     {
         var seams = b.Solids.SelectMany(s => s.Faces).SelectMany(f => f.Loops.SelectMany(l => l.Coedges).GroupBy(c => c.Edge).Where(g => g.Count() == 2).Select(g => g.Key)).ToHashSet();
-        return [.. b.Vertices.Where(v => b.Edges.Count(e => !seams.Contains(e.Index) && (e.Start == v.Index || e.End == v.Index)) >= 3).Select(v => v.Point)];
+        var corners = new List<Point3D>();
+        foreach (var v in b.Vertices.Where(v => b.Edges.Count(e => !seams.Contains(e.Index) && (e.Start == v.Index || e.End == v.Index)) >= 3))
+            if (corners.All(c => (c - v.Point).Length > 1e-9)) corners.Add(v.Point);
+        return corners;
     }
 
     [Fact]

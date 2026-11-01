@@ -7,11 +7,12 @@ using static System.FormattableString;
 namespace Isoform.Modeling;
 
 /// <summary>
-/// A sweep's pieces from its path and its profile, the checks that keep it exact, and its field (see
-/// <see cref="SweepField"/>). What would not be exact is refused: a corner in the path, a profile not square to the path
-/// at its start, an arc tighter than the profile reaches towards its centre.
+/// A sweep's pieces from its path and its profile with the checks that keep it exact (<see cref="Plan"/>, which the
+/// managed B-rep kernel builds from too), and its field (see <see cref="SweepField"/>). What would not be exact is
+/// refused: a corner in the path, a profile not square to the path at its start, an arc tighter than the profile
+/// reaches towards its centre.
 /// </summary>
-static class Sweeps
+public static class Sweeps
 {
     // A point lies on the profile's plane within 1e-6 mm (sketch points join as closely); square and tangent within 1e-6 rad.
     const double Near = 1e-6, Square = 1e-6;
@@ -20,6 +21,53 @@ static class Sweeps
     public static (Field? Field, Point3D[] Box, string? Problem) Of(Sweep sw, SketchPlane profilePlane, IReadOnlyList<SketchRegion> regions,
         SketchPlane pathPlane, Profile path, bool closed, Frame placement, Func<Surface, Surface> register)
     {
+        var (pieces, sections, problem) = Plan(profilePlane, regions, pathPlane, path, closed, placement);
+        if (problem is not null) return Refused(problem);
+        var normal = Profiles.FrameOf(pathPlane).Then(placement).Z;
+
+        Field Section(SweepPiece piece)
+        {
+            Field Loop(Profile p)
+            {
+                var placed = Profiles.CounterClockwise(Map(p, piece.Section, piece.Arc));
+                var leaves = placed.Select(x => ProfileField.EdgeLeaf(x.Edge, piece.Frame, piece.Arc,
+                    (k, o, a, r, m, ang) => register(new Surface(0, $"{sw.Id}/{piece.Id}:{x.Id}", k, o, a, r, m, ang)))).ToList();
+                return new ProfileField(placed.Select(x => x.Edge).ToList(), leaves, piece.Frame, piece.Arc);
+            }
+            var fields = sections.Select(r => r.Holes.Count == 0 ? Loop(r.Outer) : (Field)new MaxField([Loop(r.Outer), .. r.Holes.Select(h => (Field)new NegateField(Loop(h)))])).ToList();
+            return fields.Count == 1 ? fields[0] : new MinField(fields);
+        }
+        var field = SweepField.Of(pieces, [.. pieces.Select(Section)], closed,
+            (name, o, axis) => new LeafField(register(new Surface(0, $"{sw.Id}/{name}", SurfaceKind.Plane, o, axis))));
+
+        // A box: the section's box at both ends of a line, a disc of the largest radius at both heights of an arc.
+        var (a0, b0, a1, b1) = sections.Select(r => Profiles.Bounds(r.Outer)).Aggregate((x, y) => (Math.Min(x.U0, y.U0), Math.Min(x.V0, y.V0), Math.Max(x.U1, y.U1), Math.Max(x.V1, y.V1)));
+        var box = new List<Point3D>();
+        foreach (var piece in pieces)
+        {
+            if (!piece.Arc)
+            {
+                foreach (var (at, along) in new[] { piece.Start, piece.End })
+                    box.AddRange(from a in new[] { a0, a1 } from b in new[] { b0, b1 } select at + normal.Cross(along) * a + normal * b);
+                continue;
+            }
+            var rho = piece.Radius + (piece.Turn > 0 ? -a0 : a1);
+            var extent = new Vector3D(rho * Math.Sqrt(Math.Max(0, 1 - normal.X * normal.X)), rho * Math.Sqrt(Math.Max(0, 1 - normal.Y * normal.Y)), rho * Math.Sqrt(Math.Max(0, 1 - normal.Z * normal.Z)));
+            foreach (var b in new[] { b0, b1 })
+                box.AddRange([piece.Frame.Origin + normal * b - extent, piece.Frame.Origin + normal * b + extent]);
+        }
+        return (field, [.. box], null);
+    }
+
+    /// <summary>
+    /// The sweep's pieces, one per path entity from where the profile's plane crosses the path square, and its regions
+    /// in section coordinates there (a to the left of travel, b along the path plane's normal); or why it cannot be
+    /// exact.
+    /// </summary>
+    public static (List<SweepPiece>? Pieces, List<SketchRegion>? Sections, string? Problem) Plan(SketchPlane profilePlane,
+        IReadOnlyList<SketchRegion> regions, SketchPlane pathPlane, Profile path, bool closed, Frame placement)
+    {
+        static (List<SweepPiece>?, List<SketchRegion>?, string?) Refused(string why) => (null, null, why);
         var sketch = Profiles.FrameOf(pathPlane).Then(placement);
         var section = Profiles.FrameOf(profilePlane).Then(placement);
         var edges = Profiles.Edges(path);
@@ -98,38 +146,7 @@ static class Sweeps
             if ((arc.Turn > 0 ? aHi : -aLo) is var reach && reach > arc.Radius + 1e-9)
                 return Refused(Invariant($"path arc {arc.Id} has a radius of {arc.Radius:G4} mm, but the profile reaches {reach:G4} mm towards its centre: the sweep would run through itself there"));
 
-        Field Section(SweepPiece piece)
-        {
-            Field Loop(Profile p)
-            {
-                var placed = Profiles.CounterClockwise(Map(p, piece.Section, piece.Arc));
-                var leaves = placed.Select(x => ProfileField.EdgeLeaf(x.Edge, piece.Frame, piece.Arc,
-                    (k, o, a, r, m, ang) => register(new Surface(0, $"{sw.Id}/{piece.Id}:{x.Id}", k, o, a, r, m, ang)))).ToList();
-                return new ProfileField(placed.Select(x => x.Edge).ToList(), leaves, piece.Frame, piece.Arc);
-            }
-            var fields = sections.Select(r => r.Holes.Count == 0 ? Loop(r.Outer) : (Field)new MaxField([Loop(r.Outer), .. r.Holes.Select(h => (Field)new NegateField(Loop(h)))])).ToList();
-            return fields.Count == 1 ? fields[0] : new MinField(fields);
-        }
-        var field = SweepField.Of(pieces, [.. pieces.Select(Section)], closed,
-            (name, o, axis) => new LeafField(register(new Surface(0, $"{sw.Id}/{name}", SurfaceKind.Plane, o, axis))));
-
-        // A box: the section's box at both ends of a line, a disc of the largest radius at both heights of an arc.
-        var (a0, b0, a1, b1) = sections.Select(r => Profiles.Bounds(r.Outer)).Aggregate((x, y) => (Math.Min(x.U0, y.U0), Math.Min(x.V0, y.V0), Math.Max(x.U1, y.U1), Math.Max(x.V1, y.V1)));
-        var box = new List<Point3D>();
-        foreach (var piece in pieces)
-        {
-            if (!piece.Arc)
-            {
-                foreach (var (at, along) in new[] { piece.Start, piece.End })
-                    box.AddRange(from a in new[] { a0, a1 } from b in new[] { b0, b1 } select at + normal.Cross(along) * a + normal * b);
-                continue;
-            }
-            var rho = piece.Radius + (piece.Turn > 0 ? -a0 : a1);
-            var extent = new Vector3D(rho * Math.Sqrt(Math.Max(0, 1 - normal.X * normal.X)), rho * Math.Sqrt(Math.Max(0, 1 - normal.Y * normal.Y)), rho * Math.Sqrt(Math.Max(0, 1 - normal.Z * normal.Z)));
-            foreach (var b in new[] { b0, b1 })
-                box.AddRange([piece.Frame.Origin + normal * b - extent, piece.Frame.Origin + normal * b + extent]);
-        }
-        return (field, [.. box], null);
+        return (pieces, sections, null);
     }
 
     static (Field?, Point3D[], string?) Refused(string why) => (null, [], why);

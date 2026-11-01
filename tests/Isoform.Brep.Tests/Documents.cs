@@ -2,7 +2,7 @@ using Isoform.Document;
 
 namespace Isoform.Brep.Tests;
 
-/// <summary>Isoform part documents the managed kernel builds (experiments 1 to 10), with their exact volumes.</summary>
+/// <summary>Isoform part documents the managed kernel builds (experiments 1 to 11), with their exact volumes.</summary>
 public static class Documents
 {
     static readonly SketchPlane Xy = new([0, 0, 0], [1, 0, 0], [0, 0, 1]);
@@ -329,6 +329,53 @@ public static class Documents
             new Pattern("mirror", ["boss", "hole"], new MirrorMotion([50, 0, 0], [1, 0, 0]))), 50_000 + 2 * Math.PI * 25 * 5 - 2 * Math.PI * 4 * 15),
     ];
 
+    // Experiment 11: sweeps and bodies combined. A section with its centroid on the path sweeps its area times the
+    // path's length (Pappus along each piece).
+    static readonly SketchPlane YzAtOrigin = new([0, 0, 0], [0, 1, 0], [1, 0, 0]);
+
+    static readonly Sketch Route = new("route", new SketchPlacement(Xy),
+        new Dictionary<string, double[]> { ["a"] = [0, 0], ["b"] = [40, 0], ["c"] = [40, 25], ["d"] = [65, 25], ["e"] = [65, 60] },
+        [new SketchLine("run", "a", "b"), new SketchArc("bend", "c", "b", "d"), new SketchLine("rise", "d", "e")], []);
+
+    static readonly Sketch Ring = new("ring", new SketchPlacement(YzAtOrigin), new Dictionary<string, double[]> { ["o"] = [0, 0] },
+        [new SketchCircle("outside", "o", 8), new SketchCircle("bore", "o", 5.5)], []);
+
+    static readonly double PipeVolume = Math.PI * (64 - 5.5 * 5.5) * (40 + 25 * Math.PI / 2 + 35);
+
+    static readonly (string Name, PartDocument Document, double Volume)[] Sweeps =
+    [
+        // The playground's pipe bend: cylinders along the lines, tori round the quarter turn.
+        ("pipe bend", new([Route, Ring, new Sweep("pipe", BooleanOp.New, "ring", null, new SweepPath("route", From: "run"))]), PipeVolume),
+        ("pipe bend with a flange", new([Route, Ring, new Sweep("pipe", BooleanOp.New, "ring", null, new SweepPath("route", From: "run")),
+            new Block("flange", BooleanOp.Join, [-6, -20, -20], [6, 40, 40])]), PipeVolume + 6 * 40 * 40),
+        // A 4 × 3 bar round a stadium (two lines 40 long, two half turns of radius 10), started at a vertex.
+        ("bar round a closed path", new(
+        [
+            new Sketch("track", new SketchPlacement(Xy), new Dictionary<string, double[]>
+                {
+                    ["p0"] = [0, 0], ["p1"] = [40, 0], ["c1"] = [40, 10], ["p2"] = [40, 20], ["p3"] = [0, 20], ["c0"] = [0, 10],
+                },
+                [new SketchLine("near", "p0", "p1"), new SketchArc("right", "c1", "p1", "p2"), new SketchLine("far", "p2", "p3"), new SketchArc("left", "c0", "p3", "p0")],
+                []),
+            new Sketch("bar", new SketchPlacement(YzAtOrigin), new Dictionary<string, double[]> { ["q0"] = [-2, 0], ["q1"] = [2, 0], ["q2"] = [2, 3], ["q3"] = [-2, 3] },
+                [new SketchLine("under", "q0", "q1"), new SketchLine("side", "q1", "q2"), new SketchLine("over", "q2", "q3"), new SketchLine("back", "q3", "q0")], []),
+            new Sweep("loop", BooleanOp.New, "bar", null, new SweepPath("track", From: "near")),
+        ]), 12 * (80 + 20 * Math.PI)),
+        // A circle of radius 2 swept round a circle of radius 15: a torus.
+        ("ring round a circle", new(
+        [
+            new Sketch("path", new SketchPlacement(Xy), new Dictionary<string, double[]> { ["o"] = [0, 0] }, [new SketchCircle("round", "o", 15)], []),
+            new Sketch("section", new SketchPlacement(Upright(0, 0)), new Dictionary<string, double[]> { ["c"] = [15, 0] }, [new SketchCircle("tube", "c", 2)], []),
+            new Sweep("ring", BooleanOp.New, "section", null, new SweepPath("path", From: "round")),
+        ]), 2 * Math.PI * Math.PI * 15 * 4),
+        // A clamp of its own cutting its seat into the slab and kept: two bodies.
+        ("body cutting its seat", OnSlab(new Block("clamp", BooleanOp.New, [40, 15, 6], [20, 20, 10]),
+            new CombineBodies("seat", "clamp", BooleanOp.Cut, Keep: true) { Body = "plate" }), 50_000 - 20 * 20 * 4 + 20 * 20 * 10),
+        // A boss made as a body of its own, then joined into the slab.
+        ("body joined in", OnSlab(new Block("boss", BooleanOp.New, [40, 15, 8], [20, 20, 10]),
+            new CombineBodies("weld", "boss", BooleanOp.Join) { Body = "plate" }), 50_000 + 20 * 20 * 8),
+    ];
+
     public static IEnumerable<object[]> All =>
     [
         ["mounting plate", MountingPlate, MountingPlateVolume],
@@ -340,6 +387,7 @@ public static class Documents
         .. Rounds.Select(b => new object[] { b.Name, b.Document, b.Volume }),
         .. Cones.Select(b => new object[] { b.Name, b.Document, b.Volume }),
         .. Copies.Select(b => new object[] { b.Name, b.Document, b.Volume }),
+        .. Sweeps.Select(b => new object[] { b.Name, b.Document, b.Volume }),
     ];
 
     public static PartDocument Named(string name) => name switch
@@ -347,6 +395,6 @@ public static class Documents
         "mounting plate" => MountingPlate,
         "bracket" => Bracket,
         "two pads" => TwoPads,
-        _ => Booleans.Concat(Holes).Concat(Angles).Concat(Rounds).Concat(Cones).Concat(Copies).Single(b => b.Name == name).Document,
+        _ => Booleans.Concat(Holes).Concat(Angles).Concat(Rounds).Concat(Cones).Concat(Copies).Concat(Sweeps).Single(b => b.Name == name).Document,
     };
 }

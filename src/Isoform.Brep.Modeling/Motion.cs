@@ -17,6 +17,9 @@ sealed record Motion(Point3D Origin, Vector3D X, Vector3D Y, Vector3D Z)
 
     public bool Mirrors => X.Cross(Y).Dot(Z) < 0;
 
+    /// <summary>The motion as the F-rep core's placement.</summary>
+    public Isoform.Geometry.Frame Frame => new(Origin, X, Y, Z);
+
     /// <summary>
     /// A region in a frame's XY plane, moved: the frame keeps its moved origin, Z and X. A mirror turns its Y over, so
     /// the region is mirrored in its x axis to stay where the mirror puts it.
