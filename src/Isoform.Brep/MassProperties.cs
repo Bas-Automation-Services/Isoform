@@ -5,8 +5,9 @@ namespace Isoform.Brep;
 /// <summary>
 /// Volume and area computed from the B-rep itself, without tessellating. A surface integral over a face becomes a
 /// boundary integral over its loops in (u, v) by Green's theorem: <c>∬ f du dv = ∮ Q dv</c> with
-/// <c>Q(u, v) = ∫ f(s, v) ds</c> from a fixed u*. Both integrals are Gauss–Legendre, so the result is exact for the
-/// polynomial integrands of planes and to rounding for the trigonometric ones of cylinders.
+/// <c>Q(u, v) = ∫ f(s, v) ds</c> from a fixed u*. Q is in closed form on the kernel's surfaces (f is a constant or a
+/// sine and cosine of u there), the loop integral Gauss–Legendre, so the result is exact for planes and to rounding
+/// for the curved surfaces.
 /// </summary>
 public static class MassProperties
 {
@@ -24,21 +25,66 @@ public static class MassProperties
         var p = body[body.StartOf(body[body[faces[0]].Loops[0]].First)].Point;
         double total = 0;
         foreach (var f in faces)
-        {
-            var s = body[f].Surface;
             // (S − p) · (Su × Sv) du dv is (x − p) · n dA with n along Su × Sv. Green's theorem over the loops as they
             // run gives the integral with the face's own orientation, so the sense flag drops out.
-            total += Boundary(body, f, (u, v) => (s.At(u, v) - p).Dot(s.DerivativeU(u, v).Cross(s.DerivativeV(u, v))));
-        }
+            total += Boundary(body, f, VolumeIntegral(body[f].Surface, p));
         return total / 3;
     }
 
     /// <summary>A face's area.</summary>
     public static double Area(Body body, FaceId face)
     {
-        var s = body[face].Surface;
         var sense = body[face].SameSense ? 1 : -1;
-        return sense * Boundary(body, face, (u, v) => s.DerivativeU(u, v).Cross(s.DerivativeV(u, v)).Length);
+        return sense * Boundary(body, face, AreaIntegral(body[face].Surface));
+    }
+
+    // ∫ (S − p) · (Su × Sv) du, with e(u) = cos u X + sin u Y round the axis, t(u) = −sin u X + cos u Y its
+    // derivative, ∫ e du = −t and c = O − p.
+    static Func<double, double, double> VolumeIntegral(Surface surface, Point3D p) => surface switch
+    {
+        // Su × Sv = Z, and (S − p) · Z = c · Z everywhere.
+        Plane s => (u, _) => (s.Frame.Origin - p).Dot(s.Frame.ZAxis) * u,
+        // Su × Sv = R e; (S − p) · R e = R (c · e + R).
+        Cylinder s => (u, _) => s.Radius * (-(s.Frame.Origin - p).Dot(Along(s.Frame, u)) + s.Radius * u),
+        // ρ = R + s v. Su × Sv = ρ (e − s Z), S − p = c + ρ e + v Z: ρ (c · e − s c · Z + ρ − s v).
+        Cone s => (u, v) =>
+        {
+            var (c, rho) = (s.Frame.Origin - p, s.RadiusAt(v));
+            return rho * (-c.Dot(Along(s.Frame, u)) + (-s.Slope * c.Dot(s.Frame.ZAxis) + rho - s.Slope * v) * u);
+        },
+        // ρ = M + m cos v. Su × Sv = ρ m (cos v e + sin v Z), S − p = c + ρ e + m sin v Z:
+        // ρ m (c · e cos v + c · Z sin v + ρ cos v + m sin² v).
+        Torus s => (u, v) =>
+        {
+            var (c, (sin, cos)) = (s.Frame.Origin - p, Math.SinCos(v));
+            var rho = s.Major + s.Minor * cos;
+            return rho * s.Minor * (-c.Dot(Along(s.Frame, u)) * cos + (c.Dot(s.Frame.ZAxis) * sin + rho * cos + s.Minor * sin * sin) * u);
+        },
+        _ => Numeric(surface, (u, v) => (surface.At(u, v) - p).Dot(surface.DerivativeU(u, v).Cross(surface.DerivativeV(u, v)))),
+    };
+
+    // ∫ |Su × Sv| du: constant in u on every surface round an axis.
+    static Func<double, double, double> AreaIntegral(Surface surface) => surface switch
+    {
+        Plane => (u, _) => u,
+        Cylinder s => (u, _) => s.Radius * u,
+        Cone s => (u, v) => Math.Abs(s.RadiusAt(v)) * Math.Sqrt(1 + s.Slope * s.Slope) * u,
+        Torus s => (u, v) => Math.Abs(s.Major + s.Minor * Math.Cos(v)) * s.Minor * u,
+        _ => Numeric(surface, (u, v) => surface.DerivativeU(u, v).Cross(surface.DerivativeV(u, v)).Length),
+    };
+
+    // t(u) = −sin u X + cos u Y.
+    static Vector3D Along(RigidTransform3D frame, double u)
+    {
+        var (sin, cos) = Math.SinCos(u);
+        return frame.YAxis * cos - frame.XAxis * sin;
+    }
+
+    // ∫ f du from 0 by quadrature, for a surface without a closed form.
+    static Func<double, double, double> Numeric(Surface surface, Func<double, double, double> f)
+    {
+        double? step = surface.PeriodU is null ? null : Quadrature.AngleStep;
+        return (u, v) => Quadrature.Integrate(s => f(s, v), 0, u, step);
     }
 
     /// <summary>
@@ -53,15 +99,14 @@ public static class MassProperties
             return Quadrature.Integrate(t => pc.At(t).X * pc.Derivative(t).Y, from, to, body[body[c].Edge].Curve.Period is null ? null : Quadrature.AngleStep);
         });
 
-    // ∮ Q(u, v) dv over every loop of the face, Q(u, v) = ∫ f(s, v) ds from u* (the face's first p-curve start).
-    // This is ∬ f du dv over the face where its loops run counter-clockwise in (u, v), and minus it where they run
-    // clockwise (a face against its surface's sense).
-    static double Boundary(Body body, FaceId face, Func<double, double, double> f)
+    // ∮ Q(u, v) dv over every loop of the face, Q(u, v) = F(u, v) − F(u*, v) with F an integral of f in u and u* the
+    // face's first p-curve start. This is ∬ f du dv over the face where its loops run counter-clockwise in (u, v),
+    // and minus it where they run clockwise (a face against its surface's sense).
+    static double Boundary(Body body, FaceId face, Func<double, double, double> integral)
     {
         var f0 = body[face];
         var first = body[body[f0.Loops[0]].First];
         var uStar = first.Pcurve.At(body.ParametersOf(body[f0.Loops[0]].First).From).X;
-        double? uStep = f0.Surface.PeriodU is null ? null : Quadrature.AngleStep;
         double total = 0;
         foreach (var loop in f0.Loops)
         foreach (var c in body.CoedgesOf(loop))
@@ -74,7 +119,7 @@ public static class MassProperties
                 var dv = pc.Derivative(t).Y;
                 if (dv == 0) return 0;
                 var uv = pc.At(t);
-                return Quadrature.Integrate(s => f(s, uv.Y), uStar, uv.X, uStep) * dv;
+                return (integral(uv.X, uv.Y) - integral(uStar, uv.Y)) * dv;
             }, from, to, tStep);
         }
         return total;

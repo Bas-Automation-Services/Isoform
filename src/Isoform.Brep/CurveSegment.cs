@@ -51,12 +51,19 @@ internal sealed record CurveSegment(Curve2 Curve, double From, double To, double
         return (p.X * d.Y - p.Y * d.X) / 2;
     }, From, To, Quadrature.AngleStep);
 
-    /// <summary>The distance from a point: the nearest point of each sub-piece by golden-section search.</summary>
+    /// <summary>
+    /// The distance from a point: the nearest point of each sub-piece by golden-section search, skipping those that
+    /// cannot come nearer than the nearest sample (a sub-piece, a graph over its chord, lies within the chord's
+    /// length of it).
+    /// </summary>
     public double DistanceTo(Point2D p)
     {
-        var best = Math.Min((Start - p).Length, (End - p).Length);
+        var samples = Samples().ToArray();
+        var best = samples.Min(q => (q - p).Length);
         for (var i = 0; i < Pieces; i++)
         {
+            var (sa, sb) = (samples[i], samples[i + 1]);
+            if (ToChord(sa, sb, p) - (sb - sa).Length >= best) continue;
             var (a, b) = (T(i), T(i + 1));
             double F(double t) => (At(t) - p).LengthSquared;
             const double g = 0.6180339887498949;
@@ -80,6 +87,13 @@ internal sealed record CurveSegment(Curve2 Curve, double From, double To, double
             best = Math.Min(best, Math.Sqrt(Math.Min(f1, f2)));
         }
         return best;
+    }
+
+    static double ToChord(Point2D a, Point2D b, Point2D p)
+    {
+        var ab = b - a;
+        var t = ab.LengthSquared == 0 ? 0 : Math.Clamp((p - a).Dot(ab) / ab.LengthSquared, 0, 1);
+        return (a + ab * t - p).Length;
     }
 
     /// <summary>

@@ -108,6 +108,23 @@ public class BackendTests(ITestOutputHelper output)
     }
 
     [Fact]
+    public void A_grid_of_holes_from_one_sketch_keeps_each_hole_by_name()
+    {
+        // 100 holes cut in one boolean: the plate less their volume, each wall named by its point.
+        var points = (from i in Enumerable.Range(0, 10) from j in Enumerable.Range(0, 10) select ($"p{i}{j}", new double[] { 10 + 10 * i, 10 + 10 * j })).ToDictionary();
+        var document = new PartDocument(
+        [
+            new Block("plate", BooleanOp.New, [0, 0, 0], [110, 110, 5]),
+            new Sketch("grid", new SketchPlacement(new SketchPlane([0, 0, 0], [1, 0, 0], [0, 0, 1])), points, [], []),
+            new Hole("holes", [], 4) { Sketch = "grid", Points = [.. points.Keys] },
+        ]);
+        var result = new BrepModeler(Settings).Regenerate(document);
+        result.Diagnostics.Should().BeEmpty();
+        MassProperties.Volume(result.Bodies.Single().Body).Should().BeApproximately(110 * 110 * 5 - 100 * Math.PI * 4 * 5, 1e-6);
+        result.Topology!.Faces.SelectMany(f => f.Sources).Where(n => n.EndsWith(":wall")).Should().HaveCount(100).And.Contain("holes/p37:wall");
+    }
+
+    [Fact]
     public void What_the_kernel_cannot_do_yet_is_refused_by_name()
     {
         var withCut = new PartDocument([.. Documents.TwoPads.Features, new Isoform.Document.Shell("h", 1)]);

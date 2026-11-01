@@ -33,9 +33,13 @@ internal sealed class FlatFace
         if (Surface.PeriodU is not null) UMin = ends.Min(p => p.X);
         if (Surface.PeriodV is not null) VMin = ends.Min(p => p.Y);
 
-        var points = Edges.SelectMany(e => Sample(body[e])).ToList();
-        Box = (new Point3D(points.Min(p => p.X), points.Min(p => p.Y), points.Min(p => p.Z)),
-               new Point3D(points.Max(p => p.X), points.Max(p => p.Y), points.Max(p => p.Z)));
+        // The edges' ends and the points where they turn back along an axis, grown to hold the whole face: a plane,
+        // cylinder or cone face lies between its edges (on lines across it); a torus face reaches at most the tube's
+        // diameter from them.
+        var points = Edges.SelectMany(e => Extremes(body[e])).ToList();
+        var pad = (Surface is Torus t ? 2 * t.Minor : 0) + Intersections.Snap;
+        Box = (new Point3D(points.Min(p => p.X) - pad, points.Min(p => p.Y) - pad, points.Min(p => p.Z) - pad),
+               new Point3D(points.Max(p => p.X) + pad, points.Max(p => p.Y) + pad, points.Max(p => p.Z) + pad));
     }
 
     public Surface Surface { get; }
@@ -46,10 +50,42 @@ internal sealed class FlatFace
     public double VMin { get; }
     public (Point3D Min, Point3D Max) Box { get; }
 
-    static IEnumerable<Point3D> Sample(Edge e)
+    // An edge's ends, and on a circle or ellipse (O + a cos t X + b sin t Y) the points within it where a coordinate
+    // is least or greatest: tan t = b Y_i / (a X_i).
+    static IEnumerable<Point3D> Extremes(Edge e)
     {
-        var n = e.Curve.Period is null ? 1 : 32;
-        for (var i = 0; i <= n; i++) yield return e.Curve.At(e.T0 + (e.T1 - e.T0) * i / n);
+        yield return e.Curve.At(e.T0);
+        yield return e.Curve.At(e.T1);
+        var (frame, a, b) = e.Curve switch
+        {
+            Circle3 c => (c.Frame, c.Radius, c.Radius),
+            Ellipse3 el => (el.Frame, el.Major, el.Minor),
+            _ => (RigidTransform3D.Identity, 0.0, 0.0),
+        };
+        if (a == 0) yield break;
+        foreach (var (x, y) in new[] { (frame.XAxis.X, frame.YAxis.X), (frame.XAxis.Y, frame.YAxis.Y), (frame.XAxis.Z, frame.YAxis.Z) })
+        {
+            var t = Math.Atan2(b * y, a * x);
+            foreach (var s in new[] { t, t + Math.PI })
+                if (e.T0 + Intersections.Wrap(s - e.T0) <= e.T1) yield return e.Curve.At(s);
+        }
+    }
+
+    /// <summary>Whether the ray from p along d meets the face's box.</summary>
+    public bool Ahead(Point3D p, Vector3D d)
+    {
+        var (near, far) = (0.0, double.MaxValue);
+        foreach (var (o, v, lo, hi) in new[] { (p.X, d.X, Box.Min.X, Box.Max.X), (p.Y, d.Y, Box.Min.Y, Box.Max.Y), (p.Z, d.Z, Box.Min.Z, Box.Max.Z) })
+        {
+            if (v == 0)
+            {
+                if (o < lo || o > hi) return false;
+                continue;
+            }
+            var (t0, t1) = ((lo - o) / v, (hi - o) / v);
+            (near, far) = (Math.Max(near, Math.Min(t0, t1)), Math.Min(far, Math.Max(t0, t1)));
+        }
+        return near <= far;
     }
 
     /// <summary>A point's flat position on this face (u in the face's window).</summary>
@@ -144,9 +180,7 @@ internal sealed class FlatFace
     }
 
     public bool Overlaps((Point3D Min, Point3D Max) b) =>
-        Box.Min.X <= b.Max.X + Intersections.Snap && b.Min.X <= Box.Max.X + Intersections.Snap &&
-        Box.Min.Y <= b.Max.Y + Intersections.Snap && b.Min.Y <= Box.Max.Y + Intersections.Snap &&
-        Box.Min.Z <= b.Max.Z + Intersections.Snap && b.Min.Z <= Box.Max.Z + Intersections.Snap;
+        Box.Min.X <= b.Max.X && b.Min.X <= Box.Max.X && Box.Min.Y <= b.Max.Y && b.Min.Y <= Box.Max.Y && Box.Min.Z <= b.Max.Z && b.Min.Z <= Box.Max.Z;
 }
 
 /// <summary>A body's faces in flat form, for locating points against it.</summary>
@@ -154,6 +188,13 @@ internal sealed class Solid(Body body)
 {
     public Body Body { get; } = body;
     public FlatFace[] Faces { get; } = [.. Enumerable.Range(0, body.Faces.Length).Select(f => new FlatFace(body, new FaceId(f)))];
+
+    /// <summary>A box round the whole solid.</summary>
+    public (Point3D Min, Point3D Max) Box => box ??= (
+        new Point3D(Faces.Min(f => f.Box.Min.X), Faces.Min(f => f.Box.Min.Y), Faces.Min(f => f.Box.Min.Z)),
+        new Point3D(Faces.Max(f => f.Box.Max.X), Faces.Max(f => f.Box.Max.Y), Faces.Max(f => f.Box.Max.Z)));
+
+    (Point3D, Point3D)? box;
 
     // Ray directions in no special relation to the axes of any part.
     static readonly Vector3D[] Rays =
@@ -188,7 +229,7 @@ internal sealed class Solid(Body body)
             var count = 0;
             var clean = true;
             foreach (var f in Faces)
-            foreach (var t in Intersections.Hits(p, d, f.Surface))
+            foreach (var t in f.Ahead(p, d) ? Intersections.Hits(p, d, f.Surface) : [])
             {
                 if (t <= Intersections.Snap) continue;
                 var q = p + d * t;

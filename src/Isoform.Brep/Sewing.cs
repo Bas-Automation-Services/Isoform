@@ -23,9 +23,21 @@ internal static class Sewing
     {
         var parent = Enumerable.Range(0, patches.Count).ToArray();
         int Find(int i) => parent[i] == i ? i : parent[i] = Find(parent[i]);
+        // Only patches with a use between the same two points can share an edge.
+        var points = new Welded();
+        var between = new Dictionary<(int, int), List<int>>();
         for (var i = 0; i < patches.Count; i++)
-        for (var j = i + 1; j < patches.Count; j++)
-            if (Find(i) != Find(j) && Mergeable(patches[i], patches[j])) parent[Find(i)] = Find(j);
+        foreach (var u in patches[i].Loops.SelectMany(l => l))
+        {
+            var (a, b) = (points[u.Start], points[u.End]);
+            var key = (Math.Min(a, b), Math.Max(a, b));
+            if (!between.TryGetValue(key, out var list)) between[key] = list = [];
+            if (list.Count == 0 || list[^1] != i) list.Add(i);
+        }
+        foreach (var list in between.Values)
+        for (var x = 0; x < list.Count; x++)
+        for (var y = x + 1; y < list.Count; y++)
+            if (Find(list[x]) != Find(list[y]) && Mergeable(patches[list[x]], patches[list[y]])) parent[Find(list[x])] = Find(list[y]);
 
         var result = new List<Patch>();
         foreach (var group in Enumerable.Range(0, patches.Count).GroupBy(Find))
@@ -81,11 +93,15 @@ internal static class Sewing
 
         var uses = placed.SelectMany(p => p!).ToList();
         var flat = uses.Select(u => Uv.Flat(surface, u.Pcurve, u.From, u.To)).ToList();
+        var points = new Welded();
+        var (starts, ends) = (uses.Select(u => points[u.Start]).ToArray(), uses.Select(u => points[u.End]).ToArray());
+        var leaving = Enumerable.Range(0, uses.Count).ToLookup(i => starts[i]);
         var drop = new bool[uses.Count];
         for (var i = 0; i < uses.Count; i++)
-        for (var j = i + 1; j < uses.Count && !drop[i]; j++)
+        foreach (var j in leaving[ends[i]])
         {
-            if (drop[j] || !Opposite(uses[i], uses[j])) continue;
+            if (drop[i]) break;
+            if (j <= i || drop[j] || ends[j] != starts[i] || !Opposite(uses[i], uses[j])) continue;
             // Shared in (u, v) too: not the two sides of a seam.
             var (a, b) = (flat[i], flat[j]);
             if ((a.Start - b.End).Length <= Snap && (a.End - b.Start).Length <= Snap) drop[i] = drop[j] = true;
@@ -141,17 +157,11 @@ internal static class Sewing
     {
         patches = JoinEdges(patches);
         var uses = patches.SelectMany((p, pi) => p.Loops.SelectMany((l, li) => l.Select((u, ui) => (Patch: pi, Loop: li, Index: ui, Use: u)))).ToList();
-        var points = new List<Point3D>();
-        int Vertex(Point3D p)
-        {
-            for (var i = 0; i < points.Count; i++)
-                if (Near(points[i], p)) return i;
-            points.Add(p);
-            return points.Count - 1;
-        }
-        var start = uses.Select(u => Vertex(u.Use.Start)).ToArray();
+        var welded = new Welded();
+        var points = welded.Points;
+        var start = uses.Select(u => welded[u.Use.Start]).ToArray();
         var indexOf = Enumerable.Range(0, uses.Count).ToDictionary(i => (uses[i].Patch, uses[i].Loop, uses[i].Index));
-        var end = uses.Select(u => Vertex(u.Use.End)).ToArray();
+        var end = uses.Select(u => welded[u.Use.End]).ToArray();
 
         var partner = Enumerable.Repeat(-1, uses.Count).ToArray();
         var byStart = Enumerable.Range(0, uses.Count).ToLookup(i => start[i]);
@@ -224,7 +234,8 @@ internal static class Sewing
             return new Shaped(builder.Build(), origins);
         }
 
-        // Each shell alone, to tell solids (positive volume) from voids.
+        // One shell is the solid; several are each built alone, to tell solids (positive volume) from voids.
+        if (shells.Count == 1) return [Checked(Build(shells))];
         var alone = shells.Select(s => Build([s]).Body).ToList();
         var volumes = alone.Select(b => MassProperties.Volume(b)).ToList();
         var solids = Enumerable.Range(0, shells.Count).Where(s => volumes[s] > 0).ToList();
@@ -237,28 +248,18 @@ internal static class Sewing
             voidsOf[owner].Add(v);
         }
 
-        var bodies = new List<Shaped>();
-        foreach (var s in solids)
-        {
-            var shaped = Build([shells[s], .. voidsOf[s].Select(v => shells[v])]);
-            if (BodyCheck.Problems(shaped.Body) is [var first, ..])
-                throw new BooleanFailure($"the result is not a valid solid: {first.Kind} at {first.Where}: {first.Message}");
-            bodies.Add(shaped);
-        }
-        return bodies;
+        return [.. solids.Select(s => Checked(Build([shells[s], .. voidsOf[s].Select(v => shells[v])])))];
     }
+
+    static Shaped Checked(Shaped shaped) => BodyCheck.Problems(shaped.Body) is [var first, ..]
+        ? throw new BooleanFailure($"the result is not a valid solid: {first.Kind} at {first.Where}: {first.Message}")
+        : shaped;
 
     // Consecutive uses on one curve through a vertex where only their two edges meet, joined into one use.
     static List<Patch> JoinEdges(List<Patch> patches)
     {
-        var points = new List<Point3D>();
-        int Vertex(Point3D p)
-        {
-            for (var i = 0; i < points.Count; i++)
-                if (Near(points[i], p)) return i;
-            points.Add(p);
-            return points.Count - 1;
-        }
+        var points = new Welded();
+        int Vertex(Point3D p) => points[p];
         var leaving = new Dictionary<int, int>();
         foreach (var u in patches.SelectMany(p => p.Loops).SelectMany(l => l))
         {
@@ -311,5 +312,40 @@ internal static class Sewing
             t = x.To + direction * turn;
         }
         return x with { To = t };
+    }
+}
+
+/// <summary>
+/// Points taken once where they lie within Snap of each other: each point's index is that of the first point near
+/// it, found among the points in the cells of a grid 2 Snap wide that its Snap neighbourhood reaches (at most two
+/// along each axis).
+/// </summary>
+internal sealed class Welded
+{
+    const double Cell = 2 * Intersections.Snap;
+    readonly Dictionary<(long, long, long), List<int>> cells = [];
+
+    public List<Point3D> Points { get; } = [];
+
+    public int this[Point3D p]
+    {
+        get
+        {
+            static (long, long) Span(double x) => ((long)Math.Floor((x - Intersections.Snap) / Cell), (long)Math.Floor((x + Intersections.Snap) / Cell));
+            var ((x0, x1), (y0, y1), (z0, z1)) = (Span(p.X), Span(p.Y), Span(p.Z));
+            var found = -1;
+            for (var i = x0; i <= x1; i++)
+            for (var j = y0; j <= y1; j++)
+            for (var k = z0; k <= z1; k++)
+                if (cells.TryGetValue((i, j, k), out var list))
+                    foreach (var n in list)
+                        if ((found < 0 || n < found) && (Points[n] - p).Length <= Intersections.Snap) found = n;
+            if (found >= 0) return found;
+            Points.Add(p);
+            var key = ((long)Math.Floor(p.X / Cell), (long)Math.Floor(p.Y / Cell), (long)Math.Floor(p.Z / Cell));
+            if (!cells.TryGetValue(key, out var own)) cells[key] = own = [];
+            own.Add(Points.Count - 1);
+            return Points.Count - 1;
+        }
     }
 }

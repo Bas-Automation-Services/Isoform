@@ -30,6 +30,17 @@ public class RevolutionTests(ITestOutputHelper output)
         var body = Revolve(Circle(20, 0, 3));
         MassProperties.Volume(body).Should().BeApproximately(2 * Math.PI * Math.PI * 20 * 9, 1e-9);
         body.Faces.Should().ContainSingle().Which.Surface.Should().BeOfType<Torus>();
+        // Pappus again: the circle's length turned round at its centre's distance.
+        MassProperties.Area(body, new FaceId(0)).Should().BeApproximately(2 * Math.PI * 3 * 2 * Math.PI * 20, 1e-9);
+    }
+
+    [Fact]
+    public void A_cone_face_has_the_area_of_its_frustum()
+    {
+        // From (10, 0) up to (5, 4): π (r1 + r2) times the slant height.
+        var body = Revolve(new ProfileLoop([new LineSegment(P(5, 0), P(10, 0)), new LineSegment(P(10, 0), P(5, 4)), new LineSegment(P(5, 4), P(5, 0))]));
+        var cone = new FaceId(body.Faces.ToList().FindIndex(f => f.Surface is Cone));
+        MassProperties.Area(body, cone).Should().BeApproximately(Math.PI * 15 * Math.Sqrt(41), 1e-9);
     }
 
     [Fact]

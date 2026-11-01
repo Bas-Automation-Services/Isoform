@@ -7,7 +7,7 @@ using Isoform.Meshing;
 using Isoform.Modeling;
 using Isoform.Occt;
 
-// Measurements for K2/K3. Run with: dotnet run -c Release --project src/Isoform.Bench [-- display | stand [cell…] | demo [folder] | regen]
+// Measurements for K2/K3. Run with: dotnet run -c Release --project src/Isoform.Bench [-- display | stand [cell…] | demo [folder] | regen | brep [holes|loop|join] [size…]]
 var settings = new ModelingSettings();
 Console.WriteLine($"Isoform bench — {Environment.ProcessorCount} logical cores, .NET {Environment.Version}");
 
@@ -83,6 +83,13 @@ if (args is ["regen"])
         Console.WriteLine($"  20 operations h={h}: {BestOf(3, () => new FrepModeler(new ModelingSettings { CellSize = h }).Regenerate(parts[2].Doc)):N0} ms");
     foreach (var (name, doc) in Examples.All)
         Console.WriteLine($"  {name}: {BestOf(3, () => new FrepModeler(settings).Regenerate(doc)):N0} ms");
+    return;
+}
+
+// "brep [holes|loop|join] [size…]": the managed B-rep kernel on parts that grow.
+if (args is ["brep", ..])
+{
+    BrepBench.Run(args[1..]);
     return;
 }
 

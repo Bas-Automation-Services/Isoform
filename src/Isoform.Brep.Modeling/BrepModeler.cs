@@ -287,8 +287,10 @@ public sealed class BrepModeler(ModelingSettings settings) : IModeler
                 }
                 return null;
             case BooleanOp.Cut:
-                foreach (var tool in tools)
+                // Tools that do not touch are cut out in one boolean.
+                foreach (var group in Booleans.Apart([.. tools.Select(t => t.Body)]))
                 {
+                    var tool = group is [var only] ? tools[only] : Together([.. group.Select(k => tools[k])]);
                     var next = new List<(NamedBody, string)>();
                     foreach (var (solid, body) in solids)
                     {
@@ -308,6 +310,17 @@ public sealed class BrepModeler(ModelingSettings settings) : IModeler
             default:
                 throw new NotSupportedException(op.ToString());
         }
+    }
+
+    // Tools that do not touch as one, each face keeping its names.
+    static NamedBody Together(IReadOnlyList<NamedBody> tools)
+    {
+        var (body, offsets) = Booleans.Lumps([.. tools.Select(t => t.Body)]);
+        var names = new Dictionary<FaceId, IReadOnlyList<string>>();
+        for (var i = 0; i < tools.Count; i++)
+            foreach (var (face, n) in tools[i].Names)
+                names[new FaceId(face.Index + offsets[i])] = n;
+        return new NamedBody(body, names);
     }
 
     // A result body named from its operands: each face by every source of the faces it came from.

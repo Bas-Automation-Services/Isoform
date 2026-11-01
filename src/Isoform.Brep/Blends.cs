@@ -201,16 +201,26 @@ public static class Blends
             }
         }
 
-        // The pieces in turn, every face's origins carried back to the body's faces or a piece's.
+        // The pieces applied, every face's origins carried back to the body's faces or a piece's. Pieces of one kind
+        // that do not touch go in one boolean; a loop of both kinds goes piece by piece, in order.
         var current = body;
         var origins = Enumerable.Range(0, body.Faces.Length).Select(g => (IReadOnlyList<Origin>)[new Origin(0, new FaceId(g))]).ToList();
-        for (var k = 0; k < tools.Count; k++)
+        var groups = tools.All(t => t.Convex == tools[0].Convex)
+            ? Booleans.Apart([.. tools.Select(t => t.Tool)])
+            : [.. Enumerable.Range(0, tools.Count).Select(k => new List<int> { k })];
+        foreach (var group in groups)
         {
-            var (result, problem) = tools[k].Convex ? Booleans.Subtract(current, tools[k].Tool) : Booleans.Unite(current, tools[k].Tool);
-            if (problem is not null) return (null, null, $"{problem} (piece {k + 1} of {tools.Count})");
+            var (tool, offsets) = Booleans.Lumps([.. group.Select(k => tools[k].Tool)]);
+            var (result, problem) = tools[group[0]].Convex ? Booleans.Subtract(current, tool) : Booleans.Unite(current, tool);
+            if (problem is not null) return (null, null, $"{problem} (pieces {string.Join(", ", group.Select(k => k + 1))} of {tools.Count})");
             if (result is not [var one]) return (null, null, $"the {Name(kind)} parts the body");
-            var piece = k + 1;
-            origins = [.. one.Origins.Select(os => (IReadOnlyList<Origin>)[.. os.SelectMany(o => o.Operand == 0 ? origins[o.Face.Index] : [new Origin(piece, o.Face)]).Distinct()])];
+            // A face of the lumps back to its piece (operand k + 1) and the piece's own face.
+            Origin Piece(Origin o)
+            {
+                var i = Array.FindLastIndex(offsets, at => at <= o.Face.Index);
+                return new Origin(group[i] + 1, new FaceId(o.Face.Index - offsets[i]));
+            }
+            origins = [.. one.Origins.Select(os => (IReadOnlyList<Origin>)[.. os.SelectMany(o => o.Operand == 0 ? origins[o.Face.Index] : [Piece(o)]).Distinct()])];
             current = one.Body;
         }
 

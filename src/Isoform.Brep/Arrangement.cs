@@ -52,14 +52,8 @@ internal static class Arrangement
     public static List<List<IReadOnlyList<Use>>> Faces(Surface surface, IReadOnlyList<Use> uses)
     {
         var flat = uses.Select(u => Uv.Flat(surface, u.Pcurve, u.From, u.To)).ToList();
-        var nodes = new List<Point2D>();
-        int Node(Point2D p)
-        {
-            for (var i = 0; i < nodes.Count; i++)
-                if ((nodes[i] - p).Length <= Intersections.Snap) return i;
-            nodes.Add(p);
-            return nodes.Count - 1;
-        }
+        var nodes = new Welded();
+        int Node(Point2D p) => nodes[new Point3D(p.X, p.Y, 0)];
         var from = flat.Select(s => Node(s.Start)).ToArray();
         var to = flat.Select(s => Node(s.End)).ToArray();
         var leaving = Enumerable.Range(0, uses.Count).ToLookup(i => from[i]);
@@ -166,7 +160,7 @@ internal static class Arrangement
 
     /// <summary>
     /// A point well inside a face given by its loops (face on the left in (u, v)): on a few horizontal lines across
-    /// the face, the middle of each stretch inside it, keeping the one farthest from every loop. In (u, v).
+    /// the face, the middle of the widest stretches inside it, keeping the one farthest from every loop. In (u, v).
     /// </summary>
     public static Point2D Inside(Surface surface, IEnumerable<IReadOnlyList<Use>> loops)
     {
@@ -179,10 +173,13 @@ internal static class Arrangement
             var y = low + (high - low) * f;
             var xs = segments.SelectMany(s => Crossings(s, y)).Order().ToList();
             if (xs.Count % 2 != 0) continue;
-            for (var i = 0; i + 1 < xs.Count; i += 2)
+            foreach (var (from, to) in Enumerable.Range(0, xs.Count / 2).Select(i => (xs[2 * i], xs[2 * i + 1])).OrderByDescending(s => s.Item2 - s.Item1).Take(3))
             {
-                var p = new Point2D((xs[i] + xs[i + 1]) / 2, y);
-                var clearance = segments.Min(s => Distances.To(s, p));
+                var p = new Point2D((from + to) / 2, y);
+                // The distance to the nearest loop, given up once it is no better than the best so far.
+                var clearance = double.MaxValue;
+                foreach (var s in segments)
+                    if ((clearance = Math.Min(clearance, Distances.To(s, p))) <= (best?.Clearance ?? -1)) break;
                 if (best is null || clearance > best.Value.Clearance) best = (p, clearance);
             }
         }

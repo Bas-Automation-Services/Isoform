@@ -38,6 +38,53 @@ public static class Booleans
         };
     }
 
+    /// <summary>
+    /// The tools in groups whose boxes do not touch (each tool in the first group it fits), so that each group can be
+    /// applied in one boolean as <see cref="Lumps"/>: taking away or adding solids that do not touch is the same
+    /// in any order.
+    /// </summary>
+    public static List<List<int>> Apart(IReadOnlyList<Body> tools)
+    {
+        var boxes = tools.Select(t => new Solid(t).Box).ToList();
+        static bool Touch((Point3D Min, Point3D Max) a, (Point3D Min, Point3D Max) b) =>
+            a.Min.X <= b.Max.X && b.Min.X <= a.Max.X && a.Min.Y <= b.Max.Y && b.Min.Y <= a.Max.Y && a.Min.Z <= b.Max.Z && b.Min.Z <= a.Max.Z;
+        var groups = new List<List<int>>();
+        for (var i = 0; i < tools.Count; i++)
+        {
+            if (groups.FirstOrDefault(g => g.All(j => !Touch(boxes[i], boxes[j]))) is { } fits) fits.Add(i);
+            else groups.Add([i]);
+        }
+        return groups;
+    }
+
+    /// <summary>
+    /// Solids that do not touch as one body, the second operand of a boolean that applies them all at once. Not a
+    /// valid body (each shell bounds a solid, none a void), but its faces tell inside from outside as the solids
+    /// together do. Face k of the i-th solid is face <c>Offsets[i] + k</c>.
+    /// </summary>
+    public static (Body Body, int[] Offsets) Lumps(IReadOnlyList<Body> solids)
+    {
+        var builder = new BodyBuilder(solids.Max(s => s.Tolerance));
+        var offsets = new int[solids.Count];
+        var faces = 0;
+        for (var i = 0; i < solids.Count; i++)
+        {
+            var body = solids[i];
+            offsets[i] = faces;
+            var vertices = body.Vertices.Select(v => builder.AddVertex(v.Point)).ToList();
+            var edges = body.Edges.Select(e => builder.AddEdge(e.Curve, e.T0, e.T1, vertices[e.Start.Index], vertices[e.End.Index])).ToList();
+            var shells = body.Shells.Select(_ => builder.AddShell()).ToList();
+            foreach (var f in body.Faces)
+            {
+                var face = builder.AddFace(shells[f.Shell.Index], f.Surface, f.SameSense);
+                foreach (var loop in f.Loops)
+                    builder.AddLoop(face, [.. body.CoedgesOf(loop).Select(c => new BodyBuilder.Use(edges[body[c].Edge.Index], body[c].Forward, body[c].Pcurve))]);
+            }
+            faces += body.Faces.Length;
+        }
+        return (builder.Build(), offsets);
+    }
+
     public static (IReadOnlyList<Shaped>? Bodies, string? Problem) Apply(Body a, Body b, BooleanKind kind)
     {
         try
@@ -55,12 +102,10 @@ public static class Booleans
             for (var o = 0; o < 2; o++)
             {
                 var other = ops[1 - o].Solid;
-                foreach (var patch in ops[o].Patches())
+                foreach (var (patch, face) in ops[o].Patches())
                 {
-                    var uv = Arrangement.Inside(patch.Surface, patch.UvLoops);
-                    var p = patch.Surface.At(uv.X, uv.Y);
-                    var normal = patch.Surface.Normal(uv.X, uv.Y) * (patch.SameSense ? 1 : -1);
-                    var where = other.Classify(p, normal);
+                    // A piece of a face whose box misses the other solid's lies outside it.
+                    var where = ops[o].Solid.Faces[face].Overlaps(other.Box) ? Locate(patch, other) : Containment.Out;
                     var keep = (kind, o, where) switch
                     {
                         (BooleanKind.Union, 0, Containment.Out or Containment.OnSame) => patch,
@@ -78,6 +123,14 @@ public static class Booleans
         {
             return (null, failure.Message);
         }
+    }
+
+    // Where a piece lies against the other solid, at a point well inside it.
+    static Containment Locate(Patch patch, Solid other)
+    {
+        var uv = Arrangement.Inside(patch.Surface, patch.UvLoops);
+        var p = patch.Surface.At(uv.X, uv.Y);
+        return other.Classify(p, patch.Surface.Normal(uv.X, uv.Y) * (patch.SameSense ? 1 : -1));
     }
 
     static Patch PatchOf(Body body, FaceId f, int operand)
@@ -145,8 +198,14 @@ public static class Booleans
         foreach (var (t0, t1) in intervals)
         {
             var m = c.At((t0 + t1) / 2);
-            var (pa, pb) = (a.Solid.Faces[fa].Locate(m), b.Solid.Faces[fb].Locate(m));
-            if (pa == Place.Outside || pb == Place.Outside) continue;
+            // The face with fewer edges first: most pieces of a curve along a large face lie outside the small one.
+            var (x, y) = (a.Solid.Faces[fa], b.Solid.Faces[fb]);
+            var smallFirst = x.Edges.Count <= y.Edges.Count;
+            var first = (smallFirst ? x : y).Locate(m);
+            if (first == Place.Outside) continue;
+            var second = (smallFirst ? y : x).Locate(m);
+            if (second == Place.Outside) continue;
+            var (pa, pb) = smallFirst ? (first, second) : (second, first);
             if (pa == Place.Inside) a.Cut(fa, c, t0, t1);
             if (pb == Place.Inside) b.Cut(fb, c, t0, t1);
             foreach (var p in new[] { c.At(t0), c.At(t1) })
@@ -245,13 +304,19 @@ public static class Booleans
             return [.. bounds.Zip(bounds.Skip(1))];
         }
 
-        /// <summary>Every face cut into the faces its cuts bound.</summary>
-        public IEnumerable<Patch> Patches()
+        /// <summary>Every face cut into the faces its cuts bound, with the face each comes from.</summary>
+        public IEnumerable<(Patch Patch, int Face)> Patches()
         {
             for (var f = 0; f < Body.Faces.Length; f++)
             {
                 var face = Body.Faces[f];
                 var flat = Solid.Faces[f];
+                // A face neither cut nor split comes through whole.
+                if (cuts[f].Count == 0 && flat.Edges.All(e => splits[e.Index].Count == 0))
+                {
+                    yield return (PatchOf(Body, new FaceId(f), index), f);
+                    continue;
+                }
                 var uses = new List<Use>();
                 foreach (var loop in face.Loops)
                 foreach (var c in Body.CoedgesOf(loop))
@@ -282,8 +347,8 @@ public static class Booleans
                     throw new BooleanFailure($"{failure.Message} (face {f} of the {(index == 0 ? "first" : "second")} solid, a {face.Surface.GetType().Name.ToLowerInvariant()}, {cuts[f].Count} cuts)");
                 }
                 foreach (var loops in faces)
-                    yield return new Patch(face.Surface, face.SameSense, [.. loops.Select(l => Arrangement.Sensed(l, face.SameSense))],
-                        new HashSet<Origin> { new(index, new FaceId(f)) });
+                    yield return (new Patch(face.Surface, face.SameSense, [.. loops.Select(l => Arrangement.Sensed(l, face.SameSense))],
+                        new HashSet<Origin> { new(index, new FaceId(f)) }), f);
             }
         }
 

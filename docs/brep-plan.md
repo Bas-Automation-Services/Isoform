@@ -316,14 +316,68 @@ a cone against a torus and another cone round one axis, each checked by Pappus. 
 Isoform's cone uses; the `ExactBrep` comparison now leaves radius out for both and compares a cone by apex, opening
 and angle.
 
+## Experiment 9: speed (done, 2026-11-01)
+
+Chosen from the candidates (4), before real parts go through the kernel. Measured first: `Isoform.Bench brep
+[holes|loop|join|examples] [size…]` times a plate with an n × n grid of holes (one hole feature on a sketch's points),
+an n-gon with its top rounded all round, n blocks joined onto a base, and the playground's examples; wall time and the
+process's processor time (which a busy machine disturbs less). Profiles with `dotnet-trace`.
+
+**What it cost, and the fix:**
+- *Volume:* two thirds of the time. `MassProperties` integrated twice by quadrature (round each loop, and across the
+  surface at every point of it: up to 192 evaluations each on a cylinder), and every boolean computes the volume
+  twice (sewing tells solids from voids by it, `BodyCheck` the shell's orientation). The integral across the surface
+  is now in closed form on planes, cylinders, cones and tori (a constant, or sines and cosines of u); quadrature
+  stays for a surface without one.
+- *Faces far from the tool:* every face was traced again and located against the other solid at a point well inside
+  it. A face neither cut nor split comes through whole, and a piece of a face whose box misses the other solid's is
+  outside it. Face boxes now hold the whole face (a circle's or ellipse's extremes within the edge, a torus face grown
+  by the tube's diameter); they were the edges' samples, which a circle bulges past.
+- *Matching points:* vertices in sewing and nodes in tracing were found by searching every point so far. `Welded`
+  finds them in a grid of cells 2 Snap wide; merging faces on one surface only compares patches with a use between
+  the same two points, and pairs the uses they share by their ends.
+- *One shell:* is the solid; only several are built alone to tell solids from voids.
+- *Locating:* the distance to a curve piece skips the sub-pieces that cannot come nearer than its nearest sample; a
+  ray skips the faces whose box it misses; a curve's piece is located on the face with fewer edges first; the point
+  well inside a face tries the three widest stretches on each line and gives a candidate up once it is no better.
+- *Tools that do not touch:* `Booleans.Apart` groups tools whose boxes do not touch and `Booleans.Lumps` makes each
+  group one body (not a valid body, several solids, but it locates points as they do together), applied in one
+  boolean. The modeler cuts a hole feature's spots (and an extrude's regions) that way, and a loop fillet applies its
+  pieces in two or three groups instead of one by one (a loop with convex and concave pieces still goes in order).
+
+**Results** (processor seconds; before: the kernel of experiment 8 on the same busy machine, the 24 × 24 plate in
+wall time on a quieter one):
+
+| part | before | after |
+| --- | --- | --- |
+| plate with 16 × 16 holes, 262 faces | 24 | 0.6 |
+| plate with 24 × 24 holes, 582 faces | 158 (wall) | 1.2 |
+| plate with 32 × 32 holes, 1030 faces | | 1.2 |
+| 192-gon with a loop round, 386 faces | 23 | 1.7 |
+| 384-gon with a loop round, 770 faces | | 2.5 |
+| 192 blocks joined one by one, 774 faces | 13 | 2.5 |
+| 384 blocks joined one by one, 1542 faces | | 8 |
+
+Tests add closed-form areas of a torus and a cone face, 45 bores cut in one boolean, overlapping bores grouped apart,
+and a 100-hole grid through the modeler with every wall named. Tests: `tests/Isoform.Brep.Tests` 235,
+`BrepKernelStepTests` 51.
+
+**What is left:** each boolean still does work in proportion to the whole body (building every face's flat form,
+sewing every face, `BodyCheck` with its volume), so n features on a body of F faces cost about n · F: some 10–20 ms
+per boolean at a thousand faces. Booleans that only rebuild the faces they touch would remove that, at the price of
+editing a body in place. Of the playground's examples, three build (in 0.2 s or less); the rest stop at features the
+modeler does not take yet: Revolve (which the kernel can do), Extrude with a blend, Pattern, Sweep, and Lattice (which
+stays with the F-rep core).
+
 ## Next: candidates (to decide)
 
 1. **Ball corners:** three fillets meeting at a corner, a sphere carrier.
 2. **Arcs meeting lines at a corner** in loop fillets: a torus mitring with a cylinder (a quartic, unless the radii
    make it a circle or ellipse).
 3. **Inventor as a second STEP reader**, parked.
-4. **Speed:** vertex and edge matching are quadratic, every face pair is intersected after a box test, and loop
-   fillets run one boolean per edge. Fine at these sizes, not for a part with hundreds of faces.
-5. **Apexes:** revolves that reach the axis (a pointed cone, a disc), which need a degenerate edge.
+4. **Apexes:** revolves that reach the axis (a pointed cone, a disc), which need a degenerate edge.
+5. **The playground's features:** Revolve in the modeler (the kernel revolves already), then Pattern (copies of
+   features, which `Lumps` can cut or add in one boolean where they do not touch).
+6. **Local booleans:** rebuild only the faces a boolean touches (see what is left above).
 
-Recommended: 4 before any real part goes through the kernel.
+Recommended: 5, so that real parts go through the kernel and show what it refuses first.

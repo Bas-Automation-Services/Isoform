@@ -65,6 +65,25 @@ public class BooleanTests(ITestOutputHelper output)
     }
 
     [Fact]
+    public void Bores_that_do_not_touch_go_through_in_one_boolean()
+    {
+        var bores = (from i in Enumerable.Range(0, 9) from j in Enumerable.Range(0, 5) select Prism(Circle(10 + 10 * i, 10 + 10 * j, 3), -1, 11)).ToList();
+        Booleans.Apart(bores).Should().ContainSingle();
+        var (tool, offsets) = Booleans.Lumps(bores);
+        offsets.Should().Equal(Enumerable.Range(0, 45).Select(k => 3 * k));
+        var r = One(Booleans.Subtract(Plate, tool));
+        MassProperties.Volume(r.Body).Should().BeApproximately(60000 - 45 * Math.PI * 90, 1e-9);
+        BodyCheck.Genus(r.Body, new ShellId(0)).Should().Be(45);
+    }
+
+    [Fact]
+    public void Bores_that_overlap_go_in_separate_booleans()
+    {
+        var bores = new[] { Prism(Circle(30, 30, 8), -1, 11), Prism(Circle(40, 30, 8), -1, 11), Prism(Circle(70, 30, 8), -1, 11) };
+        Booleans.Apart(bores).Should().BeEquivalentTo(new[] { new[] { 0, 2 }, new[] { 1 } }, o => o.WithStrictOrdering());
+    }
+
+    [Fact]
     public void A_pocket_from_the_top()
     {
         var r = One(Booleans.Subtract(Plate, Prism(Rectangle(20, 10, 60, 40), 4, 11)));
