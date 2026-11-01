@@ -21,7 +21,7 @@ public class BlendTests(ITestOutputHelper output)
     public void A_top_edge(BlendKind kind, double size)
     {
         var body = Block();
-        var (r, _, problem) = Blends.Apply(body, Face(body, new Vector3D(0, 0, 1), new Point3D(0, 0, 10)), Face(body, new Vector3D(1, 0, 0), new Point3D(100, 0, 0)), size, kind);
+        var (r, _, _, problem) = Blends.Apply(body, Face(body, new Vector3D(0, 0, 1), new Point3D(0, 0, 10)), Face(body, new Vector3D(1, 0, 0), new Point3D(100, 0, 0)), size, kind);
         output.WriteLine(problem ?? "");
         problem.Should().BeNull();
         var removed = kind == BlendKind.Fillet ? Spandrel(size) : size * size / 2;
@@ -35,7 +35,7 @@ public class BlendTests(ITestOutputHelper output)
         var l = new ProfileLoop([new LineSegment(P(0, 0), P(40, 0)), new LineSegment(P(40, 0), P(40, 5)), new LineSegment(P(40, 5), P(5, 5)),
             new LineSegment(P(5, 5), P(5, 30)), new LineSegment(P(5, 30), P(0, 30)), new LineSegment(P(0, 30), P(0, 0))]);
         var body = Extrusion.Extrude(new Region(l), RigidTransform3D.Identity, 0, 20).Result!.Body;
-        var (r, _, problem) = Blends.Apply(body, Face(body, new Vector3D(0, 1, 0), new Point3D(20, 5, 0)), Face(body, new Vector3D(1, 0, 0), new Point3D(5, 20, 0)), 3, BlendKind.Fillet);
+        var (r, _, _, problem) = Blends.Apply(body, Face(body, new Vector3D(0, 1, 0), new Point3D(20, 5, 0)), Face(body, new Vector3D(1, 0, 0), new Point3D(5, 20, 0)), 3, BlendKind.Fillet);
         output.WriteLine(problem ?? "");
         problem.Should().BeNull();
         MassProperties.Volume(r!.Body).Should().BeApproximately((40 * 5 + 5 * 25 + Spandrel(3)) * 20, 1e-9);
@@ -46,7 +46,7 @@ public class BlendTests(ITestOutputHelper output)
     public void A_radius_too_large_for_the_plate_is_refused()
     {
         var body = Block();
-        var (r, _, problem) = Blends.Apply(body, Face(body, new Vector3D(0, 0, 1), new Point3D(0, 0, 10)), Face(body, new Vector3D(1, 0, 0), new Point3D(100, 0, 0)), 20, BlendKind.Fillet);
+        var (r, _, _, problem) = Blends.Apply(body, Face(body, new Vector3D(0, 0, 1), new Point3D(0, 0, 10)), Face(body, new Vector3D(1, 0, 0), new Point3D(100, 0, 0)), 20, BlendKind.Fillet);
         r.Should().BeNull();
         problem.Should().Contain("reaches other faces");
     }
@@ -54,7 +54,7 @@ public class BlendTests(ITestOutputHelper output)
     // Rounds the edge between the faces facing n1 and n2 through p1 and p2.
     static Body Round(Body body, Vector3D n1, Point3D p1, Vector3D n2, Point3D p2, double r)
     {
-        var (result, _, problem) = Blends.Apply(body, Face(body, n1, p1), Face(body, n2, p2), r, BlendKind.Fillet);
+        var (result, _, _, problem) = Blends.Apply(body, Face(body, n1, p1), Face(body, n2, p2), r, BlendKind.Fillet);
         problem.Should().BeNull();
         return result!.Body;
     }
@@ -71,13 +71,19 @@ public class BlendTests(ITestOutputHelper output)
     }
 
     [Fact]
-    public void Three_fillets_at_a_corner_are_refused()
+    public void Three_fillets_of_one_radius_meet_in_a_ball_and_of_others_are_refused()
     {
         var (z, x, y) = (new Vector3D(0, 0, 1), new Vector3D(1, 0, 0), new Vector3D(0, 1, 0));
         var body = Round(Round(Block(), z, new Point3D(0, 0, 10), x, new Point3D(100, 0, 0), 2), z, new Point3D(0, 0, 10), y, new Point3D(0, 50, 0), 2);
-        var (r, _, problem) = Blends.Apply(body, Face(body, x, new Point3D(100, 0, 0)), Face(body, y, new Point3D(0, 50, 0)), 2, BlendKind.Fillet);
-        r.Should().BeNull();
-        problem.Should().Contain("three fillets");
+        var (r, _, corners, problem) = Blends.Apply(body, Face(body, x, new Point3D(100, 0, 0)), Face(body, y, new Point3D(0, 50, 0)), 2, BlendKind.Fillet);
+        problem.Should().BeNull();
+        corners.Should().ContainSingle();
+        r!.Body.Faces.Should().ContainSingle(f => f.Surface is Sphere);
+        BodyCheck.Problems(r.Body).Should().BeEmpty();
+
+        var (other, _, _, why) = Blends.Apply(body, Face(body, x, new Point3D(100, 0, 0)), Face(body, y, new Point3D(0, 50, 0)), 3, BlendKind.Fillet);
+        other.Should().BeNull();
+        why.Should().Contain("three fillets of one radius");
     }
 
     static double Centroid(double r) => r * (5.0 / 6 - Math.PI / 4) / (1 - Math.PI / 4);
@@ -88,7 +94,7 @@ public class BlendTests(ITestOutputHelper output)
     public void A_hole_rim_is_rounded_by_a_torus()
     {
         var body = Extrusion.Extrude(new Region(Rectangle(0, 0, 100, 50), [Circle(30, 25, 5)]), RigidTransform3D.Identity, 0, 10).Result!.Body;
-        var (r, face, problem) = Blends.Apply(body, Face(body, new Vector3D(0, 0, 1), new Point3D(0, 0, 10)), Wall(body), 2, BlendKind.Fillet);
+        var (r, face, _, problem) = Blends.Apply(body, Face(body, new Vector3D(0, 0, 1), new Point3D(0, 0, 10)), Wall(body), 2, BlendKind.Fillet);
         output.WriteLine(problem ?? "");
         problem.Should().BeNull();
         // Pappus: the spandrel round the hole, its centroid that far outside the wall.
@@ -102,7 +108,7 @@ public class BlendTests(ITestOutputHelper output)
         var plate = Extrusion.Extrude(new Region(Rectangle(0, 0, 100, 50)), RigidTransform3D.Identity, 0, 10).Result!.Body;
         var boss = Extrusion.Extrude(new Region(Circle(50, 25, 8)), RigidTransform3D.Identity, 10, 25).Result!.Body;
         var body = Booleans.Merge(Booleans.Unite(plate, boss).Bodies![0].Body).Body;
-        var (r, _, problem) = Blends.Apply(body, Face(body, new Vector3D(0, 0, 1), new Point3D(0, 0, 10)), Wall(body), 3, BlendKind.Fillet);
+        var (r, _, _, problem) = Blends.Apply(body, Face(body, new Vector3D(0, 0, 1), new Point3D(0, 0, 10)), Wall(body), 3, BlendKind.Fillet);
         output.WriteLine(problem ?? "");
         problem.Should().BeNull();
         MassProperties.Volume(r!.Body).Should().BeApproximately(50000 + Math.PI * 64 * 15 + 2 * Math.PI * (8 + Centroid(3)) * Spandrel(3), 1e-9);
@@ -113,7 +119,7 @@ public class BlendTests(ITestOutputHelper output)
     {
         // One torus face; Isoform's F-rep core rounds a swept profile's cap edge along the sweep and names it per side.
         var boss = Extrusion.Extrude(new Region(Circle(50, 25, 8)), RigidTransform3D.Identity, 10, 25).Result!.Body;
-        var (r, _, problem) = Blends.Apply(boss, Face(boss, new Vector3D(0, 0, 1), new Point3D(0, 0, 25)), Wall(boss), 2, BlendKind.Fillet);
+        var (r, _, _, problem) = Blends.Apply(boss, Face(boss, new Vector3D(0, 0, 1), new Point3D(0, 0, 25)), Wall(boss), 2, BlendKind.Fillet);
         problem.Should().BeNull();
         MassProperties.Volume(r!.Body).Should().BeApproximately(Math.PI * 64 * 15 - 2 * Math.PI * (8 - Centroid(2)) * Spandrel(2), 1e-9);
         r.Body.Faces.Should().HaveCount(4);
@@ -139,7 +145,7 @@ public class BlendTests(ITestOutputHelper output)
     public void A_hole_rim_is_chamfered_by_a_cone()
     {
         var body = Extrusion.Extrude(new Region(Rectangle(0, 0, 100, 50), [Circle(30, 25, 5)]), RigidTransform3D.Identity, 0, 10).Result!.Body;
-        var (r, _, problem) = Blends.Apply(body, Face(body, new Vector3D(0, 0, 1), new Point3D(0, 0, 10)), Wall(body), 1.5, BlendKind.Chamfer);
+        var (r, _, _, problem) = Blends.Apply(body, Face(body, new Vector3D(0, 0, 1), new Point3D(0, 0, 10)), Wall(body), 1.5, BlendKind.Chamfer);
         output.WriteLine(problem ?? "");
         problem.Should().BeNull();
         MassProperties.Volume(r!.Body).Should().BeApproximately(50000 - Math.PI * 250 - 2 * Math.PI * (5 + 0.5) * Triangle(1.5), 1e-9);
@@ -151,9 +157,9 @@ public class BlendTests(ITestOutputHelper output)
     public void A_hole_is_chamfered_at_both_ends()
     {
         var body = Extrusion.Extrude(new Region(Rectangle(0, 0, 100, 50), [Circle(30, 25, 5)]), RigidTransform3D.Identity, 0, 10).Result!.Body;
-        var (once, _, problem) = Blends.Apply(body, Face(body, new Vector3D(0, 0, 1), new Point3D(0, 0, 10)), Wall(body), 1, BlendKind.Chamfer);
+        var (once, _, _, problem) = Blends.Apply(body, Face(body, new Vector3D(0, 0, 1), new Point3D(0, 0, 10)), Wall(body), 1, BlendKind.Chamfer);
         problem.Should().BeNull();
-        var (twice, _, again) = Blends.Apply(once!.Body, Face(once.Body, new Vector3D(0, 0, -1), new Point3D(0, 0, 0)), Wall(once.Body), 1, BlendKind.Chamfer);
+        var (twice, _, _, again) = Blends.Apply(once!.Body, Face(once.Body, new Vector3D(0, 0, -1), new Point3D(0, 0, 0)), Wall(once.Body), 1, BlendKind.Chamfer);
         output.WriteLine(again ?? "");
         again.Should().BeNull();
         MassProperties.Volume(twice!.Body).Should().BeApproximately(50000 - Math.PI * 250 - 2 * 2 * Math.PI * (5 + 1.0 / 3) * Triangle(1), 1e-9);
@@ -164,7 +170,7 @@ public class BlendTests(ITestOutputHelper output)
     public void A_boss_top_rim_is_chamfered_by_a_cone()
     {
         var boss = Extrusion.Extrude(new Region(Circle(50, 25, 8)), RigidTransform3D.Identity, 10, 25).Result!.Body;
-        var (r, _, problem) = Blends.Apply(boss, Face(boss, new Vector3D(0, 0, 1), new Point3D(0, 0, 25)), Wall(boss), 2, BlendKind.Chamfer);
+        var (r, _, _, problem) = Blends.Apply(boss, Face(boss, new Vector3D(0, 0, 1), new Point3D(0, 0, 25)), Wall(boss), 2, BlendKind.Chamfer);
         output.WriteLine(problem ?? "");
         problem.Should().BeNull();
         MassProperties.Volume(r!.Body).Should().BeApproximately(Math.PI * 64 * 15 - 2 * Math.PI * (8 - 2.0 / 3) * Triangle(2), 1e-9);
@@ -177,7 +183,7 @@ public class BlendTests(ITestOutputHelper output)
         var plate = Extrusion.Extrude(new Region(Rectangle(0, 0, 100, 50)), RigidTransform3D.Identity, 0, 10).Result!.Body;
         var boss = Extrusion.Extrude(new Region(Circle(50, 25, 8)), RigidTransform3D.Identity, 10, 25).Result!.Body;
         var body = Booleans.Merge(Booleans.Unite(plate, boss).Bodies![0].Body).Body;
-        var (r, _, problem) = Blends.Apply(body, Face(body, new Vector3D(0, 0, 1), new Point3D(0, 0, 10)), Wall(body), 2, BlendKind.Chamfer);
+        var (r, _, _, problem) = Blends.Apply(body, Face(body, new Vector3D(0, 0, 1), new Point3D(0, 0, 10)), Wall(body), 2, BlendKind.Chamfer);
         r.Should().BeNull();
         problem.Should().Contain("convex");
     }

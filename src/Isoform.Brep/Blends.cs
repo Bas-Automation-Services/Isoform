@@ -19,48 +19,61 @@ public static class Blends
     /// <summary>
     /// The body with the edge between faces <paramref name="a"/> and <paramref name="b"/> rounded to radius
     /// <paramref name="size"/> or chamfered back by it on both faces. Origins: operand 0 the body's faces, operand 1
-    /// the blend's; <c>Face</c> is the blend's own face among operand 1's (the arc or the chamfer's slope).
+    /// the blend's; <c>Face</c> is the blend's own face among operand 1's (the arc or the chamfer's slope). Where a
+    /// fillet's edge ends between two earlier fillets of its radius at a square corner, a ball rounds the corner:
+    /// <c>Corners</c> gives the two fillets' faces of each, and operand 2 + k holds the k-th ball's face.
     /// </summary>
-    public static (Shaped? Result, FaceId Face, string? Problem) Apply(Body body, FaceId a, FaceId b, double size, BlendKind kind) =>
-        (body[a].Surface, body[b].Surface) switch
+    public static (Shaped? Result, FaceId Face, IReadOnlyList<FaceId[]> Corners, string? Problem) Apply(Body body, FaceId a, FaceId b, double size, BlendKind kind)
+    {
+        if ((body[a].Surface, body[b].Surface) is (Plane pa, Plane pb)) return Straight(body, a, b, pa, pb, size, kind);
+        var (result, face, problem) = (body[a].Surface, body[b].Surface) switch
         {
-            (Plane pa, Plane pb) => Straight(body, a, b, pa, pb, size, kind),
             (Plane, Cylinder) or (Cylinder, Plane) => Rim(body, a, b, size, kind),
             _ => (null, default, "only an edge between two flat faces, or a flat face and a cylinder, can be rounded or chamfered yet"),
         };
+        return (result, face, [], problem);
+    }
 
-    static (Shaped?, FaceId, string?) Straight(Body body, FaceId a, FaceId b, Plane pa, Plane pb, double size, BlendKind kind)
+    static (Shaped?, FaceId, IReadOnlyList<FaceId[]>, string?) Straight(Body body, FaceId a, FaceId b, Plane pa, Plane pb, double size, BlendKind kind)
     {
         var edges = Enumerable.Range(0, body.Edges.Length).Select(e => new EdgeId(e))
             .Where(e => body.UsesOf(e).Select(body.FaceOf).ToHashSet().SetEquals([a, b])).ToList();
-        if (edges.Count == 0) return (null, default, "the two faces share no edge");
-        if (edges.Any(e => body[e].Curve is not Line3)) return (null, default, "the edge between the faces is not straight");
+        if (edges.Count == 0) return (null, default, [], "the two faces share no edge");
+        if (edges.Any(e => body[e].Curve is not Line3)) return (null, default, [], "the edge between the faces is not straight");
         var line = (Line3)body[edges[0]].Curve;
         var d = line.Direction;
-        if (edges.Any(e => !Collinear(line, (Line3)body[e].Curve))) return (null, default, "the faces meet in edges that are not on one line");
+        if (edges.Any(e => !Collinear(line, (Line3)body[e].Curve))) return (null, default, [], "the faces meet in edges that are not on one line");
 
         var nA = pa.Frame.ZAxis * (body[a].SameSense ? 1 : -1);
         var nB = pb.Frame.ZAxis * (body[b].SameSense ? 1 : -1);
         var c = nA.Dot(nB);
-        if (Math.Abs(c) >= 1 - 1e-9) return (null, default, "the two faces are parallel along the edge");
+        if (Math.Abs(c) >= 1 - 1e-9) return (null, default, [], "the two faces are parallel along the edge");
         // Into each face, square to the edge: to the left of the edge as the face's loop runs it, seen from outside.
         var (inA, inB) = (Into(body, edges[0], a, nA), Into(body, edges[0], b, nB));
         var convex = nA.Dot(inB) < 0;
-        if (!convex && kind == BlendKind.Chamfer) return (null, default, "only a convex edge can be chamfered");
+        if (!convex && kind == BlendKind.Chamfer) return (null, default, [], "only a convex edge can be chamfered");
 
         // The edge's extent along its line, and a point on it before its start. A convex edge's prism runs on past its
         // ends, where it cuts nothing; a concave edge's fills, so it stops on the faces the edge ends on.
         var ts = edges.SelectMany(e => new[] { body[e].T0, body[e].T1 }.Select(t => (body[e].Curve.At(t) - line.Origin).Dot(d))).ToList();
         var margin = convex ? 2 * size + 1 : 0;
-        // Where the edge ends against two earlier fillets, three meet at a corner: Isoform rounds that with a ball,
-        // which these prisms do not make.
+        // Where the edge ends against two earlier fillets, three meet at a corner: Isoform rounds that with a ball, its
+        // centre r inside all three faces. The kernel makes it where the fillets are of one radius and the corner square:
+        // each fillet's axis then runs through the centre, square to the other two.
+        var corners = new List<(Point3D Centre, Vector3D Out, FaceId[] Fillets)>();
         foreach (var t in new[] { ts.Min(), ts.Max() })
         {
             var tip = line.Origin + d * t;
             var curved = body.Coedges.Select((_, i) => new CoedgeId(i))
                 .Where(co => (body[body.StartOf(co)].Point - tip).Length <= Intersections.Snap)
-                .Select(body.FaceOf).Distinct().Count(f => f != a && f != b && body[f].Surface is not Plane);
-            if (curved >= 2) return (null, default, "three fillets meeting at a corner need a ball there, which the managed kernel does not make yet");
+                .Select(body.FaceOf).Distinct().Where(f => f != a && f != b && body[f].Surface is not Plane).ToArray();
+            if (curved.Length < 2) continue;
+            var centre = tip - (nA + nB) * (size / (1 + c));
+            bool Fits(FaceId f) => body[f].Surface is Cylinder k && Math.Abs(k.Radius - size) <= 1e-9 && Math.Abs(k.Frame.ZAxis.Dot(d)) <= 1e-9
+                                   && Math.Abs(k.Frame.ZAxis.Dot(nA)) + Math.Abs(k.Frame.ZAxis.Dot(nB)) >= 1 - 1e-9 && Off(k, centre) <= Intersections.Snap;
+            if (curved.Length > 2 || kind != BlendKind.Fillet || !convex || Math.Abs(c) > 1e-9 || !curved.All(Fits))
+                return (null, default, [], "three blends meeting at a corner need a ball there, which the managed kernel makes only for three fillets of one radius at a square corner");
+            corners.Add((centre, d * (t == ts.Max() ? 1 : -1), curved));
         }
         if (!convex)
         {
@@ -69,7 +82,7 @@ public static class Blends
                 .Where(co => tips.Any(e => (body[body.StartOf(co)].Point - e).Length <= Intersections.Snap))
                 .Select(body.FaceOf).Where(f => f != a && f != b)
                 .All(f => body[f].Surface is Plane end && end.Frame.ZAxis.Cross(d).Length < 1e-9);
-            if (!square) return (null, default, "a concave edge can only be rounded where it ends on faces square to it");
+            if (!square) return (null, default, [], "a concave edge can only be rounded where it ends on faces square to it");
         }
         var origin = line.Origin + d * (ts.Min() - margin);
         var frame = RigidTransform3D.FromFrame(origin, d, nA);
@@ -92,14 +105,105 @@ public static class Blends
             profile = new ProfileLoop([new LineSegment(p, fa), new ArcSegment(o, size, start, sweep), new LineSegment(fb, p)]);
         }
         var (tool, why) = Extrusion.Extrude(new Region(profile), frame, 0, ts.Max() - ts.Min() + 2 * margin, body.Tolerance);
-        if (tool is null) return (null, default, $"the {Name(kind)} has no room: {why}");
+        if (tool is null) return (null, default, [], $"the {Name(kind)} has no room: {why}");
 
         var ends = new[] { ts.Min(), ts.Max() }.Select(t => line.Origin + d * t).ToList();
         var allowed = new HashSet<FaceId> { a, b };
         foreach (var co in body.Coedges.Select((_, i) => new CoedgeId(i)))
             if (ends.Any(e => (body[body.StartOf(co)].Point - e).Length <= Intersections.Snap)) allowed.Add(body.FaceOf(co));
         // The profile's second segment is the arc (or the slope): its side face is the new face.
-        return Settle(body, tool.Body, tool.Sides[0][1], convex, allowed, kind);
+        var (settled, face, problem) = Settle(body, tool.Body, tool.Sides[0][1], convex, allowed, kind);
+        if (problem is not null) return (null, default, [], problem);
+
+        // The three fillets run on past the corner and cross there in a mitre, which holds the ball: what lies beyond
+        // the ball's centre outside it goes.
+        var result = settled!;
+        foreach (var (centre, ahead, _) in corners)
+        {
+            var (cap, failed) = Cap(centre, nA, nB, ahead, size, body.Tolerance);
+            if (cap is null) return (null, default, [], $"the ball at the corner cannot be made: {failed}");
+            var (cut, why2) = Booleans.Subtract(result.Body, cap.Body);
+            if (why2 is not null) return (null, default, [], $"the ball at the corner cannot be cut: {why2}");
+            if (cut is not [var one]) return (null, default, [], "the ball at the corner parts the body");
+            // Faces of the body so far keep their origins; the ball's (operand 1 of the cap) becomes its own operand.
+            var operand = 2 + corners.FindIndex(k => k.Centre == centre);
+            result = new Shaped(one.Body, [.. one.Origins.Select(os => (IReadOnlyList<Origin>)[.. os.SelectMany(o => o.Operand == 0
+                ? result.Origins[o.Face.Index]
+                : cap.Origins[o.Face.Index].Where(x => x.Operand == 1).Select(x => new Origin(operand, x.Face)))])]);
+        }
+        return (result, face, [.. corners.Select(k => k.Fillets)], null);
+    }
+
+    // How far a point lies from a cylinder's axis.
+    static double Off(Cylinder k, Point3D p)
+    {
+        var w = p - k.Frame.Origin;
+        return (w - k.Frame.ZAxis * w.Dot(k.Frame.ZAxis)).Length;
+    }
+
+    /// <summary>
+    /// The corner a ball of radius r round <paramref name="centre"/> takes off a square corner whose faces look along
+    /// x, y and z (unit, square to each other): the cube from the centre 3r/2 along each, less the ball, built face by
+    /// face and sewn (each side a square less a quarter circle, the ball's piece three quarter circles of great
+    /// circles). The ball's axis is square to the corner's diagonal and in none of the side planes, so its poles lie
+    /// off the piece. Origins: operand 0 the cube's faces, 1 the ball's.
+    /// </summary>
+    static (Shaped?, string?) Cap(Point3D centre, Vector3D x, Vector3D y, Vector3D z, double r, double tolerance)
+    {
+        if (x.Cross(y).Dot(z) < 0) (x, y) = (y, x);
+        var side = 1.5 * r;
+        Vector3D[] e = [x, y, z];
+        var diagonal = (x + y + z).Normalized();
+        var sphere = new Sphere(RigidTransform3D.FromFrame(centre, (x - y * 2 + z).Normalized(), -diagonal), r);
+        // In the plane square to e[i], the quarter circle from e[i + 1] (t = 0) to e[i + 2] (t = π/2).
+        Circle3 Quarter(int i) => new(RigidTransform3D.FromFrame(centre, e[i], e[(i + 1) % 3]), r);
+        var patches = new List<Patch>();
+        void Add(Surface surface, Vector3D outward, List<(Curve3 Curve, double From, double To)> loop, int operand, int face)
+        {
+            // Counter-clockwise round the outward normal (Newell's normal of points along it).
+            var points = loop.SelectMany(u => Enumerable.Range(0, 4).Select(k => u.Curve.At(u.From + (u.To - u.From) * k / 4))).ToList();
+            var normal = new Vector3D(0, 0, 0);
+            for (var k = 0; k < points.Count; k++)
+            {
+                var (p, q) = (points[k] - centre, points[(k + 1) % points.Count] - centre);
+                normal += p.Cross(q);
+            }
+            IReadOnlyList<Use> uses = [.. loop.Select(u => new Use(u.Curve, u.From, u.To, Uv.Pcurve(surface, u.Curve)))];
+            if (normal.Dot(outward) < 0) uses = Arrangement.Sensed(uses, false);
+            if (surface is Sphere)
+            {
+                // All three in the period round the piece's middle.
+                var middle = Uv.Of(surface, centre + diagonal * r).X;
+                uses = [.. uses.Select(u => u with { Pcurve = Uv.Shift(u.Pcurve, 2 * Math.PI * Math.Round((middle - u.Pcurve.At((u.From + u.To) / 2).X) / (2 * Math.PI))) })];
+            }
+            var sameSense = surface switch { Plane q => q.Frame.ZAxis.Dot(outward) > 0, _ => false };
+            patches.Add(new Patch(surface, sameSense, [uses], new HashSet<Origin> { new(operand, new FaceId(face)) }));
+        }
+        for (var i = 0; i < 3; i++)
+        {
+            var (j, k) = (e[(i + 1) % 3], e[(i + 2) % 3]);
+            // The side through the centre, square to e[i]: out along j, across, back, in along k, round the quarter circle.
+            Add(new Plane(RigidTransform3D.FromFrame(centre, e[i], j)), -e[i],
+            [
+                (new Line3(centre, j), r, side), (new Line3(centre + j * side, k), 0, side),
+                (new Line3(centre + k * side, j), side, 0), (new Line3(centre, k), side, r), (Quarter(i), Math.PI / 2, 0),
+            ], 0, i);
+            // The far side, a whole square.
+            var far = centre + e[i] * side;
+            Add(new Plane(RigidTransform3D.FromFrame(far, e[i], j)), e[i],
+            [
+                (new Line3(far, j), 0, side), (new Line3(far + j * side, k), 0, side), (new Line3(far + k * side, j), side, 0), (new Line3(far, k), side, 0),
+            ], 0, 3 + i);
+        }
+        Add(sphere, -diagonal, [(Quarter(2), 0, Math.PI / 2), (Quarter(0), 0, Math.PI / 2), (Quarter(1), 0, Math.PI / 2)], 1, 0);
+        try
+        {
+            return Sewing.Sew(patches, tolerance) is [var one] ? (one, null) : (null, "the cube less the ball is not one piece");
+        }
+        catch (BooleanFailure failure)
+        {
+            return (null, failure.Message);
+        }
     }
 
     // The circle where a flat face meets a cylinder square to it: the spandrel (or the chamfer's triangle) in the

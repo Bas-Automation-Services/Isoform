@@ -76,6 +76,8 @@ public class BackendTests(ITestOutputHelper output)
     static bool Same(Isoform.Geometry.Surface s, Isoform.Geometry.Surface g)
     {
         var d = g.Origin - s.Origin;
+        // A sphere is the same whichever way its axis points (each side turns its poles off the face its own way).
+        if (s.Kind == Isoform.Geometry.SurfaceKind.Sphere) return g.Kind == s.Kind && d.Length < 1e-9 && Math.Abs(s.Radius - g.Radius) <= 1e-12;
         if (s.Kind == Isoform.Geometry.SurfaceKind.Cone)
             return g.Kind == s.Kind && d.Length < 1e-9 && Math.Abs(s.Angle - g.Angle) <= 1e-12 && s.Axis.Dot(g.Axis) >= 1 - 1e-12;
         var radius = s.Kind == Isoform.Geometry.SurfaceKind.Plane || Math.Abs(s.Radius - g.Radius) <= 1e-12;

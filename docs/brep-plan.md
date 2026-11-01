@@ -509,13 +509,37 @@ match the F-rep core's names, topology and exact faces; OCCT reads all back vali
 F-rep core too. Tests: `tests/Isoform.Brep.Tests` 335, `BrepKernelStepTests` 82. Still nine of the 13 examples: "Smooth blends and a shell"
 stops at its blended extrude.
 
+## Experiment 15: ball corners (done, 2026-11-01)
+
+Chosen from the candidates (1, its sphere half).
+
+- *Where:* a fillet whose edge ends between two earlier fillets of its radius at a square corner (each fillet's axis
+  through the point r inside all three faces, square to the other two), as the F-rep core's `VertexSphereField`. The
+  ball is named `id/corner:a+b+c` after the three fillets, sorted, the last one's id first. Unequal radii, other
+  angles, chamfers and concave edges are still refused there.
+- *How:* the three fillets run on past the corner, as they always have, and cross in a mitre that holds the ball;
+  then a cap is cut away: the cube from the ball's centre 3r/2 along the three faces' normals, less the ball. The cap
+  is built face by face and sewn (three sides, each a square less a quarter circle, three far squares, and the
+  ball's piece bounded by three quarter great circles), not by a boolean of a cube and a ball: a plane through a
+  sphere at an angle to its axis now meets it in a circle, but the boolean of such a cube and ball still fails (a
+  side face loses its arc), which is left for later. The fillet cylinders only touch the ball, so the cut needs no
+  new surface pair.
+- *Sphere:* its axis square to the corner's diagonal and in none of the side planes ((x − 2y + z)/√6 in the
+  corner's directions), so the poles and the seam stay off the piece. `ExactBrep` turns its corner balls the same
+  way, to a different axis; spheres are compared by centre and radius.
+- *(u, v):* `SphereCircle2`, a circle on a sphere as longitude and latitude, u kept continuous by its winding round
+  the axis; `CurveSegment` scales v too.
+
+**Results:** 3 more documents: a corner of three fillets, the same with the upright edge first, a plate with all four
+top corners balled. All 85 have exact volumes and match the F-rep core and `ExactBrep`; OCCT reads them all back
+valid without healing (no pole on a corner ball). Tests: `tests/Isoform.Brep.Tests` 344, `BrepKernelStepTests` 85.
+
 ## Next: candidates (to decide)
 
 What still stops the playground's examples, and what is left from before:
 
-1. **Ball corners:** where three fillets meet, a piece of a sphere bounded by the three fillets' ends (circles that
-   are not its parallels), which `ExactBrep` writes with the sphere's poles turned away from the piece. Then pointed
-   cones (an apex as a pole of the cone).
+1. **Pointed cones** (an apex as a pole of the cone), and ball corners of other kinds (corners not square; a
+   sphere against planes and cylinders at an angle in booleans).
 3. **Arcs meeting lines at a corner** in loop fillets (a quartic, unless the radii make it a circle or ellipse).
 4. **Inventor as a second STEP reader**, parked.
 5. **Local booleans:** rebuild only the faces a boolean touches.
@@ -532,4 +556,4 @@ What still stops the playground's examples, and what is left from before:
 
 Blended extrudes and shells (smooth F-rep blends) and lattices stay with the F-rep core.
 
-Recommended: 1 (ball corners).
+Recommended: 5 (local booleans) or 6 (mixed models), now that the playground's exact features are covered.

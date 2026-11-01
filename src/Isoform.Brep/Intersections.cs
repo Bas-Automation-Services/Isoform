@@ -126,13 +126,19 @@ internal static class Intersections
     }
 
     // A sphere is a torus without a hole (its section a circle on the axis): a plane square to its axis meets it in a
-    // circle round the axis, a cylinder round its axis in two. Other planes and cylinders meet it in circles that are
-    // not parallels, refused.
+    // circle round the axis, a cylinder round its axis in two. Any other plane meets it in a circle round the foot of
+    // the centre (one it only touches, in nothing); other cylinders are refused.
     static Torus AsTorus(Sphere o) => new(o.Frame, 0, o.Radius);
 
-    static SurfaceMeeting PlaneSphere(Plane p, Sphere o) => Math.Abs(p.Frame.ZAxis.Dot(o.Frame.ZAxis)) < 1 - Parallel
-        ? SurfaceMeeting.Refused("a plane at an angle to a sphere's axis")
-        : PlaneTorus(p, AsTorus(o));
+    static SurfaceMeeting PlaneSphere(Plane p, Sphere o)
+    {
+        var n = p.Frame.ZAxis;
+        if (Math.Abs(n.Dot(o.Frame.ZAxis)) >= 1 - Parallel) return PlaneTorus(p, AsTorus(o));
+        var s = n.Dot(o.Frame.Origin - p.Frame.Origin);
+        if (Math.Abs(s) >= o.Radius - Snap) return SurfaceMeeting.Nothing;
+        var x = (Math.Abs(n.X) < 0.9 ? new Vector3D(1, 0, 0) : new Vector3D(0, 1, 0)).Cross(n).Normalized();
+        return SurfaceMeeting.Along(new Circle3(RigidTransform3D.FromFrame(o.Frame.Origin - n * s, n, x), Math.Sqrt(o.Radius * o.Radius - s * s)));
+    }
 
     static SurfaceMeeting CylinderSphere(Cylinder c, Sphere o)
     {
@@ -782,6 +788,9 @@ internal static class Uv
                 var v = Of(o, k.At(0)).Y;
                 return new Line2(new Point2D(phase, v), new Vector2D(k.Frame.ZAxis.Dot(o.Frame.ZAxis) > 0 ? 1 : -1, 0));
             }
+            case (Sphere o, Circle3 k) when Math.Abs(k.Frame.ZAxis.Dot(o.Frame.ZAxis)) > 1e-9 || (k.Frame.Origin - o.Frame.Origin).Length > Intersections.Snap:
+                // Any other circle: longitude and latitude along it.
+                return SphereCircle2.Of(o, k) ?? throw new NotSupportedException("a circle through a sphere's pole");
             case (Sphere o, Circle3 k):
             {
                 // A meridian (a great circle through the poles, round the centre): u fixed by the half-plane its X
@@ -812,6 +821,7 @@ internal static class Uv
         Circle2 c => c with { Center = new Point2D(c.Center.X + du, c.Center.Y) },
         Ellipse2 e => e with { Center = new Point2D(e.Center.X + du, e.Center.Y) },
         Wave2 w => w with { U0 = w.U0 + du },
+        SphereCircle2 c => c with { U0 = c.U0 + du },
         _ => throw new NotSupportedException(pc.GetType().Name),
     };
 
@@ -822,6 +832,7 @@ internal static class Uv
         Circle2 c => new Circle2(c.Center, c.Radius, c.Phase + c.Sense * beta, c.Sense * (int)Math.Round(alpha)),
         Ellipse2 e => e with { Offset = alpha * (beta + e.Offset), Sense = e.Sense * (int)Math.Round(alpha) },
         Wave2 w => w with { U0 = w.U0 + w.Slope * beta, Slope = w.Slope * (int)Math.Round(alpha), Phase = alpha * (beta + w.Phase) },
+        SphereCircle2 c => c with { Phase = c.Phase + c.Sense * beta, Sense = c.Sense * (int)Math.Round(alpha) },
         _ => throw new NotSupportedException(pc.GetType().Name),
     };
 
@@ -839,6 +850,8 @@ internal static class Uv
             case Ellipse2 when k == 1:
             case Wave2 when s is Cylinder:
                 return new CurveSegment(pc, from, to, k);
+            case SphereCircle2 when s is Sphere:
+                return new CurveSegment(pc, from, to, k, kv);
             default:
                 throw new NotSupportedException($"a {pc.GetType().Name} on a {s.GetType().Name}");
         }

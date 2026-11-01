@@ -265,6 +265,58 @@ public sealed record Wave2(double U0, double V0, int Slope, double Amplitude, do
 }
 
 /// <summary>
+/// A circle on a sphere in its (u, v): the point at angle θ = Phase + Sense · t round the circle, as longitude u and
+/// latitude v. u runs on continuously, within half a turn of U0 + Winding · θ: Winding ±1 for a circle round the
+/// sphere's axis (as θ turns, u turns once), 0 for one beside it. A circle through a pole has no p-curve.
+/// </summary>
+public sealed record SphereCircle2(Sphere Sphere, Circle3 Circle, double Phase, int Sense, double U0, int Winding) : Curve2
+{
+    /// <summary>The p-curve of the circle with θ = t; null for a circle through a pole.</summary>
+    public static SphereCircle2? Of(Sphere sphere, Circle3 circle)
+    {
+        var (z, n) = (sphere.Frame.ZAxis, circle.Frame.ZAxis);
+        // Where the axis crosses the circle's plane: inside the circle, it winds round the axis.
+        var winding = 0;
+        if (Math.Abs(n.Dot(z)) > 1e-12)
+        {
+            var hit = sphere.Frame.Origin + z * (n.Dot(circle.Frame.Origin - sphere.Frame.Origin) / n.Dot(z));
+            var off = (hit - circle.Frame.Origin).Length;
+            if (Math.Abs(off - circle.Radius) <= 1e-9 * (1 + circle.Radius)) return null;
+            if (off < circle.Radius) winding = Math.Sign(n.Dot(z));
+        }
+        var p = new SphereCircle2(sphere, circle, 0, 1, 0, winding).Local(0).P;
+        return new SphereCircle2(sphere, circle, 0, 1, Math.Atan2(p.Y, p.X), winding);
+    }
+
+    // The point at t less the sphere's centre, and its derivative, in the sphere's frame.
+    (Vector3D P, Vector3D D) Local(double t)
+    {
+        var (sin, cos) = Math.SinCos(Phase + Sense * t);
+        var f = Circle.Frame;
+        var p = f.Origin - Sphere.Frame.Origin + (f.XAxis * cos + f.YAxis * sin) * Circle.Radius;
+        var d = (f.YAxis * cos - f.XAxis * sin) * (Circle.Radius * Sense);
+        var (x, y, z) = (Sphere.Frame.XAxis, Sphere.Frame.YAxis, Sphere.Frame.ZAxis);
+        return (new Vector3D(p.Dot(x), p.Dot(y), p.Dot(z)), new Vector3D(d.Dot(x), d.Dot(y), d.Dot(z)));
+    }
+
+    public override Point2D At(double t)
+    {
+        var (p, _) = Local(t);
+        var near = U0 + Winding * (Phase + Sense * t);
+        var u = Math.Atan2(p.Y, p.X);
+        return new Point2D(u + 2 * Math.PI * Math.Round((near - u) / (2 * Math.PI)), Math.Asin(Math.Clamp(p.Z / Sphere.Radius, -1, 1)));
+    }
+
+    // u = atan2(y, x), v = asin(z / R): u' = (x y' − y x') / ρ², v' = z' / ρ with ρ² = x² + y² = R² − z².
+    public override Vector2D Derivative(double t)
+    {
+        var (p, d) = Local(t);
+        var rho2 = p.X * p.X + p.Y * p.Y;
+        return new Vector2D((p.X * d.Y - p.Y * d.X) / rho2, d.Z / Math.Sqrt(rho2));
+    }
+}
+
+/// <summary>
 /// A sphere round the frame's origin: <c>S(u, v) = Origin + Radius · (cos v · (cos u · X + sin u · Y) + sin v · Z)</c>.
 /// u is the angle round Z (periodic), v the latitude in [−π/2, π/2]; at the poles, ±Z, u runs over a single point. The
 /// normal points out. A dome where a revolve's arc ends on its axis is a piece of one.

@@ -12,7 +12,8 @@ namespace Isoform.Brep.Modeling;
 /// with a floor; along Z, into a face, or at a sketch's points), plane cuts (face <c>id/face</c>), patterns of those
 /// (linear, circular or mirrored; copy k of face s is <c>id/k:s</c>), bodies joined or cut into others, fillets and
 /// chamfers on the edge between two flat faces or round a cylinder square to a flat
-/// face (face <c>id/face</c>, a cone for a chamfer there), and offsets of one body (the history rebuilt with every
+/// face (face <c>id/face</c>, a cone for a chamfer there; a ball <c>id/corner:a+b+c</c> where three fillets of one
+/// radius meet at a square corner), and offsets of one body (the history rebuilt with every
 /// face moved; round corners <c>id/corner:a+b</c>) and closed shells of one (inner faces <c>id/inner:face</c>). Each
 /// starts a body, joins it or cuts it, working on the
 /// current body as Isoform's <see cref="Feature.Body"/> says. Faces carry Isoform's names: sides after their profile
@@ -484,7 +485,7 @@ public sealed class BrepModeler(ModelingSettings settings) : IModeler
             var pairs = (from a in Called(edge[0]) from b in Called(edge[1]) where Adjacent(solid.Body, a, b) select (a, b)).ToList();
             if (pairs.Count == 0) continue;
             if (pairs.Count > 1) return Unsupported(feature.Id, $"{feature.Id}: {edge[0]} and {edge[1]} meet in more than one edge; the managed B-rep kernel rounds one");
-            var (result, blend, problem) = Blends.Apply(solid.Body, pairs[0].a, pairs[0].b, size, kind);
+            var (result, blend, corners, problem) = Blends.Apply(solid.Body, pairs[0].a, pairs[0].b, size, kind);
             if (problem is not null) return Unsupported(feature.Id, $"the edge between {edge[0]} and {edge[1]} cannot be {what}: {problem}");
             // Only the blend's own face takes its name; the rest of its prism lies on faces of the body. Its surface's
             // normal points out of the round: kept, the edge was convex.
@@ -493,7 +494,17 @@ public sealed class BrepModeler(ModelingSettings settings) : IModeler
             if (grow == 0)
                 for (var f = 0; f < result.Body.Faces.Length; f++)
                     if (result.Origins[f].Any(o => o.Operand == 1 && o.Face == blend)) convex[feature.Id] = result.Body.Faces[f].SameSense;
-            solids[i] = (Named(result, [solid, new NamedBody(result.Body, face)]), body);
+            // A ball where it meets two earlier fillets: id/corner:a+b+c after the three fillets, as the F-rep core names it.
+            var operands = new List<NamedBody> { solid, new NamedBody(result.Body, face) };
+            foreach (var fillets in corners)
+            {
+                var ids = fillets.Select(f => solid.Names[f].FirstOrDefault(n => n.EndsWith("/face", StringComparison.Ordinal)) is { } n ? n[..^"/face".Length] : solid.Names[f][0])
+                    .Append(feature.Id).Order(StringComparer.Ordinal);
+                var ball = new Dictionary<FaceId, IReadOnlyList<string>>();
+                foreach (var o in result.Origins.SelectMany(o => o).Where(o => o.Operand == operands.Count)) ball[o.Face] = [$"{feature.Id}/corner:{string.Join("+", ids)}"];
+                operands.Add(new NamedBody(result.Body, ball));
+            }
+            solids[i] = (Named(result, [.. operands]), body);
             return null;
         }
         return Unsupported(feature.Id, $"{feature.Id}: no edge between {edge[0]} and {edge[1]}");

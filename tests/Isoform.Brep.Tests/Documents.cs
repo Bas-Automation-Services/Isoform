@@ -2,7 +2,7 @@ using Isoform.Document;
 
 namespace Isoform.Brep.Tests;
 
-/// <summary>Isoform part documents the managed kernel builds (experiments 1 to 14), with their exact volumes.</summary>
+/// <summary>Isoform part documents the managed kernel builds (experiments 1 to 15), with their exact volumes.</summary>
 public static class Documents
 {
     static readonly SketchPlane Xy = new([0, 0, 0], [1, 0, 0], [0, 0, 1]);
@@ -498,6 +498,35 @@ public static class Documents
             12000 - (1 - Math.PI / 4) * 30 - 36 * 26 * 6),
     ];
 
+    // Experiment 15: ball corners. Where three fillets of one radius meet at a square corner, a sphere round the
+    // point r inside all three faces: each fillet's spandrel (4 − π for r = 2) runs to the corner's cube, of which the
+    // ball leaves its octant (8 − 4π/3 goes).
+    static readonly double Spandrel2 = 4 - Math.PI;
+    static readonly double CornerCap = 8 - 4 * Math.PI / 3;
+
+    static readonly (string Name, PartDocument Document, double Volume)[] Balls =
+    [
+        ("ball corner", new(
+        [
+            Plate40, new Fillet("r1", ["plate/z+", "plate/x+"], 2), new Fillet("r2", ["plate/z+", "plate/y+"], 2), new Fillet("r3", ["plate/x+", "plate/y+"], 2),
+        ]), 12000 - Spandrel2 * (28 + 38 + 8) - CornerCap),
+        // The upright edge first: the ball comes with the last, named after it.
+        ("ball corner, upright edge first", new(
+        [
+            Plate40, new Fillet("r3", ["plate/x+", "plate/y+"], 2), new Fillet("r1", ["plate/z+", "plate/x+"], 2), new Fillet("r2", ["plate/z+", "plate/y+"], 2),
+        ]), 12000 - Spandrel2 * (28 + 38 + 8) - CornerCap),
+        // The top's four edges and the four upright ones: a ball at each top corner; the top edges run 36 and 26
+        // between them, the upright ones 8 below.
+        ("four ball corners", new(
+        [
+            Plate40,
+            new Fillet("t1", ["plate/z+", "plate/x+"], 2), new Fillet("t2", ["plate/z+", "plate/x-"], 2),
+            new Fillet("t3", ["plate/z+", "plate/y+"], 2), new Fillet("t4", ["plate/z+", "plate/y-"], 2),
+            new Fillet("u1", ["plate/x+", "plate/y+"], 2), new Fillet("u2", ["plate/x+", "plate/y-"], 2),
+            new Fillet("u3", ["plate/x-", "plate/y+"], 2), new Fillet("u4", ["plate/x-", "plate/y-"], 2),
+        ]), 12000 - Spandrel2 * (2 * 36 + 2 * 26 + 4 * 8) - 4 * CornerCap),
+    ];
+
     public static IEnumerable<object[]> All =>
     [
         ["mounting plate", MountingPlate, MountingPlateVolume],
@@ -513,6 +542,7 @@ public static class Documents
         .. Domes.Select(b => new object[] { b.Name, b.Document, b.Volume }),
         .. Offsets.Select(b => new object[] { b.Name, b.Document, b.Volume }),
         .. Shells.Select(b => new object[] { b.Name, b.Document, b.Volume }),
+        .. Balls.Select(b => new object[] { b.Name, b.Document, b.Volume }),
     ];
 
     public static PartDocument Named(string name) => name switch
@@ -520,6 +550,6 @@ public static class Documents
         "mounting plate" => MountingPlate,
         "bracket" => Bracket,
         "two pads" => TwoPads,
-        _ => Booleans.Concat(Holes).Concat(Angles).Concat(Rounds).Concat(Cones).Concat(Copies).Concat(Sweeps).Concat(Domes).Concat(Offsets).Concat(Shells).Single(b => b.Name == name).Document,
+        _ => Booleans.Concat(Holes).Concat(Angles).Concat(Rounds).Concat(Cones).Concat(Copies).Concat(Sweeps).Concat(Domes).Concat(Offsets).Concat(Shells).Concat(Balls).Single(b => b.Name == name).Document,
     };
 }

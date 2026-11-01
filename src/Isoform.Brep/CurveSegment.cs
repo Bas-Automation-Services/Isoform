@@ -4,24 +4,24 @@ namespace Isoform.Brep;
 
 /// <summary>
 /// A piece of a p-curve that is neither a line nor a circle (an ellipse on a plane, a wave on a cylinder) in flat
-/// (u, v): u scaled by <see cref="Scale"/>, from parameter <see cref="From"/> to <see cref="To"/>. Measured in short
+/// (u, v): u scaled by <see cref="Scale"/> and v by <see cref="ScaleV"/>, from parameter <see cref="From"/> to <see cref="To"/>. Measured in short
 /// sub-pieces, each a graph over its chord, so distances, crossings and the angle it subtends are exact to rounding.
 /// </summary>
-internal sealed record CurveSegment(Curve2 Curve, double From, double To, double Scale) : Segment
+internal sealed record CurveSegment(Curve2 Curve, double From, double To, double Scale, double ScaleV = 1) : Segment
 {
     const int Pieces = 32;
 
     public Point2D At(double t)
     {
         var p = Curve.At(t);
-        return new Point2D(p.X * Scale, p.Y);
+        return new Point2D(p.X * Scale, p.Y * ScaleV);
     }
 
     /// <summary>d/dt of <see cref="At"/>.</summary>
     public Vector2D Velocity(double t)
     {
         var d = Curve.Derivative(t);
-        return new Vector2D(d.X * Scale, d.Y);
+        return new Vector2D(d.X * Scale, d.Y * ScaleV);
     }
 
     public override Point2D Start => At(From);
