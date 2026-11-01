@@ -618,6 +618,27 @@ a mixed part exactly wherever every face has a closed form (tested: a plate with
 outline with a slot). Blend and lattice faces have none in either engine; a skin exact round a lattice would need
 STEP's tessellated faces beside the exact ones, a question of the file format, not of the kernels.
 
+## Experiment 19: the kernel in the product's STEP export (2026-11-01)
+
+The product's three STEP exports (the MCP `export_step` tool, the playground's download, the build's assembly STEP)
+now take a part's exact B-rep from the managed kernel where it builds the whole part and its faces, names and
+neighbours are those of the F-rep core's result, which those exports make anyway (`ExactStep`); otherwise from the
+F-rep core's exact B-rep (`ExactBrep`), as before. The kernel's solids take the F-rep core's body names. The MCP tool
+and the playground say which (`from`: kernel or frep).
+
+- *Assemblies:* `StepWriter.Write(assembly, …, exact)` takes each distinct part's B-rep from the caller; an
+  `Instance` now carries the document it was regenerated from (the part with the component's parameters applied),
+  since a component's parameters change the part but not its face names.
+- *Safety:* the kernel is only taken where the topologies agree; a refusal, a different face or an exception in the
+  kernel means the F-rep core's export, never a different file.
+- *Dependency:* `Isoform.Build` (and so the playground and the MCP server) now references `Isoform.Brep.Modeling`,
+  which needs the unreleased BasAutomation.Geometry branch (`feature/geometry-kernel-primitives`): merging this
+  branch into main needs that released first.
+
+**Tests:** `ExactStepTests` (a part the kernel builds comes from it and reads back without healing at its exact
+volume; a chamfer before an offset falls back to the F-rep core's), the MCP export test expects `from: kernel` for a
+drilled plate; the product's STEP, build and export tests pass unchanged.
+
 ## Next: candidates (to decide)
 
 What still stops the playground's examples, and what is left from before:

@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text;
+using Isoform.Brep.Modeling;
 using Isoform.Document;
 using Isoform.Modeling;
 using Isoform.Sketching;
@@ -26,12 +27,15 @@ public static class Outputs
 {
     static readonly CultureInfo Invariant = CultureInfo.InvariantCulture;
 
-    /// <summary>The build's assembly as STEP AP214: every distinct part regenerated once and written exactly, then placed.</summary>
+    /// <summary>
+    /// The build's assembly as STEP AP214: every distinct part regenerated once and written exactly (by the managed
+    /// kernel where it builds the part as the F-rep core does, see <see cref="ExactStep"/>), then placed.
+    /// </summary>
     public static string Step(BuildResult result, ModelingSettings settings, string name = "assembly")
     {
         var bundle = result.Bundle;
         var assembly = new AssemblyModeler(settings).Regenerate(bundle.Assembly, p => bundle.Documents.GetValueOrDefault(p));
-        return StepWriter.Write(assembly, settings, name);
+        return StepWriter.Write(assembly, settings, name, i => ExactStep.Of(i, settings));
     }
 
     /// <summary>A DXF per distinct plate in its own XY, by file name (<c>top.dxf</c>).</summary>

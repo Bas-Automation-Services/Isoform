@@ -248,6 +248,7 @@ public class ToolTests
         r["ok"]!.GetValue<bool>().Should().BeTrue();
         r["solids"]!.GetValue<int>().Should().Be(1);
         r["faces"]!.GetValue<int>().Should().Be(7);
+        r["from"]!.GetValue<string>().Should().Be("kernel", "the managed kernel builds a drilled plate as the F-rep core does");
         File.ReadAllText(path).Should().StartWith("ISO-10303-21;").And.Contain("CYLINDRICAL_SURFACE");
         blend["ok"]!.GetValue<bool>().Should().BeFalse();
         blend["unsupported"]!.GetValue<string>().Should().Contain("boss/blend");

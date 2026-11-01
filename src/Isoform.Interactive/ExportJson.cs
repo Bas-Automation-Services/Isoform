@@ -1,6 +1,7 @@
 using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using Isoform.Brep.Modeling;
 using Isoform.Document;
 using Isoform.Modeling;
 using Isoform.Sketching;
@@ -25,9 +26,14 @@ public static class ExportJson
     public static string Step(Regeneration? r, string name) => Exported(r, (view, settings) =>
     {
         if (view.Assembly is { } assembly)
-            return new JsonObject { ["text"] = StepWriter.Write(assembly, settings, name), ["instances"] = assembly.Instances.Count };
-        var brep = ExactBrep.Build(view.Part!, settings);
-        return new JsonObject { ["text"] = StepWriter.Write(brep, name), ["solids"] = brep.Solids.Count, ["faces"] = brep.Solids.Sum(s => s.Faces.Count) };
+            return new JsonObject { ["text"] = StepWriter.Write(assembly, settings, name, i => ExactStep.Of(i, settings)), ["instances"] = assembly.Instances.Count };
+        // The managed kernel's exact B-rep where it builds the part as the F-rep core did (see ExactStep).
+        var (brep, kernel) = ExactStep.Of(CanonicalFormat.Read(r!.Text!), view.Part!, settings);
+        return new JsonObject
+        {
+            ["text"] = StepWriter.Write(brep, name), ["solids"] = brep.Solids.Count, ["faces"] = brep.Solids.Sum(s => s.Faces.Count),
+            ["from"] = kernel ? "kernel" : "frep",
+        };
     });
 
     /// <summary>

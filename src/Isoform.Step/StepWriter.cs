@@ -25,9 +25,10 @@ public static class StepWriter
 
     /// <summary>
     /// An assembly: every distinct part (by content hash) once as a product named after its document, and every
-    /// instance a placed occurrence of it named by its id (sub-assemblies flattened into their paths).
+    /// instance a placed occurrence of it named by its id (sub-assemblies flattened into their paths). Each part's
+    /// exact B-rep from <paramref name="exact"/>, or from its regeneration (<see cref="ExactBrep"/>).
     /// </summary>
-    public static string Write(AssemblyResult assembly, ModelingSettings settings, string name = "assembly")
+    public static string Write(AssemblyResult assembly, ModelingSettings settings, string name = "assembly", Func<Instance, Brep>? exact = null)
     {
         var parts = new List<(string Name, Brep Brep)>();
         var index = new Dictionary<string, int>();
@@ -38,7 +39,7 @@ public static class StepWriter
             {
                 if (instance.Result.Topology is null) throw new NotSupportedException($"{instance.Id}: the part has no geometry");
                 index[instance.Hash] = k = parts.Count;
-                parts.Add((Path.GetFileNameWithoutExtension(instance.Part), ExactBrep.Build(instance.Result, settings)));
+                parts.Add((Path.GetFileNameWithoutExtension(instance.Part), exact?.Invoke(instance) ?? ExactBrep.Build(instance.Result, settings)));
             }
             occurrences.Add((instance.Id, k, instance.Placement));
         }

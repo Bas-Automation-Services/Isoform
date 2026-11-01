@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using Isoform.Brep.Modeling;
 using Isoform.Document;
 using Isoform.Interactive;
 using Isoform.Modeling;
@@ -115,7 +116,8 @@ public static class IsoformTools
     [Description("Exports a part, assembly or bundle as exact STEP (AP214): analytic faces (fillets, chamfers, loop fillets, " +
                  "shell cavities as voids), closed-form edges and vertices, one solid per body; an assembly as one product per " +
                  "distinct part, placed by its instances. Writes to outputPath, or returns the STEP text. Faces without a closed " +
-                 "form (smooth blends, lattices) are named in 'unsupported'.")]
+                 "form (smooth blends, lattices) are named in 'unsupported'. A part comes from the managed B-rep kernel where it " +
+                 "builds it with the same faces as the F-rep core ('from': kernel), else from the F-rep core's mesh ('from': frep).")]
     public static string ExportStep(
         [Description(DocumentHelp + " Or an assembly or bundle, as for the assembly tool.")] string document,
         [Description("Write the STEP file here; without it the STEP text is returned.")] string? outputPath = null,
@@ -134,23 +136,25 @@ public static class IsoformTools
                 var (assembly, load) = AgentTools.Assembled(document, text) ?? throw new McpException(AgentTools.AssemblyTextHelp);
                 var result = new AssemblyModeler(settings).Regenerate(assembly, load);
                 o["diagnostics"] = AgentTools.Diagnostics(result.Diagnostics);
-                step = StepWriter.Write(result, settings, name ?? "assembly");
+                step = StepWriter.Write(result, settings, name ?? "assembly", i => ExactStep.Of(i, settings));
                 o["ok"] = true;
                 o["instances"] = result.Instances.Count;
                 o["parts"] = result.Instances.Select(i => i.Hash).Distinct().Count();
             }
             else
             {
-                var result = new FrepModeler(settings).Regenerate(CanonicalFormat.Read(text));
+                var part = CanonicalFormat.Read(text);
+                var result = new FrepModeler(settings).Regenerate(part);
                 o["diagnostics"] = AgentTools.Diagnostics(result.Diagnostics);
                 if (result.Topology is null)
                 {
                     o["ok"] = false;
                     return o;
                 }
-                var brep = ExactBrep.Build(result, settings);
+                var (brep, kernel) = ExactStep.Of(part, result, settings);
                 step = StepWriter.Write(brep, name ?? "part");
                 o["ok"] = true;
+                o["from"] = kernel ? "kernel" : "frep";
                 o["solids"] = brep.Solids.Count;
                 o["faces"] = brep.Solids.Sum(s => s.Faces.Count);
                 o["edges"] = brep.Edges.Count;
