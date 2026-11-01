@@ -178,7 +178,11 @@ public static class Booleans
             var (points, overlap) = Intersections.Meet(c, edge.Curve);
             if (overlap) points = [edge.Curve.At(edge.T0), edge.Curve.At(edge.T1)];
             foreach (var p in points)
-                if (Intersections.On(edge.Curve, edge.T0, edge.T1, p) is not null) ts.Add(Intersections.Param(c, p));
+            {
+                if (Intersections.On(edge.Curve, edge.T0, edge.T1, p) is null) continue;
+                ts.Add(Intersections.Param(c, p));
+                if (edge.Curve is Pole) op.SplitPole(face, e, c, Intersections.Param(c, p));
+            }
         }
 
         List<(double From, double To)> intervals = [];
@@ -258,9 +262,11 @@ public static class Booleans
     {
         var sorted = ts.Order().ToList();
         var result = new List<double>();
+        // On a pole every t is one point: there t itself tells them apart.
+        bool Apart(double t, double s) => c is Pole ? Math.Abs(t - s) > 1e-9 : (c.At(t) - c.At(s)).Length > Intersections.Snap;
         foreach (var t in sorted)
-            if (result.Count == 0 || (c.At(t) - c.At(result[^1])).Length > Intersections.Snap) result.Add(t);
-        if (periodic && result.Count > 1 && (c.At(result[0]) - c.At(result[^1])).Length <= Intersections.Snap) result.RemoveAt(result.Count - 1);
+            if (result.Count == 0 || Apart(t, result[^1])) result.Add(t);
+        if (periodic && result.Count > 1 && !Apart(result[0], result[^1])) result.RemoveAt(result.Count - 1);
         return result;
     }
 
@@ -274,13 +280,32 @@ public static class Booleans
 
         public void Cut(int face, Curve3 c, double t0, double t1) => cuts[face].Add((c, t0, t1));
 
-        /// <summary>Splits the edge at t, unless t is at one of its ends.</summary>
+        /// <summary>Splits the edge at t, unless t is at one of its ends (a pole's, where t is the u it runs over).</summary>
         public void Split(EdgeId e, double t)
         {
             var edge = Body[e];
             var p = edge.Curve.At(t);
-            if ((p - edge.Curve.At(edge.T0)).Length <= Intersections.Snap || (p - edge.Curve.At(edge.T1)).Length <= Intersections.Snap) return;
+            if (edge.Curve is Pole ? Math.Min(Math.Abs(t - edge.T0), Math.Abs(t - edge.T1)) <= 1e-9
+                    : (p - edge.Curve.At(edge.T0)).Length <= Intersections.Snap || (p - edge.Curve.At(edge.T1)).Length <= Intersections.Snap)
+                return;
             splits[e.Index].Add(t);
+        }
+
+        /// <summary>
+        /// A curve through a pole (a meridian, a cone's generator) at t: the pole's edge split at the u where the
+        /// curve's pieces either side reach it.
+        /// </summary>
+        public void SplitPole(int face, EdgeId e, Curve3 c, double t)
+        {
+            var surface = Body.Faces[face].Surface;
+            var pc = Uv.Pcurve(surface, c);
+            var coedge = Body.Coedges.First(co => co.Edge == e).Pcurve;
+            foreach (var side in new[] { -1e-4, 1e-4 })
+            {
+                var u = Uv.Within(surface, pc, t + side).At(t).X;
+                var along = (u - coedge.At(0).X) / coedge.Derivative(0).X;
+                Split(e, Body[e].T0 + Intersections.Wrap(along - Body[e].T0));
+            }
         }
 
         /// <summary>Splits whichever edge of the face the point lies on.</summary>

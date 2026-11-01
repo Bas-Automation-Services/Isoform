@@ -463,7 +463,7 @@ public class StepExportTests(ITestOutputHelper output)
         Enumerable.Range(0, s.VertexCount).Count(v => s.VertexFaces(v).Length >= 3));
 
     /// <summary>The same counts of the B-rep itself.</summary>
-    static (int Faces, int Edges, int Vertices) Counts(Step.Brep b)
+    internal static (int Faces, int Edges, int Vertices) Counts(Step.Brep b)
     {
         var faces = b.Solids.SelectMany(s => s.Faces).ToList();
         var facesOfEdge = b.Edges.Select(e => faces.Where(f => f.Loops.Any(l => l.Coedges.Any(c => c.Edge == e.Index))).Count()).ToList();

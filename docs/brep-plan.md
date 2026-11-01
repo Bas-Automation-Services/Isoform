@@ -525,8 +525,6 @@ Chosen from the candidates (1, its sphere half).
   a box of its edges missed most of it, and pieces inside it were taken as outside); a plane's circle on a sphere
   starts square to its axis (a meridian started at a pole had no half-plane); a meridian's piece beyond a pole takes
   the mirrored line (u + π, ±π − v).
-- *Not yet:* a cut through a sphere's pole (a plane through a dome's axis): the pole's edge would have to be split by
-  u, not by a point.
 - *Sphere:* its axis square to the corner's diagonal and in none of the side planes ((x − 2y + z)/√6 in the
   corner's directions), so the poles and the seam stay off the piece. `ExactBrep` turns its corner balls the same
   way, to a different axis; spheres are compared by centre and radius.
@@ -547,13 +545,21 @@ has a normal of its own, the same all along a generator (Su vanishes at the apex
 **Results:** 3 more documents: a pin with a drill point, a cone, a plate with a pointed conical dimple cut in. They
 match the F-rep core's names and topology and have exact volumes; `ExactBrep` cannot cut a cone open at its apex,
 so they are kept out of the exact-face comparison (`Documents.ExactInTheFrep`); OCCT reads them back valid with its
-healing, as for the other poles. Tests: `tests/Isoform.Brep.Tests` 353, `BrepKernelStepTests` 88.
+healing, as for the other poles.
+
+**Cuts through a pole:** a plane through a dome's or a cone's axis runs through its pole, where the pole's edge is
+now split by u (every point of it is one point): where the cut's pieces either side reach it, a meridian's or a
+generator's u. A half domed post and a half cone match the F-rep core's names and topology with exact volumes
+(`ExactBrep` refuses the half dome: it sees the solid touch itself at the pole). Through a pole the topology runs one
+edge on between the same two faces where the file has two, so for a body with a pole OCCT's counts are taken
+against the file's own. Tests: `tests/Isoform.Brep.Tests` 358, `BrepKernelStepTests` 90.
 
 ## Next: candidates (to decide)
 
 What still stops the playground's examples, and what is left from before:
 
-1. **Ball corners of other kinds** (corners not square, unequal radii) and cuts through a sphere's pole.
+1. **Ball corners of other kinds:** corners not square; unequal radii (the F-rep core mitres them with a warning,
+   and its exact export does not follow the mitre either).
 3. **Arcs meeting lines at a corner** in loop fillets (a quartic, unless the radii make it a circle or ellipse).
 4. **Inventor as a second STEP reader**, parked.
 5. **Local booleans:** rebuild only the faces a boolean touches.

@@ -25,7 +25,8 @@ public class BrepKernelStepTests(ITestOutputHelper output)
         var t = result.Topology!;
 
         var path = Path.Combine(Path.GetTempPath(), $"isoform-{Guid.NewGuid():N}.step");
-        StepWriter.Write(StepConversion.ToStep(result.Bodies, name), path, name);
+        var step = StepConversion.ToStep(result.Bodies, name);
+        StepWriter.Write(step, path, name);
         var (shape, raw) = (OcctShape.ReadStep(path), OcctShape.ReadStep(path, heal: false));
         File.Delete(path);
 
@@ -36,11 +37,14 @@ public class BrepKernelStepTests(ITestOutputHelper output)
 
         shape.IsValid.Should().BeTrue();
         shape.SolidCount.Should().Be(t.BodyCount);
-        StepExportTests.Counts(shape).Should().Be((t.Faces.Count, t.Edges.Count, t.Vertices.Count));
+        // Through a pole the topology runs one edge on between the same two faces (a half cone's two generators), where
+        // the file has two edges meeting at it: there the file's own counts.
+        var pole = result.Bodies.Any(b => b.Body.Edges.Any(e => e.Curve is Isoform.Brep.Pole));
+        StepExportTests.Counts(shape).Should().Be(pole ? StepExportTests.Counts(step) : (t.Faces.Count, t.Edges.Count, t.Vertices.Count));
         shape.Volume.Should().BeApproximately(volume, volume * 1e-11);
         // A sphere cap holding a pole needs the reader's healing, as Isoform's own export does (StepExportTests): the
         // degenerate edge there is one STEP cannot say.
-        if (result.Bodies.Any(b => b.Body.Edges.Any(e => e.Curve is Isoform.Brep.Pole))) return;
+        if (pole) return;
         raw.IsValid.Should().BeTrue("the file needs no healing");
         raw.MaxTolerance.Should().BeLessThanOrEqualTo(1e-7);
         raw.Volume.Should().BeApproximately(volume, volume * 1e-11);

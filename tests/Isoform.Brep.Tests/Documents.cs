@@ -409,6 +409,8 @@ public static class Documents
             DomedPostVolume - Math.PI * 4 * 10 - 2 * Math.PI / 3 * (125 - 21 * Math.Sqrt(21))),
         // Cut square to the axis 3 above the dome's centre: the slice π ∫ (25 − z²) dz over 0 ≤ z ≤ 3 is left.
         ("domed post cut flat", new([DomedPost("post"), new PlaneCut("cut", [0, 0, 13], [0, 0, 1])]), Math.PI * 25 * 10 + Math.PI * (75 - 9)),
+        // Cut in half through its axis: the cut runs through the dome's pole.
+        ("half a domed post", new([DomedPost("post"), new PlaneCut("cut", [0, 0, 0], [1, 0, 0])]), DomedPostVolume / 2),
     ];
 
     // Experiment 13: offsets. Every face so far moves out: blocks grow, cut tools shrink, fillets get rounder, and a
@@ -539,6 +541,10 @@ public static class Documents
         ("conical dimple", new([Plate40, new Revolve("dimple", BooleanOp.Cut, Upright(20, 15), new Profile([0, 6],
             [new ProfileEdge("side", [4, 10]), new ProfileEdge("over", [4, 11]), new ProfileEdge("top", [0, 11]), new ProfileEdge("axis", [0, 6])]))]),
             12000 - Math.PI * 16 * 4 / 3),
+        // Cut in half through its axis: the cut runs through the apex.
+        ("half a cone", new([new Revolve("cone", BooleanOp.New, Upright(0, 0), new Profile([0, 0],
+            [new ProfileEdge("bottom", [5, 0]), new ProfileEdge("side", [0, 8]), new ProfileEdge("axis", [0, 0])])), new PlaneCut("cut", [0, 0, 0], [0, 1, 0])]),
+            Math.PI * 25 * 8 / 6),
     ];
 
     public static IEnumerable<object[]> All =>
@@ -562,9 +568,10 @@ public static class Documents
 
     /// <summary>
     /// The documents the F-rep core's own exact B-rep (<c>ExactBrep</c>) can be built for, to compare exact faces with:
-    /// not the pointed cones, whose apex it cannot cut open.
+    /// not the pointed cones, whose apex it cannot cut open, nor a dome cut through its pole (it sees the solid touch
+    /// itself there).
     /// </summary>
-    public static IEnumerable<object[]> ExactInTheFrep => All.Where(d => !Points.Any(p => p.Name == (string)d[0]));
+    public static IEnumerable<object[]> ExactInTheFrep => All.Where(d => !Points.Any(p => p.Name == (string)d[0]) && (string)d[0] != "half a domed post");
 
     public static PartDocument Named(string name) => name switch
     {
