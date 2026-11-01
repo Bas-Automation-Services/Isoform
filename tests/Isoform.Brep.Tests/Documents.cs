@@ -413,7 +413,7 @@ public static class Documents
 
     // Experiment 13: offsets. Every face so far moves out: blocks grow, cut tools shrink, fillets get rounder, and a
     // profile's corners that part as it grows turn round (named id/corner:a+b after the two faces).
-    static Profile Ell => new([5, 5],
+    public static Profile Ell => new([5, 5],
     [
         new ProfileEdge("a", [30, 5]), new ProfileEdge("b", [30, 12]), new ProfileEdge("c", [12, 12]),
         new ProfileEdge("d", [12, 40]), new ProfileEdge("e", [5, 40]), new ProfileEdge("f", [5, 5]),
@@ -458,11 +458,12 @@ public static class Documents
 
     // Experiment 14: shells. The cavity is every face moved in by the wall (a cut's tool grown by it), corners met
     // sharp, its faces named id/inner:face.
-    static readonly Block Plate40 = new("plate", BooleanOp.New, [0, 0, 0], [40, 30, 10]);
+    public static readonly Block Plate40 = new("plate", BooleanOp.New, [0, 0, 0], [40, 30, 10]);
 
     static readonly (string Name, PartDocument Document, double Volume)[] Shells =
     [
-        // The L shrunk by 1 with its reflex corner sharp (arms 23 × 5 and 5 × 28), 4 high.
+        // The L shrunk by 1 with its reflex corner sharp (arms 23 × 5 and 5 × 28), 4 high: the wall is √2 across the
+        // inside corner, as CAD shells it.
         ("hollow ell", new([new Extrude("rib", BooleanOp.New, Xy, Ell, 0, 6), new Isoform.Document.Shell("hollow", 1)]), 371 * 6 - 4 * 255),
         // A tube of radius 3 round the bore stands through the cavity.
         ("hollow plate with a bore", new([Plate40, new Hole("bore", [20, 15], 4), new Isoform.Document.Shell("hollow", 1)]),
@@ -501,14 +502,6 @@ public static class Documents
         .. Offsets.Select(b => new object[] { b.Name, b.Document, b.Volume }),
         .. Shells.Select(b => new object[] { b.Name, b.Document, b.Volume }),
     ];
-
-    // Shells the F-rep core meshes with a round where its distance field rounds (opposite a reflex corner, round a
-    // grown cut's corner) but names as the two flat faces either side, so its own exact export refuses them. The
-    // kernel shells as CAD does, every inner face an outer one moved and corners met sharp.
-    static readonly HashSet<string> RoundInTheFrep = ["hollow ell", "hollow plate with a pocket"];
-
-    /// <summary>The documents whose F-rep result <c>ExactBrep</c> can export, to compare exact faces with.</summary>
-    public static IEnumerable<object[]> ExactInTheFrep => All.Where(d => !RoundInTheFrep.Contains((string)d[0]));
 
     public static PartDocument Named(string name) => name switch
     {

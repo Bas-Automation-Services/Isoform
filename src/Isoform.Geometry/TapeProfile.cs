@@ -80,7 +80,7 @@ sealed class ProfileData
         Leaves = f.Leaves.Select(l => (leaf(l), Tape.LeafOp(l))).ToArray();
         var (o, x, y) = (f.Frame.Origin, f.Frame.X, f.Frame.Y);
         (Ox, Oy, Oz, Xx, Xy, Xz, Yx, Yy, Yz) = (o.X, o.Y, o.Z, x.X, x.Y, x.Z, y.X, y.Y, y.Z);
-        (Revolve, Offset) = (f.Revolved, offset);
+        (Revolve, Offset, Mitred) = (f.Revolved, offset, f.Mitred);
     }
 
     public readonly ProfileField Field;
@@ -93,6 +93,7 @@ sealed class ProfileData
     public readonly double Ox, Oy, Oz, Xx, Xy, Xz, Yx, Yy, Yz;
     public readonly bool Revolve;
     public readonly double Offset;
+    public readonly bool Mitred;
 
     /// <summary>
     /// ProfileField.Map as the vector operations compute it, component by component: profile coordinates, and for a
@@ -124,6 +125,12 @@ public sealed partial class Tape
         var (i, where, k) = Nearest(pd.Edges, u, v);
         ref readonly var e = ref pd.Edges[i];
         if (where < 0 || pd.Edges[k].Smooth) return LeafValue(in _leaves[e.Leaf], e.Op, p);
+        if (pd.Mitred && pd.Edges[k].Corner < 0)
+        {
+            ref readonly var next = ref pd.Edges[(k + 1) % pd.Edges.Length];
+            var (a, b) = (LeafValue(in _leaves[pd.Edges[k].Leaf], pd.Edges[k].Op, p), LeafValue(in _leaves[next.Leaf], next.Op, p));
+            return pd.Edges[k].Sign > 0 ? Math.Max(a, b) : Math.Min(a, b);
+        }
         var (du, dv) = where == 1 ? (u - e.U1, v - e.V1) : (u - e.U0, v - e.V0);
         return pd.Edges[k].Sign * Math.Sqrt(du * du + dv * dv) - pd.Offset;
     }
@@ -135,6 +142,12 @@ public sealed partial class Tape
         var (i, where, k) = Nearest(pd.Edges, u, v);
         ref readonly var e = ref pd.Edges[i];
         if (where < 0 || pd.Edges[k].Smooth) return LeafSample(in _leaves[e.Leaf], e.Op, p);
+        if (pd.Mitred && pd.Edges[k].Corner < 0)
+        {
+            ref readonly var next = ref pd.Edges[(k + 1) % pd.Edges.Length];
+            var (a, b) = (LeafSample(in _leaves[pd.Edges[k].Leaf], pd.Edges[k].Op, p), LeafSample(in _leaves[next.Leaf], next.Op, p));
+            return pd.Edges[k].Sign > 0 == a.Value >= b.Value ? a : b;
+        }
         var (du, dv) = where == 1 ? (u - e.U1, v - e.V1) : (u - e.U0, v - e.V0);
         var sign = pd.Edges[k].Sign;
         var dist = Math.Sqrt(du * du + dv * dv);

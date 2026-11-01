@@ -183,6 +183,16 @@ public sealed class ProfileField : Field
     public double Grown => _offset;
 
     /// <summary>
+    /// Nearest a corner without a round face, the value is the larger of its two faces' (convex) or the smaller
+    /// (reflex) instead of the distance to the corner: the same surface, but a level set inside or outside it meets
+    /// sharp where the profile does. A shell's cavity is one, unless it asks for round corners.
+    /// </summary>
+    public bool Mitred { get; private init; }
+
+    /// <summary>The same profile with mitred corners.</summary>
+    public ProfileField AsMitred() => new(_edges, _leaves, _frame, _revolve, _offset, _corners) { Mitred = true };
+
+    /// <summary>
     /// The same profile grown by <paramref name="d"/>: <paramref name="offsetLeaf"/> gives each face's offset, and a
     /// corner that turns round gets a face of its own, a cylinder round the corner line (extrude) or a torus or
     /// sphere round the corner circle (revolve), registered under <paramref name="cornerName"/> of its two edges.
@@ -325,7 +335,7 @@ public sealed class ProfileField : Field
         // The corner is now two tangent junctions: no round corner face at either.
         corners[k] = null;
         corners.Insert(k + 1, null);
-        return new(edges, leaves, _frame, _revolve, _offset, corners);
+        return new(edges, leaves, _frame, _revolve, _offset, corners) { Mitred = Mitred };
     }
 
     /// <summary>
@@ -409,7 +419,7 @@ public sealed class ProfileField : Field
         leaves.Insert(k + 1, newLeaf(corner, _offset));
         corners[k] = null;
         corners.Insert(k + 1, null);
-        return new(edges, leaves, _frame, _revolve, _offset, corners);
+        return new(edges, leaves, _frame, _revolve, _offset, corners) { Mitred = Mitred };
     }
 
     /// <summary>The corner at the end of edge k: +1 convex, −1 reflex, 0 tangent.</summary>
@@ -468,6 +478,11 @@ public sealed class ProfileField : Field
         var (i, where, squared) = Nearest(u, v);
         if (where < 0 || Tangent(i, where)) return _leaves[i]!.Sample(p);
         var (vu, vv, sign, k) = Vertex(i, where, p);
+        if (Mitred && _corners[k] is null)
+        {
+            var (a, b) = (_leaves[k]!.Sample(p), _leaves[(k + 1) % _edges.Length]!.Sample(p));
+            return sign > 0 == a.Value >= b.Value ? a : b;
+        }
         var (du, dv) = (u - vu, v - vv);
         var d = Math.Sqrt(du * du + dv * dv);
         var g = d > 0 ? Back(du / d, dv / d, radial) * sign : _leaves[i]!.Sample(p).Gradient;
@@ -479,7 +494,12 @@ public sealed class ProfileField : Field
         var (u, v, _) = Map(p);
         var (i, where, _) = Nearest(u, v);
         if (where < 0 || Tangent(i, where)) return _leaves[i]!.Value(p);
-        var (vu, vv, sign, _) = Vertex(i, where, p);
+        var (vu, vv, sign, k) = Vertex(i, where, p);
+        if (Mitred && _corners[k] is null)
+        {
+            var (a, b) = (_leaves[k]!.Value(p), _leaves[(k + 1) % _edges.Length]!.Value(p));
+            return sign > 0 ? Math.Max(a, b) : Math.Min(a, b);
+        }
         var (du, dv) = (u - vu, v - vv);
         return sign * Math.Sqrt(du * du + dv * dv) - _offset;
     }

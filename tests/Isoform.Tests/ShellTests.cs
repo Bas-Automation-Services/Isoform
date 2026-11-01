@@ -91,6 +91,33 @@ public class ShellTests(ITestOutputHelper output)
         result.Diagnostics.Select(d => d.Code).Should().Equal(Diagnostic.NoEffect);
     }
 
+    [Fact]
+    public void Cavity_corners_are_sharp_where_the_outside_is_unless_asked_round()
+    {
+        // An L (area 371, 6 high) shelled 1: sharp, its cavity is the L moved in, arms 23 × 5 and 5 × 28; round, the
+        // corner square opposite its inside corner comes back less a quarter circle.
+        static PartDocument Ell(bool round) => new(
+        [
+            new Extrude("rib", BooleanOp.New, new SketchPlane([0, 0, 0], [1, 0, 0], [0, 0, 1]), new Profile([5, 5],
+            [
+                new ProfileEdge("a", [30, 5]), new ProfileEdge("b", [30, 12]), new ProfileEdge("c", [12, 12]),
+                new ProfileEdge("d", [12, 40]), new ProfileEdge("e", [5, 40]), new ProfileEdge("f", [5, 5]),
+            ]), 0, 6),
+            new Shell("hollow", 1, round),
+        ]);
+        var modeler = new FrepModeler(new ModelingSettings { CellSize = 0.25 });
+        foreach (var (round, exact) in new[] { (false, 371 * 6 - 4 * 255.0), (true, 371 * 6 - 4 * (256 - Math.PI / 4)) })
+        {
+            var result = modeler.Regenerate(Ell(round));
+            result.Diagnostics.Should().BeEmpty();
+            var v = result.Mesh!.Vertices;
+            var volume = result.Mesh.Triangles().Sum(t => v[t.A].AsVector().Dot(v[t.B].AsVector().Cross(v[t.C].AsVector()))) / 6;
+            output.WriteLine($"round {round}: {volume:F6}, exact {exact:F6}");
+            // The two differ by 4 (1 − π/4) ≈ 0.86; the round's chords cost a little of it.
+            volume.Should().BeApproximately(exact, round ? 0.05 : 1e-6 * exact);
+        }
+    }
+
     static PartDocument WithTab(PartDocument doc) =>
         new([doc.Features[0], doc.Features[1], new Block("tab", BooleanOp.Join, [-20, 10, 0], [30, 30, 10]), doc.Features[2]]);
 

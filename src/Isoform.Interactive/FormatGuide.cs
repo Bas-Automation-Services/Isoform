@@ -67,7 +67,8 @@ public static class FormatGuide
             new Fillet("round", [], 1, Loop: "plate/z+"), ["round/plate/x-", "round/plate/y+"], []),
         new("Equal-distance chamfer on an edge (a plane, or a cone on a hole or boss edge); loop works as for fillets. Face <id>/face.",
             new Chamfer("bevel", ["plate/z+", "plate/y-"], 1), ["bevel/face"], []),
-        new("Hollows the solid into a closed skin of this wall thickness. Inner faces <id>/inner:<outer face>.",
+        new("Hollows the solid into a closed skin of this wall thickness. Inner faces <id>/inner:<outer face>, sharp where " +
+            "the outside is; round: true keeps the wall exactly this thick, rounding the cavity across inside corners.",
             new Shell("skin", 1.5), ["skin/inner:plate/z+"], []),
         new("A closed profile (see below) swept along its plane's normal from start to end (mm). Side faces <id>/<edge id>, " +
             "caps <id>/start and <id>/end.",

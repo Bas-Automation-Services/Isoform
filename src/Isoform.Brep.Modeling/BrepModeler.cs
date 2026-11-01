@@ -44,8 +44,9 @@ public sealed class BrepModeler(ModelingSettings settings) : IModeler
         var owner = new string?[features.Count];
         var facePlanes = new Dictionary<string, SketchPlane>();
         var convex = new Dictionary<string, bool>();
-        // While a shell's cavity is built: every face moved in by the wall.
+        // While a shell's cavity is built: every face moved in by the wall, and the shell when it asks for round corners.
         var hollow = 0.0;
+        Isoform.Document.Shell? rounding = null;
         for (var i = 0; i < features.Count; i++)
         {
             if (features[i] is Offset offset)
@@ -99,7 +100,9 @@ public sealed class BrepModeler(ModelingSettings settings) : IModeler
 
         // A closed skin: the solid less its cavity, which is the history before the shell rebuilt with every face moved
         // in by the wall (cut tools grown by it) and corners met sharp, so that each inner face is an outer face moved,
-        // id/inner:face, as the F-rep core names them.
+        // id/inner:face, as the F-rep core names them. Asked for round, the cavity's corners turn round where its faces
+        // part (opposite an inside corner, round a grown cut's corner), faces id/corner:a+b, and the wall is the
+        // thickness everywhere.
         Diagnostic? Hollowed(Isoform.Document.Shell sh, int at)
         {
             if (features.Take(at).Any(f => f is CombineBodies || f.Body is { } b && b != current) || solids.Any(s => s.Body != current))
@@ -110,12 +113,12 @@ public sealed class BrepModeler(ModelingSettings settings) : IModeler
             solids.Clear();
             bodyOf.Clear();
             current = null;
-            hollow = -sh.Thickness;
+            (hollow, rounding) = (-sh.Thickness, sh.Round ? sh : null);
             Diagnostic? problem = null;
             for (var j = 0; j < at && problem is null; j++) problem = Build(j);
-            hollow = 0;
+            (hollow, rounding) = (0, null);
             var cavity = solids.Select(c => new NamedBody(c.Solid.Body, c.Solid.Names.ToDictionary(n => n.Key,
-                n => (IReadOnlyList<string>)[.. n.Value.Select(name => $"{sh.Id}/inner:{name}")]))).ToList();
+                n => (IReadOnlyList<string>)[.. n.Value.Select(name => name.StartsWith($"{sh.Id}/corner:", StringComparison.Ordinal) ? name : $"{sh.Id}/inner:{name}")]))).ToList();
             solids.Clear();
             solids.AddRange(kept);
             bodyOf.Clear();
@@ -131,7 +134,7 @@ public sealed class BrepModeler(ModelingSettings settings) : IModeler
         (List<NamedBody>? Tools, BooleanOp Op, Diagnostic? Problem) Tools(Feature feature, string body, Motion motion, Func<string, string> name, int at)
         {
             List<NamedBody> Part() => [.. solids.Where(s => s.Body == body).Select(s => s.Solid)];
-            var g = new Growth(grow[at] + hollow, owner[at], name, Round: hollow == 0);
+            var g = hollow == 0 ? new Growth(grow[at], owner[at], name) : new Growth(hollow, rounding?.Id, name, Round: rounding is not null);
             var op = feature switch { Block b => b.Op, Extrude e => e.Op, Revolve r => r.Op, Sweep w => w.Op, _ => BooleanOp.Cut };
             // A cut's tool shrinks as the part grows.
             if (op == BooleanOp.Cut) g = g with { By = -g.By };

@@ -44,7 +44,7 @@ public class BackendTests(ITestOutputHelper output)
     }
 
     [Theory]
-    [MemberData(nameof(Documents.ExactInTheFrep), MemberType = typeof(Documents))]
+    [MemberData(nameof(Documents.All), MemberType = typeof(Documents))]
     public void The_exact_brep_agrees_with_the_one_derived_from_the_frep(string name, PartDocument document, double _)
     {
         var mine = StepConversion.ToStep(new BrepModeler(Settings).Regenerate(document).Bodies);
@@ -127,6 +127,36 @@ public class BackendTests(ITestOutputHelper output)
         MassProperties.Volume(result.Bodies.Single().Body).Should().BeApproximately(110 * 110 * 5 - 100 * Math.PI * 4 * 5, 1e-6);
         result.Topology!.Faces.SelectMany(f => f.Sources).Where(n => n.EndsWith(":wall")).Should().HaveCount(100).And.Contain("holes/p37:wall");
     }
+
+    [Fact]
+    public void A_round_shell_keeps_its_wall_across_inside_corners()
+    {
+        // The L's cavity rounds opposite its inside corner (the corner square less a quarter circle comes back); the
+        // pocket's grown tool rounds its four corners (22 × 12 less 4 − π).
+        var ell = new PartDocument([new Extrude("rib", BooleanOp.New, Xy, Documents.Ell, 0, 6), new Isoform.Document.Shell("hollow", 1, Round: true)]);
+        var pocket = new PartDocument(
+        [
+            Documents.Plate40,
+            new Extrude("pocket", BooleanOp.Cut, new SketchPlane([0, 0, 10], [1, 0, 0], [0, 0, 1]), new Profile([10, 10],
+                [new ProfileEdge("a", [30, 10]), new ProfileEdge("b", [30, 20]), new ProfileEdge("c", [10, 20]), new ProfileEdge("d", [10, 10])]), -4, 3),
+            new Isoform.Document.Shell("hollow", 1, Round: true),
+        ]);
+        foreach (var (document, volume, corners) in new[]
+                 {
+                     (ell, 371 * 6 - 4 * (256 - Math.PI / 4), new[] { "hollow/corner:rib/c+rib/d" }),
+                     (pocket, 12000 - 20 * 10 * 4 - (38 * 28 * 8 - 4 * (22 * 12 - (4 - Math.PI))),
+                         new[] { "hollow/corner:pocket/a+pocket/b", "hollow/corner:pocket/b+pocket/c", "hollow/corner:pocket/c+pocket/d", "hollow/corner:pocket/d+pocket/a" }),
+                 })
+        {
+            var result = new BrepModeler(Settings).Regenerate(document);
+            result.Diagnostics.Should().BeEmpty();
+            BodyCheck.Problems(result.Bodies.Single().Body).Should().BeEmpty();
+            MassProperties.Volume(result.Bodies.Single().Body).Should().BeApproximately(volume, 1e-12 * volume);
+            result.Topology!.Faces.SelectMany(f => f.Sources).Where(n => n.Contains("/corner:")).Should().BeEquivalentTo(corners);
+        }
+    }
+
+    static readonly SketchPlane Xy = new([0, 0, 0], [1, 0, 0], [0, 0, 1]);
 
     [Fact]
     public void What_the_kernel_cannot_do_yet_is_refused_by_name()

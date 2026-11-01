@@ -168,6 +168,8 @@ public static partial class CanonicalFormat
             case Shell sh:
                 w.WriteString("type", "shell");
                 Number(w, "thickness", sh.Thickness);
+                // Only written when asked for, so sharp shells keep their bytes and hash.
+                if (sh.Round) w.WriteBoolean("round", true);
                 break;
             case Extrude e:
                 w.WriteString("type", "extrude");
@@ -277,7 +279,7 @@ public static partial class CanonicalFormat
                 Depth = (double?)n["depth"],
             },
             "plane-cut" => new PlaneCut(id, Arr(n["point"], 3), Arr(n["normal"], 3)),
-            "shell" => new Shell(id, (double)n["thickness"]!),
+            "shell" => new Shell(id, (double)n["thickness"]!, (bool?)n["round"] ?? false),
             "fillet" => new Fillet(id, Edge(n), (double)n["radius"]!, (string?)n["loop"]),
             "chamfer" => new Chamfer(id, Edge(n), (double)n["distance"]!, (string?)n["loop"]),
             "extrude" => new Extrude(id, Op(n), ReadPlaneOf(n), ReadProfileOf(n), (double)n["start"]!, (double)n["end"]!, (double?)n["blend"] ?? 0)

@@ -500,6 +500,11 @@ public sealed class Compiler(ModelingSettings settings)
             }
         }
         Walk(tree, false);
+        // Sharp, unless asked for round: profiles meet their corners mitred, so the cavity (the level set t inside)
+        // does too, each inner face its outer face moved. The outside is the same surface either way.
+        if (!sh.Round)
+            foreach (var p in FieldAlgebra.Descendants(tree).OfType<ProfileField>().Where(p => !p.Mitred).Distinct().ToList())
+                tree = Replace(tree, p, p.AsMitred());
         return new ShellField(tree, t, innerOf);
     }
 
@@ -608,7 +613,8 @@ public sealed class Compiler(ModelingSettings settings)
                 var plain = ReferenceEquals(sh.Outer, sh.Child);
                 if (wall <= 1e-9 || !plain && d < 0 || OffsetOf(sh.Child, d, register, done, id, surfaces) is not { } solid) return null;
                 var inner = surfaces[sh.InnerOf.Values.First()].Source;
-                var shelled = ShellOf(new Shell(inner[..inner.IndexOf("/inner:", StringComparison.Ordinal)], wall), solid, register);
+                var round = !FieldAlgebra.Descendants(sh.Child).OfType<ProfileField>().Any(p => p.Mitred);
+                var shelled = ShellOf(new Shell(inner[..inner.IndexOf("/inner:", StringComparison.Ordinal)], wall, round), solid, register);
                 if (plain) return shelled;
                 return OffsetOf(sh.Outer, d, register, done, id, surfaces) is { } outside ? shelled.WithOuter(outside) : null;
             default:

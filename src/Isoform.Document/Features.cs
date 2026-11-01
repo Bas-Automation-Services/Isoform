@@ -57,8 +57,13 @@ public sealed record Fillet(string Id, string[] Edge, double Radius, string? Loo
 /// <summary>Equal-distance chamfer on the edge between two source faces: a plane, or a cone on a hole or boss edge.</summary>
 public sealed record Chamfer(string Id, string[] Edge, double Distance, string? Loop = null) : Feature(Id);
 
-/// <summary>Hollows the solid into a closed skin of wall <paramref name="Thickness"/>; inner faces are named after their outer face.</summary>
-public sealed record Shell(string Id, double Thickness) : Feature(Id);
+/// <summary>
+/// Hollows the solid into a closed skin of wall <paramref name="Thickness"/>; inner faces are named after their outer
+/// face. Each inner face is its outer face moved in, so the cavity's corners are sharp where the outside's are (the
+/// wall a little thicker across an inside corner, as CAD shells it); with <paramref name="Round"/> the wall is
+/// <paramref name="Thickness"/> everywhere and the cavity rounds there.
+/// </summary>
+public sealed record Shell(string Id, double Thickness, bool Round = false) : Feature(Id);
 
 /// <summary>A sketch plane: origin, in-plane x direction and normal. Its y direction is normal × x.</summary>
 public sealed record SketchPlane(double[] Origin, double[] X, double[] Normal);
