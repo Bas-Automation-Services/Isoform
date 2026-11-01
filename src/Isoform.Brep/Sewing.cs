@@ -194,8 +194,10 @@ internal static class Sewing
         for (var i = 0; i < uses.Count; i++) parent[Find(uses[i].Patch)] = Find(uses[partner[i]].Patch);
         var shells = Enumerable.Range(0, patches.Count).GroupBy(Find).Select(g => g.ToList()).ToList();
 
-        Shaped Build(IReadOnlyList<List<int>> shellPatches)
+        // The body, and which of its faces came through unchanged.
+        (Shaped Shaped, HashSet<int> Unchanged) Build(IReadOnlyList<List<int>> shellPatches)
         {
+            var unchanged = new HashSet<int>();
             var builder = new BodyBuilder(tolerance);
             var vertexIds = new Dictionary<int, VertexId>();
             VertexId V(int v) => vertexIds.TryGetValue(v, out var id) ? id : vertexIds[v] = builder.AddVertex(points[v]);
@@ -209,6 +211,7 @@ internal static class Sewing
                 {
                     var patch = patches[pi];
                     var face = builder.AddFace(shell, patch.Surface, patch.SameSense);
+                    if (patch.Unchanged) unchanged.Add(face.Index);
                     origins.Add([.. patch.Origins.OrderBy(o => o.Operand).ThenBy(o => o.Face.Index)]);
                     for (var li = 0; li < patch.Loops.Count; li++)
                     {
@@ -237,12 +240,12 @@ internal static class Sewing
                     }
                 }
             }
-            return new Shaped(builder.Build(), origins);
+            return (new Shaped(builder.Build(), origins), unchanged);
         }
 
         // One shell is the solid; several are each built alone, to tell solids (positive volume) from voids.
         if (shells.Count == 1) return [Checked(Build(shells))];
-        var alone = shells.Select(s => Build([s]).Body).ToList();
+        var alone = shells.Select(s => Build([s]).Shaped.Body).ToList();
         var volumes = alone.Select(b => MassProperties.Volume(b)).ToList();
         var solids = Enumerable.Range(0, shells.Count).Where(s => volumes[s] > 0).ToList();
         var voidsOf = solids.ToDictionary(s => s, _ => new List<int>());
@@ -257,9 +260,9 @@ internal static class Sewing
         return [.. solids.Select(s => Checked(Build([shells[s], .. voidsOf[s].Select(v => shells[v])])))];
     }
 
-    static Shaped Checked(Shaped shaped) => BodyCheck.Problems(shaped.Body) is [var first, ..]
+    static Shaped Checked((Shaped Shaped, HashSet<int> Unchanged) built) => BodyCheck.Problems(built.Shaped.Body, built.Unchanged) is [var first, ..]
         ? throw new BooleanFailure($"the result is not a valid solid: {first.Kind} at {first.Where}: {first.Message}")
-        : shaped;
+        : built.Shaped;
 
     // Consecutive uses on one curve through a vertex where only their two edges meet, joined into one use.
     static List<Patch> JoinEdges(List<Patch> patches)

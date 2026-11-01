@@ -42,8 +42,14 @@ public static class BodyCheck
     /// <summary>The points each edge and p-curve is sampled at, including both ends.</summary>
     const int Samples = 9;
 
-    public static IReadOnlyList<Problem> Problems(Body body)
+    /// <summary>
+    /// What is wrong with the body. Faces in <paramref name="unchanged"/> came whole from a valid body: their loops are
+    /// not checked again, and a shell holding one faces the way it did (its edges' uses run opposite, which is checked),
+    /// so its volume need not be found.
+    /// </summary>
+    public static IReadOnlyList<Problem> Problems(Body body, IReadOnlySet<int>? unchanged = null)
     {
+        bool Known(FaceId f) => unchanged?.Contains(f.Index) == true;
         var problems = new List<Problem>();
         void Add(ProblemKind kind, string where, string message) => problems.Add(new Problem(kind, where, message));
 
@@ -71,6 +77,7 @@ public static class BodyCheck
         for (var l = 0; l < body.Loops.Length; l++)
         {
             var loopId = new LoopId(l);
+            if (Known(body[loopId].Face)) continue;
             var surface = body[body[loopId].Face].Surface;
             foreach (var c in body.CoedgesOf(loopId))
             {
@@ -103,6 +110,7 @@ public static class BodyCheck
 
         for (var f = 0; f < body.Faces.Length; f++)
         {
+            if (Known(new FaceId(f))) continue;
             var face = body.Faces[f];
             var sense = face.SameSense ? 1 : -1;
             for (var i = 0; i < face.Loops.Length; i++)
@@ -127,6 +135,7 @@ public static class BodyCheck
             if (twiceEuler % 2 != 0 || twiceEuler > 2)
                 Add(ProblemKind.ShellEuler, $"shell {s}", $"V − E + 2F − L = {twiceEuler} fits no genus");
 
+            if (faces.Any(Known)) continue;
             var volume = MassProperties.Volume(body, shell);
             if (s == 0 ? volume <= 0 : volume >= 0)
                 Add(ProblemKind.ShellOrientation, $"shell {s}", $"{(s == 0 ? "the outer shell" : "a void")} encloses {volume:g6}");

@@ -23,10 +23,13 @@ internal sealed record Use(Curve3 Curve, double From, double To, Curve2 Pcurve)
 /// </summary>
 internal sealed record Patch(Surface Surface, bool SameSense, IReadOnlyList<IReadOnlyList<Use>> Loops, IReadOnlySet<Origin> Origins)
 {
+    /// <summary>A face of a valid body come through a boolean whole and as it was: already checked.</summary>
+    public bool Unchanged { get; init; }
+
     /// <summary>The loops with the face on their left in (u, v): the B-rep's own where the face has its surface's sense, reversed where not.</summary>
     public IEnumerable<IReadOnlyList<Use>> UvLoops => Loops.Select(l => Arrangement.Sensed(l, SameSense));
 
-    public Patch Flipped() => this with { SameSense = !SameSense, Loops = [.. Loops.Select(l => Arrangement.Sensed(l, false))] };
+    public Patch Flipped() => this with { SameSense = !SameSense, Loops = [.. Loops.Select(l => Arrangement.Sensed(l, false))], Unchanged = false };
 }
 
 /// <summary>

@@ -6,7 +6,7 @@ using Isoform.Modeling;
 
 /// <summary>
 /// The managed B-rep kernel on parts that grow (a plate with a grid of holes, a polygon with its top rounded all
-/// round, a row of blocks joined onto a base) and on the playground's examples. Wall time, and the process's
+/// round, a row of holes drilled one by one, a row of blocks joined onto a base) and on the playground's examples. Wall time, and the process's
 /// processor time, which a busy machine disturbs less.
 /// </summary>
 static class BrepBench
@@ -26,6 +26,9 @@ static class BrepBench
         if (which is "all" or "join")
             foreach (var n in sizes.Count > 0 ? sizes : [48, 96, 192])
                 Time($"{n} blocks joined", Join(n));
+        if (which is "all" or "drill")
+            foreach (var n in sizes.Count > 0 ? sizes : [48, 96, 192])
+                Time($"{n} holes one by one", Drill(n));
         if (which is "all" or "examples")
             foreach (var (name, doc) in Examples.All)
                 Time(name.Length > 28 ? name[..28] : name, doc);
@@ -63,6 +66,13 @@ static class BrepBench
         var profile = new Profile(At(0), [.. Enumerable.Range(1, n).Select(k => new ProfileEdge($"s{k}", At(k % n)))]);
         return new PartDocument([new Extrude("poly", BooleanOp.New, Xy, profile, 0, 10), new Fillet("round", [], 1, Loop: "poly/end")]);
     }
+
+    // A row of holes, each its own feature: every one a boolean against the whole plate so far.
+    static PartDocument Drill(int n) => new(
+    [
+        new Block("plate", BooleanOp.New, [0, 0, 0], [10 * n + 10, 20, 5]),
+        .. Enumerable.Range(0, n).Select(k => new Hole($"hole{k}", [10 + 10 * k, 10], 4)),
+    ]);
 
     static PartDocument Join(int n) => new(
     [

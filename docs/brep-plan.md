@@ -554,6 +554,27 @@ generator's u. A half domed post and a half cone match the F-rep core's names an
 edge on between the same two faces where the file has two, so for a body with a pole OCCT's counts are taken
 against the file's own. Tests: `tests/Isoform.Brep.Tests` 358, `BrepKernelStepTests` 90.
 
+## Experiment 17: local booleans, step 1 (2026-11-01)
+
+`Isoform.Bench brep drill n` drills n holes one feature at a time, each a boolean against the whole plate so far:
+quadratic, 400 holes 10.4 s processor (192 joins 2.97 s wall). Profiled, 55% of it was `BodyCheck` on the whole
+body after every boolean: every shell's volume and every loop's (u, v) area again.
+
+- *Only what changed is checked:* a face that comes through a boolean whole (`Patch.Unchanged`, not flipped) was
+  checked in a valid body; its loops are not checked again, and a shell holding one faces the way it did (every
+  edge's uses run opposite, which is checked), so its volume is not found.
+- *Exact (u, v) areas:* lines and circles in (u, v) in closed form, not by quadrature (a cut face holds every hole
+  drilled before as a loop).
+
+400 holes: 10.4 s → 6.5 s processor on a loaded machine, back to back; joins about 8% (their cost is elsewhere).
+Still quadratic: every boolean welds every use's ends, sews every face, builds every face's flat (u, v) outline
+(`FlatFace`) and merges surfaces over the whole body.
+
+**Step 2 (designed, not done):** edit the body in place. Untouched faces keep their old vertices and edges (paired by
+their old edge, no welding), only the uses round the cut faces are welded (against the vertices of the faces next
+to them), and a body keeps its `Solid` with each untouched face's `FlatFace` carried over with its edges renumbered;
+surfaces are merged only among new and neighbouring faces.
+
 ## Next: candidates (to decide)
 
 What still stops the playground's examples, and what is left from before:
@@ -562,7 +583,7 @@ What still stops the playground's examples, and what is left from before:
    and its exact export does not follow the mitre either).
 3. **Arcs meeting lines at a corner** in loop fillets (a quartic, unless the radii make it a circle or ellipse).
 4. **Inventor as a second STEP reader**, parked.
-5. **Local booleans:** rebuild only the faces a boolean touches.
+5. **Local booleans, step 2:** edit the body in place (see experiment 17).
 6. **Mixed models (B-rep, then F-rep):** today one model goes through one engine, and the B-rep modeler refuses the
    whole model at the first feature it does not take. Both share the document, `IModeler`, the face names and
    topology (identical on every test document) and the exact output (`Isoform.Step.Brep`), which makes a hand-off

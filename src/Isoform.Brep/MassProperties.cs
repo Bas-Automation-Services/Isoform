@@ -103,7 +103,23 @@ public static class MassProperties
         {
             var pc = body[c].Pcurve;
             var (from, to) = body.ParametersOf(c);
-            return Quadrature.Integrate(t => pc.At(t).X * pc.Derivative(t).Y, from, to, body[body[c].Edge].Curve.Period is null ? null : Quadrature.AngleStep);
+            switch (pc)
+            {
+                case Line2 l:
+                    // (u0 + du t) dv dt.
+                    double Line(double t) => l.Direction.Y * (l.Origin.X * t + l.Direction.X * t * t / 2);
+                    return Line(to) - Line(from);
+                case Circle2 k:
+                    // u = cu + R cos θ, dv = R cos θ dθ, θ = Phase + Sense t.
+                    double Arc(double t)
+                    {
+                        var theta = k.Phase + k.Sense * t;
+                        return k.Center.X * k.Radius * Math.Sin(theta) + k.Radius * k.Radius * (theta / 2 + Math.Sin(2 * theta) / 4);
+                    }
+                    return Arc(to) - Arc(from);
+                default:
+                    return Quadrature.Integrate(t => pc.At(t).X * pc.Derivative(t).Y, from, to, body[body[c].Edge].Curve.Period is null ? null : Quadrature.AngleStep);
+            }
         });
 
     // ∮ Q(u, v) dv over every loop of the face, Q(u, v) = F(u, v) − F(u*, v) with F an integral of f in u and u* the

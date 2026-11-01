@@ -339,7 +339,7 @@ public static class Booleans
                 // A face neither cut nor split comes through whole.
                 if (cuts[f].Count == 0 && flat.Edges.All(e => splits[e.Index].Count == 0))
                 {
-                    yield return (PatchOf(Body, new FaceId(f), index), f);
+                    yield return (PatchOf(Body, new FaceId(f), index) with { Unchanged = true }, f);
                     continue;
                 }
                 var uses = new List<Use>();
