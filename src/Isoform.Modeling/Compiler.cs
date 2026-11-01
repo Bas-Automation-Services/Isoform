@@ -449,6 +449,7 @@ public sealed class Compiler(ModelingSettings settings)
     {
         var t = sh.Thickness;
         var innerOf = new Dictionary<int, int>();
+        var profiles = new List<(ProfileField Profile, bool Negated)>();
         void Add(Surface s, bool complement)
         {
             if (innerOf.ContainsKey(s.Id)) return;
@@ -495,11 +496,23 @@ public sealed class Compiler(ModelingSettings settings)
                     Walk(b.B, negated);
                     break;
                 case ProfileField p:
+                    profiles.Add((p, negated));
                     foreach (var l in p.Leaves) Walk(l, negated);
                     break;
             }
         }
         Walk(tree, false);
+        // A round shell's cavity rounds opposite the solid's reflex corners and round a cut's convex ones: there the
+        // profile gets a corner face (its corner line), and that face's inner face, the round, is id/corner:a+b.
+        if (sh.Round)
+            foreach (var (p, negated) in profiles.Distinct().ToList())
+            {
+                var q = p.WithCornerFaces(negated ? 1 : -1, register, (a, b) => $"{sh.Id}/corner:{a}+{b}");
+                if (q == p) continue;
+                foreach (var c in q.Corners.OfType<LeafField>().Except(p.Corners.OfType<LeafField>()))
+                    innerOf[c.Surface.Id] = register(c.Surface.Offset(0, c.Surface.Source, c.Complement ^ negated ? t : -t)).Id;
+                tree = Replace(tree, p, q);
+            }
         // Sharp, unless asked for round: profiles meet their corners mitred, so the cavity (the level set t inside)
         // does too, each inner face its outer face moved. The outside is the same surface either way.
         if (!sh.Round)

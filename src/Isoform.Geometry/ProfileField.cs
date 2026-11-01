@@ -206,22 +206,39 @@ public sealed class ProfileField : Field
             // A round corner lasts while the offset keeps its sign; a corner on the revolve axis is no corner at all.
             var round = Math.Abs(total) > 1e-9 && _vertexSign[k] == Math.Sign(total) && !OnAxis(k);
             if (_corners[k] is { } existing) corners[k] = round ? offsetLeaf(existing) : null;
-            else if (round)
-            {
-                var (u, v) = (_edges[k].U1, _edges[k].V1);
-                var next = _leaves[(k + 1) % _edges.Length];
-                var name = cornerName(_leaves[k]?.Surface.Source ?? "axis", next?.Surface.Source ?? "axis");
-                var r = Math.Abs(total);
-                var surface = !_revolve
-                    ? new Surface(0, name, SurfaceKind.Cylinder, _frame.ToWorld(new Point3D(u, v, 0)), _frame.Z, r)
-                    : Math.Abs(u) <= 1e-9
-                        ? new Surface(0, name, SurfaceKind.Sphere, _frame.Origin + _frame.Y * v, _frame.Y, r)
-                        : new Surface(0, name, SurfaceKind.Torus, _frame.Origin + _frame.Y * v, _frame.Y, u, r);
-                // A grown convex corner holds material inside the round; a shrunk reflex corner outside it.
-                corners[k] = new LeafField(register(surface), complement: total < 0);
-            }
+            // A grown convex corner holds material inside the round; a shrunk reflex corner outside it.
+            else if (round) corners[k] = new LeafField(register(CornerSurface(k, Math.Abs(total), cornerName)), complement: total < 0);
         }
         return new(_edges, _leaves.Select(l => l is null ? null : offsetLeaf(l)).ToList(), _frame, _revolve, total, corners);
+    }
+
+    /// <summary>
+    /// The same profile with a face for each corner of the given sign (+1 convex, −1 reflex) that has none: the
+    /// corner's line (extrude) or circle (revolve) itself, radius 0, so it owns the points nearest the corner with the
+    /// value the profile gives them there. A round shell's cavity rounds there, and this names it.
+    /// </summary>
+    public ProfileField WithCornerFaces(int sign, Func<Surface, Surface> register, Func<string, string, string> cornerName)
+    {
+        if (_offset != 0) return this;
+        var corners = _corners.ToArray();
+        for (var k = 0; k < _edges.Length; k++)
+            if (_vertexSign[k] == sign && !OnAxis(k) && corners[k] is null)
+                corners[k] = new LeafField(register(CornerSurface(k, 0, cornerName)), complement: sign < 0);
+        return corners.SequenceEqual(_corners) ? this : new(_edges, _leaves, _frame, _revolve, _offset, corners) { Mitred = Mitred };
+    }
+
+    // The round of radius r at the end of edge k: a cylinder round the corner line (extrude), a torus or sphere round
+    // the corner circle (revolve), named after its two edges.
+    Surface CornerSurface(int k, double r, Func<string, string, string> cornerName)
+    {
+        var (u, v) = (_edges[k].U1, _edges[k].V1);
+        var next = _leaves[(k + 1) % _edges.Length];
+        var name = cornerName(_leaves[k]?.Surface.Source ?? "axis", next?.Surface.Source ?? "axis");
+        return !_revolve
+            ? new Surface(0, name, SurfaceKind.Cylinder, _frame.ToWorld(new Point3D(u, v, 0)), _frame.Z, r)
+            : Math.Abs(u) <= 1e-9
+                ? new Surface(0, name, SurfaceKind.Sphere, _frame.Origin + _frame.Y * v, _frame.Y, r)
+                : new Surface(0, name, SurfaceKind.Torus, _frame.Origin + _frame.Y * v, _frame.Y, u, r);
     }
 
     /// <summary>

@@ -413,7 +413,7 @@ public static class Documents
 
     // Experiment 13: offsets. Every face so far moves out: blocks grow, cut tools shrink, fillets get rounder, and a
     // profile's corners that part as it grows turn round (named id/corner:a+b after the two faces).
-    public static Profile Ell => new([5, 5],
+    static Profile Ell => new([5, 5],
     [
         new ProfileEdge("a", [30, 5]), new ProfileEdge("b", [30, 12]), new ProfileEdge("c", [12, 12]),
         new ProfileEdge("d", [12, 40]), new ProfileEdge("e", [5, 40]), new ProfileEdge("f", [5, 5]),
@@ -458,7 +458,7 @@ public static class Documents
 
     // Experiment 14: shells. The cavity is every face moved in by the wall (a cut's tool grown by it), corners met
     // sharp, its faces named id/inner:face.
-    public static readonly Block Plate40 = new("plate", BooleanOp.New, [0, 0, 0], [40, 30, 10]);
+    static readonly Block Plate40 = new("plate", BooleanOp.New, [0, 0, 0], [40, 30, 10]);
 
     static readonly (string Name, PartDocument Document, double Volume)[] Shells =
     [
@@ -481,6 +481,18 @@ public static class Documents
             12000 - 9 * (1 - Math.PI / 4) * 30 - (38 * 28 * 8 - 4 * (1 - Math.PI / 4) * 28)),
         // A cavity of radius 4 from 1 up, under a dome of radius 4 round the same centre.
         ("hollow domed post", new([DomedPost("post"), new Isoform.Document.Shell("hollow", 1)]), DomedPostVolume - (Math.PI * 16 * 9 + 2 * Math.PI / 3 * 64)),
+        // Round, the wall stays 1 across the L's inside corner: the corner square comes back less a quarter circle,
+        // a round hollow/corner:rib/c+rib/d.
+        ("round hollow ell", new([new Extrude("rib", BooleanOp.New, Xy, Ell, 0, 6), new Isoform.Document.Shell("hollow", 1, Round: true)]),
+            371 * 6 - 4 * (256 - Math.PI / 4)),
+        // Round, the pocket's grown tool rounds its four corners: 22 × 12 less 4 − π.
+        ("round hollow plate with a pocket", new(
+        [
+            Plate40,
+            new Extrude("pocket", BooleanOp.Cut, Top, new Profile([10, 10],
+                [new ProfileEdge("a", [30, 10]), new ProfileEdge("b", [30, 20]), new ProfileEdge("c", [10, 20]), new ProfileEdge("d", [10, 10])]), -4, 3),
+            new Isoform.Document.Shell("hollow", 1, Round: true),
+        ]), 12000 - 20 * 10 * 4 - (38 * 28 * 8 - 4 * (22 * 12 - (4 - Math.PI)))),
         // Rounded after the shell, outside only.
         ("plate rounded after shelling", new([Plate40, new Isoform.Document.Shell("hollow", 2), new Fillet("round", ["plate/z+", "plate/x+"], 1)]),
             12000 - (1 - Math.PI / 4) * 30 - 36 * 26 * 6),
