@@ -26,6 +26,35 @@ public class BooleanTests(ITestOutputHelper output)
         return result.Bodies[0];
     }
 
+    // Experiment 8: solids turned round one axis meet in circles, so what is left is the difference of their profiles
+    // turned round it (Pappus). The cone's profile is the triangle (5, 0), (10, 0), (5, 4), area 10, centroid 20/3 out.
+    static Body Turned(ProfileLoop loop) => Revolution.Revolve(new Region(loop), Xy).Result!.Body;
+
+    static readonly ProfileLoop Wedge = new([new LineSegment(P(5, 0), P(10, 0)), new LineSegment(P(10, 0), P(5, 4)), new LineSegment(P(5, 4), P(5, 0))]);
+
+    [Fact]
+    public void A_ring_bitten_out_of_a_cone()
+    {
+        // A tube of radius 1 round (7.5, 2), the slope's midpoint: the half disc inside the triangle goes, its
+        // centroid 4/(3π) in from the slope along the inward normal (−4, −5)/√41.
+        var r = One(Booleans.Subtract(Turned(Wedge), Turned(Circle(7.5, 2, 1))));
+        var x = 7.5 - 4 / (3 * Math.PI) * 4 / Math.Sqrt(41);
+        MassProperties.Volume(r.Body).Should().BeApproximately(2 * Math.PI * (10 * 20.0 / 3 - Math.PI / 2 * x), 1e-9);
+        r.Body.Faces.Select(f => f.Surface.GetType().Name).Order().Should().Equal("Cone", "Cone", "Cylinder", "Plane", "Torus");
+    }
+
+    [Fact]
+    public void Two_cones_round_one_axis()
+    {
+        // The other's slope ρ = 5.75 + 1.25 z crosses this one's ρ = 10 − 1.25 z at (7.875, 1.7); above z = 1 the
+        // triangle (7, 1), (8.75, 1), (7.875, 1.7) goes, area 0.6125, centroid 7.875 out.
+        var other = new ProfileLoop([new LineSegment(P(7, 1), P(12, 1)), new LineSegment(P(12, 1), P(12, 5)), new LineSegment(P(12, 5), P(7, 1))]);
+        var r = One(Booleans.Subtract(Turned(Wedge), Turned(other)));
+        MassProperties.Volume(r.Body).Should().BeApproximately(2 * Math.PI * (10 * 20.0 / 3 - 0.6125 * 7.875), 1e-9);
+        // The first cone in two bands either side of the bite, the second's piece between them.
+        r.Body.Faces.Count(f => f.Surface is Cone).Should().Be(3);
+    }
+
     [Fact]
     public void A_bore_through_a_plate_leaves_a_hole()
     {

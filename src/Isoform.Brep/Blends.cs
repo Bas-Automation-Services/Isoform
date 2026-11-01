@@ -9,7 +9,8 @@ public enum BlendKind { Fillet, Chamfer }
 /// edge and the ball (or the chamfer's plane) rolled along it; a concave edge gains it. The prism runs past the edge's
 /// ends, so the faces the edge ends on cut the new face off (an arc or an ellipse on each). On the circle where a flat
 /// face meets a cylinder square to it (a hole's rim, a boss's foot) the ball rolls round the axis: the ring it leaves
-/// out (or fills) is the spandrel turned round the axis, its new face a torus. This is the rounded edge only where the
+/// out (or fills) is the spandrel turned round the axis, its new face a torus (a cone for a chamfer). This is the
+/// rounded edge only where the
 /// prism or ring touches nothing but the two faces and the faces at the edge's ends: any other face it changes (a
 /// radius too large for a face, an edge that ends inside the material) refuses the blend.
 /// </summary>
@@ -101,8 +102,8 @@ public static class Blends
         return Settle(body, tool.Body, tool.Sides[0][1], convex, allowed, kind);
     }
 
-    // The circle where a flat face meets a cylinder square to it: the spandrel in the half-plane through the axis
-    // (distance from the axis, height above the face), turned round the axis.
+    // The circle where a flat face meets a cylinder square to it: the spandrel (or the chamfer's triangle) in the
+    // half-plane through the axis (distance from the axis, height above the face), turned round the axis.
     static (Shaped?, FaceId, string?) Rim(Body body, FaceId a, FaceId b, double size, BlendKind kind)
     {
         var (fp, fc) = body[a].Surface is Plane ? (a, b) : (b, a);
@@ -110,7 +111,6 @@ public static class Blends
         var axis = cylinder.Frame.ZAxis;
         if (plane.Frame.ZAxis.Cross(axis).Length >= 1e-9)
             return (null, default, "the flat face is at an angle to the cylinder, so the edge is an ellipse, which has no exact fillet");
-        if (kind == BlendKind.Chamfer) return (null, default, "a chamfer round a circle is a cone, which the managed kernel does not have yet");
         var edges = Enumerable.Range(0, body.Edges.Length).Select(e => new EdgeId(e))
             .Where(e => body.UsesOf(e).Select(body.FaceOf).ToHashSet().SetEquals([a, b])).ToList();
         if (edges is not [var edge] || body[edge].Curve is not Circle3 || !body[edge].IsClosed)
@@ -132,17 +132,24 @@ public static class Blends
         }
         var (np, nc, inP, inC) = (Flat(nP), Flat(nC), Flat(Into(fp, nP)), Flat(Into(fc, nC)));
         var convex = np.Dot(inC) < 0;
+        if (!convex && kind == BlendKind.Chamfer) return (null, default, "only a convex edge can be chamfered");
 
-        // The ball's centre is `size` from both, inside the material for a convex edge, outside for a concave one.
-        var side = convex ? -1 : 1;
         var corner = new Point2D(cylinder.Radius, 0);
-        var center = corner + (np + nc) * (side * size);
-        var (ta, tb) = (center - np * (side * size), center - nc * (side * size));
-        var start = Math.Atan2(ta.Y - center.Y, ta.X - center.X);
-        var sweep = Math.IEEERemainder(Math.Atan2(tb.Y - center.Y, tb.X - center.X) - start, 2 * Math.PI);
-        var profile = new ProfileLoop([new LineSegment(corner, ta), new ArcSegment(center, size, start, sweep), new LineSegment(tb, corner)]);
+        ProfileLoop profile;
+        if (kind == BlendKind.Chamfer)
+            profile = new ProfileLoop([new LineSegment(corner, corner + inP * size), new LineSegment(corner + inP * size, corner + inC * size), new LineSegment(corner + inC * size, corner)]);
+        else
+        {
+            // The ball's centre is `size` from both, inside the material for a convex edge, outside for a concave one.
+            var side = convex ? -1 : 1;
+            var center = corner + (np + nc) * (side * size);
+            var (ta, tb) = (center - np * (side * size), center - nc * (side * size));
+            var start = Math.Atan2(ta.Y - center.Y, ta.X - center.X);
+            var sweep = Math.IEEERemainder(Math.Atan2(tb.Y - center.Y, tb.X - center.X) - start, 2 * Math.PI);
+            profile = new ProfileLoop([new LineSegment(corner, ta), new ArcSegment(center, size, start, sweep), new LineSegment(tb, corner)]);
+        }
         var (ring, why) = Revolution.Revolve(new Region(profile), frame, body.Tolerance);
-        if (ring is null) return (null, default, $"the fillet has no room: {why}");
+        if (ring is null) return (null, default, $"the {Name(kind)} has no room: {why}");
         var face = new FaceId(Enumerable.Range(0, ring.Body.Faces.Length).First(f => ring.Origins[f].Contains(new Origin(0, new FaceId(1)))));
         return Settle(body, ring.Body, face, convex, [a, b], kind);
     }
@@ -171,7 +178,8 @@ public static class Blends
     /// <summary>
     /// Every edge round a flat face <paramref name="f"/> rounded (or chamfered): one piece per edge, each the spandrel
     /// along it, a prism along a line, the spandrel turned round the axis along an arc. A piece stops exactly where
-    /// its edge runs on tangentially into the next and runs on past a convex corner, so straight pieces mitre there.
+    /// its edge runs on tangentially into the next and runs on past a convex corner, so straight pieces mitre there. A
+    /// chamfer's piece along an arc is a cone.
     /// Reflex corners, sides not square to the face, and arcs meeting their neighbours at a corner are refused.
     /// Origins: operand 0 the body's faces, k + 1 the k-th piece's; each piece's own face and the side it runs along.
     /// </summary>
@@ -286,7 +294,6 @@ public static class Blends
         }
 
         // An arc: the section turned round the arc's axis, from end to end (whole for a loop of one circle).
-        if (kind == BlendKind.Chamfer) return (null, "a chamfer round an arc is a cone, which the managed kernel does not have yet");
         if (!single && (start != Corner.Tangent || end != Corner.Tangent)) return (null, "an arc meeting the next edge at a corner, where its torus would have to mitre");
         var circle = (Circle3)edge.Curve;
         var center = circle.Frame.Origin;

@@ -131,6 +131,8 @@ public static class StepConversion
         Plane p => new IsoSurface(id, source, SurfaceKind.Plane, p.Frame.Origin, p.Frame.ZAxis),
         Cylinder c => new IsoSurface(id, source, SurfaceKind.Cylinder, c.Frame.Origin, c.Frame.ZAxis, c.Radius),
         Torus t => new IsoSurface(id, source, SurfaceKind.Torus, t.Frame.Origin, t.Frame.ZAxis, t.Major, t.Minor),
+        // Isoform's cone stands on its apex and opens along its axis; the normals agree, both away from the axis.
+        Cone k => new IsoSurface(id, source, SurfaceKind.Cone, k.Apex, k.Frame.ZAxis * Math.Sign(k.Slope), Angle: Math.Atan(Math.Abs(k.Slope))),
         _ => throw new NotSupportedException(s.GetType().Name),
     };
 }

@@ -134,6 +134,41 @@ public sealed record Cylinder(RigidTransform3D Frame, double Radius) : Surface
 }
 
 /// <summary>
+/// A cone round the frame's Z axis: <c>S(u, v) = Origin + (Radius + Slope · v) · (cos u · X + sin u · Y) + v · Z</c>.
+/// u is the angle from X (periodic, 2π), v the height; the radius grows by <see cref="Slope"/> per unit up Z (shrinks
+/// where it is negative) and is above zero at the frame's origin, so the apex lies at v = −Radius / Slope. The normal
+/// points away from the axis, tilted back along the slope. A chamfer round a circle is a piece of one.
+/// </summary>
+public sealed record Cone(RigidTransform3D Frame, double Radius, double Slope) : Surface
+{
+    /// <summary>The distance from the axis at height v.</summary>
+    public double RadiusAt(double v) => Radius + Slope * v;
+
+    /// <summary>The apex, where the radius is zero.</summary>
+    public Point3D Apex => Frame.Origin - Frame.ZAxis * (Radius / Slope);
+
+    public override Point3D At(double u, double v)
+    {
+        var (sin, cos) = Math.SinCos(u);
+        return Frame.Origin + (Frame.XAxis * cos + Frame.YAxis * sin) * RadiusAt(v) + Frame.ZAxis * v;
+    }
+
+    public override Vector3D DerivativeU(double u, double v)
+    {
+        var (sin, cos) = Math.SinCos(u);
+        return (Frame.YAxis * cos - Frame.XAxis * sin) * RadiusAt(v);
+    }
+
+    public override Vector3D DerivativeV(double u, double v)
+    {
+        var (sin, cos) = Math.SinCos(u);
+        return (Frame.XAxis * cos + Frame.YAxis * sin) * Slope + Frame.ZAxis;
+    }
+
+    public override double? PeriodU => 2 * Math.PI;
+}
+
+/// <summary>
 /// A torus round the frame's Z axis: <c>S(u, v) = Origin + (Major + Minor · cos v) · (cos u · X + sin u · Y) + Minor ·
 /// sin v · Z</c>. u is the angle round the axis, v round the tube from its outer side; the normal points out of the
 /// tube. A fillet between a plane and a cylinder square to it is a piece of one.

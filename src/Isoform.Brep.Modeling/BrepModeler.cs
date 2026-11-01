@@ -9,7 +9,7 @@ namespace Isoform.Brep.Modeling;
 /// Isoform documents on the managed B-rep kernel: blocks, plain extrudes (an inline profile, or the regions of a
 /// sketch on a plane or on a flat face of the part), holes (through, or blind with a floor; along Z, into a face, or
 /// at a sketch's points), plane cuts (face <c>id/face</c>), and fillets and chamfers on the edge between two flat
-/// faces or round a cylinder square to a flat face (face <c>id/face</c>). Each starts a body, joins it or cuts it, working on the current body as Isoform's
+/// faces or round a cylinder square to a flat face (face <c>id/face</c>, a cone for a chamfer there). Each starts a body, joins it or cuts it, working on the current body as Isoform's
 /// <see cref="Feature.Body"/> says. Faces carry Isoform's names: sides after their profile edge, caps <c>id/start</c>
 /// and <c>id/end</c>, blocks <c>id/x-</c> … <c>id/z+</c>, holes <c>id/wall</c> and <c>id/floor</c>, faces merged on
 /// one surface named by all their sources. Anything else is refused with <see cref="Diagnostic.BackendFailed"/>.
@@ -169,7 +169,7 @@ public sealed class BrepModeler(ModelingSettings settings) : IModeler
         }
 
         var corners = body.SelectMany(b => b.Body.Vertices.Select(v => v.Point)).ToList();
-        var reach = body.SelectMany(b => b.Body.Faces).Select(f => f.Surface switch { Cylinder c => c.Radius, Torus t => t.Major + t.Minor, _ => 0 }).DefaultIfEmpty(0).Max() + h.Diameter + 1;
+        var reach = body.SelectMany(b => b.Body.Faces).Select(f => Reach(f.Surface)).DefaultIfEmpty(0).Max() + h.Diameter + 1;
         var (tools, _, failed) = Guard(h.Id, () => [.. spots.Select(spot =>
         {
             var along = corners.Select(c => (c - spot.At).Dot(spot.Out)).DefaultIfEmpty(0).ToList();
@@ -188,7 +188,7 @@ public sealed class BrepModeler(ModelingSettings settings) : IModeler
     {
         var (at, n) = (P(c.Point), V(c.Normal).Normalized());
         var reach = body.SelectMany(b => b.Body.Vertices).Select(v => (v.Point - at).Length).DefaultIfEmpty(0).Max()
-                    + body.SelectMany(b => b.Body.Faces).Select(f => f.Surface switch { Cylinder k => k.Radius, Torus t => t.Major + t.Minor, _ => 0 }).DefaultIfEmpty(0).Max() + 1;
+                    + body.SelectMany(b => b.Body.Faces).Select(f => Reach(f.Surface)).DefaultIfEmpty(0).Max() + 1;
         var x = Math.Abs(n.X) < 0.9 ? new Vector3D(1, 0, 0) : new Vector3D(0, 1, 0);
         var frame = RigidTransform3D.FromFrame(at, n, (x - n * n.Dot(x)).Normalized());
         Point2D Q(double u, double v) => new(u, v);
@@ -385,6 +385,10 @@ public sealed class BrepModeler(ModelingSettings settings) : IModeler
         }
     }
 
+    // How far a face's surface can stand from its corners: a whole circle round a cylinder's or a cone's axis is
+    // that far out (a cone's radius here taken at its frame, which lies on the face), a torus's tube further.
+    static double Reach(Surface s) => s switch { Cylinder c => c.Radius, Cone k => k.Radius, Torus t => t.Major + t.Minor, _ => 0 };
+
     static Point3D P(double[] a) => new(a[0], a[1], a[2]);
     static Vector3D V(double[] a) => new(a[0], a[1], a[2]);
 }
@@ -421,6 +425,7 @@ public sealed class BrepResult(IReadOnlyList<Diagnostic> diagnostics, Topology? 
         Plane plane => Math.Abs(plane.Frame.ApplyInverse(p).Z),
         Cylinder c => Math.Abs(Math.Sqrt(Square(c.Frame.ApplyInverse(p).X) + Square(c.Frame.ApplyInverse(p).Y)) - c.Radius),
         Torus t => Math.Abs(Math.Sqrt(Square(Math.Sqrt(Square(t.Frame.ApplyInverse(p).X) + Square(t.Frame.ApplyInverse(p).Y)) - t.Major) + Square(t.Frame.ApplyInverse(p).Z)) - t.Minor),
+        Cone k => Math.Abs(Math.Sqrt(Square(k.Frame.ApplyInverse(p).X) + Square(k.Frame.ApplyInverse(p).Y)) - k.RadiusAt(k.Frame.ApplyInverse(p).Z)) / Math.Sqrt(1 + Square(k.Slope)),
         _ => throw new NotSupportedException(s.GetType().Name),
     };
 

@@ -132,6 +132,72 @@ public class BlendTests(ITestOutputHelper output)
         MassProperties.Volume(r!.Body).Should().BeApproximately((200 + Math.PI * 25) * 8 - 40 * Spandrel(1) - 2 * Math.PI * (5 - Centroid(1)) * Spandrel(1), 1e-9);
     }
 
+    // Experiment 8: chamfers round circles are cones. Pappus: the triangle d²/2, its centroid d/3 from the wall.
+    static double Triangle(double d) => d * d / 2;
+
+    [Fact]
+    public void A_hole_rim_is_chamfered_by_a_cone()
+    {
+        var body = Extrusion.Extrude(new Region(Rectangle(0, 0, 100, 50), [Circle(30, 25, 5)]), RigidTransform3D.Identity, 0, 10).Result!.Body;
+        var (r, _, problem) = Blends.Apply(body, Face(body, new Vector3D(0, 0, 1), new Point3D(0, 0, 10)), Wall(body), 1.5, BlendKind.Chamfer);
+        output.WriteLine(problem ?? "");
+        problem.Should().BeNull();
+        MassProperties.Volume(r!.Body).Should().BeApproximately(50000 - Math.PI * 250 - 2 * Math.PI * (5 + 0.5) * Triangle(1.5), 1e-9);
+        r.Body.Faces.Should().ContainSingle(f => f.Surface is Cone);
+        BodyCheck.Problems(r.Body).Should().BeEmpty();
+    }
+
+    [Fact]
+    public void A_hole_is_chamfered_at_both_ends()
+    {
+        var body = Extrusion.Extrude(new Region(Rectangle(0, 0, 100, 50), [Circle(30, 25, 5)]), RigidTransform3D.Identity, 0, 10).Result!.Body;
+        var (once, _, problem) = Blends.Apply(body, Face(body, new Vector3D(0, 0, 1), new Point3D(0, 0, 10)), Wall(body), 1, BlendKind.Chamfer);
+        problem.Should().BeNull();
+        var (twice, _, again) = Blends.Apply(once!.Body, Face(once.Body, new Vector3D(0, 0, -1), new Point3D(0, 0, 0)), Wall(once.Body), 1, BlendKind.Chamfer);
+        output.WriteLine(again ?? "");
+        again.Should().BeNull();
+        MassProperties.Volume(twice!.Body).Should().BeApproximately(50000 - Math.PI * 250 - 2 * 2 * Math.PI * (5 + 1.0 / 3) * Triangle(1), 1e-9);
+        twice.Body.Faces.Count(f => f.Surface is Cone).Should().Be(2);
+    }
+
+    [Fact]
+    public void A_boss_top_rim_is_chamfered_by_a_cone()
+    {
+        var boss = Extrusion.Extrude(new Region(Circle(50, 25, 8)), RigidTransform3D.Identity, 10, 25).Result!.Body;
+        var (r, _, problem) = Blends.Apply(boss, Face(boss, new Vector3D(0, 0, 1), new Point3D(0, 0, 25)), Wall(boss), 2, BlendKind.Chamfer);
+        output.WriteLine(problem ?? "");
+        problem.Should().BeNull();
+        MassProperties.Volume(r!.Body).Should().BeApproximately(Math.PI * 64 * 15 - 2 * Math.PI * (8 - 2.0 / 3) * Triangle(2), 1e-9);
+        r.Body.Faces.Should().HaveCount(4);
+    }
+
+    [Fact]
+    public void A_boss_foot_cannot_be_chamfered()
+    {
+        var plate = Extrusion.Extrude(new Region(Rectangle(0, 0, 100, 50)), RigidTransform3D.Identity, 0, 10).Result!.Body;
+        var boss = Extrusion.Extrude(new Region(Circle(50, 25, 8)), RigidTransform3D.Identity, 10, 25).Result!.Body;
+        var body = Booleans.Merge(Booleans.Unite(plate, boss).Bodies![0].Body).Body;
+        var (r, _, problem) = Blends.Apply(body, Face(body, new Vector3D(0, 0, 1), new Point3D(0, 0, 10)), Wall(body), 2, BlendKind.Chamfer);
+        r.Should().BeNull();
+        problem.Should().Contain("convex");
+    }
+
+    [Fact]
+    public void A_stadium_top_is_chamfered_all_round()
+    {
+        // Straight pieces run on into the cones round the ends, their planes touching them along a line.
+        var stadium = new ProfileLoop([new LineSegment(P(40, 20), P(60, 20)), new ArcSegment(P(60, 25), 5, -Math.PI / 2, Math.PI),
+            new LineSegment(P(60, 30), P(40, 30)), new ArcSegment(P(40, 25), 5, Math.PI / 2, Math.PI)]);
+        var boss = Extrusion.Extrude(new Region(stadium), RigidTransform3D.Identity, 10, 18).Result!.Body;
+        var (r, pieces, problem) = Blends.Loop(boss, Face(boss, new Vector3D(0, 0, 1), new Point3D(0, 0, 18)), 1, BlendKind.Chamfer);
+        output.WriteLine(problem ?? "");
+        problem.Should().BeNull();
+        pieces.Should().HaveCount(4);
+        MassProperties.Volume(r!.Body).Should().BeApproximately((200 + Math.PI * 25) * 8 - 40 * Triangle(1) - 2 * Math.PI * (5 - 1.0 / 3) * Triangle(1), 1e-9);
+        r.Body.Faces.Count(f => f.Surface is Cone).Should().Be(2);
+        BodyCheck.Problems(r.Body).Should().BeEmpty();
+    }
+
     [Fact]
     public void A_loop_chamfer_mitres_at_the_corners()
     {

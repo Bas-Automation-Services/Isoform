@@ -5,9 +5,9 @@ namespace Isoform.Brep;
 /// <summary>
 /// Solids of revolution: a region in the frame's (x, z) half-plane (x the distance from the axis, the frame's Z)
 /// turned round the axis, once or through an angle from the frame's X. A line across the axis sweeps a flat ring (or
-/// sector), one along it a cylinder, an arc a torus; a whole turn gives each curved face a seam where the region lies
-/// (u = 0), a part turn closes the ends with the region itself. Regions that touch the axis or have lines at an angle
-/// to it (cones) are refused.
+/// sector), one along it a cylinder, one at an angle a cone, an arc a torus; a whole turn gives each curved face a seam
+/// where the region lies (u = 0), a part turn closes the ends with the region itself. Regions that touch the axis are
+/// refused.
 /// </summary>
 public static class Revolution
 {
@@ -109,11 +109,15 @@ public static class Revolution
             case LineSegment when Math.Abs(a.X - b.X) <= Intersections.Snap:
                 // Along the axis: a cylinder, material inside when the line runs up.
                 return (Band(new Cylinder(At(0), a.X), Ring(a), Ring(b), seam0, seamEnd, t0, t1, angle, b.Y > a.Y, origin), null);
+            case LineSegment:
+                // At an angle: a cone, its frame at the line's start; material inside when the line runs up, as for a
+                // cylinder.
+                return (Band(new Cone(At(a.Y), a.X, (b.X - a.X) / (b.Y - a.Y)), Ring(a), Ring(b), seam0, seamEnd, t0, t1, angle, b.Y > a.Y, origin), null);
             case ArcSegment arc:
                 // An arc: a torus round the axis through its centre, material in the tube when it runs counter-clockwise.
                 return (Band(new Torus(At(arc.Center.Y), arc.Center.X, arc.Radius), Ring(a), Ring(b), seam0, seamEnd, t0, t1, angle, arc.Sweep > 0, origin), null);
             default:
-                return (null, "a line at an angle to the axis turns into a cone, which the managed kernel does not have yet");
+                throw new NotSupportedException(segment.GetType().Name);
         }
     }
 

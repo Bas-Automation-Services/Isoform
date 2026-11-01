@@ -2,7 +2,7 @@ using Isoform.Document;
 
 namespace Isoform.Brep.Tests;
 
-/// <summary>Isoform part documents the managed kernel builds (experiments 1 to 5), with their exact volumes.</summary>
+/// <summary>Isoform part documents the managed kernel builds (experiments 1 to 8), with their exact volumes.</summary>
 public static class Documents
 {
     static readonly SketchPlane Xy = new([0, 0, 0], [1, 0, 0], [0, 0, 1]);
@@ -182,6 +182,20 @@ public static class Documents
 
     ];
 
+    // Experiment 8: chamfers round circles and arcs are cones. Pappus: the triangle d²/2, its centroid d/3 from the wall.
+    static double Triangle(double d) => d * d / 2;
+
+    static readonly (string Name, PartDocument Document, double Volume)[] Cones =
+    [
+        ("chamfered hole edge", OnSlab(new Hole("hole", [30, 25], 10), new Chamfer("bevel", ["plate/z+", "hole/wall"], 1.5)),
+            50_000 - Math.PI * 250 - 2 * Math.PI * (5 + 0.5) * Triangle(1.5)),
+        ("hole chamfered at both ends", OnSlab(new Hole("hole", [30, 25], 10), new Chamfer("top", ["plate/z+", "hole/wall"], 1), new Chamfer("bottom", ["plate/z-", "hole/wall"], 1)),
+            50_000 - Math.PI * 250 - 2 * 2 * Math.PI * (5 + 1.0 / 3) * Triangle(1)),
+        // Straight pieces run on into the cones round the ends, their planes touching the cones along a line.
+        ("boss with a loop chamfer", OnSlab(new Extrude("boss", BooleanOp.Join, Top, Stadium(), 0, 8), new Chamfer("bevel", [], 1, Loop: "boss/end")),
+            50_000 + (20 * 10 + Math.PI * 25) * 8 - 40 * Triangle(1) - 2 * Math.PI * (5 - 1.0 / 3) * Triangle(1)),
+    ];
+
     // Experiment 4: planes at an angle to cylinders, which meet them in ellipses. The slab under
     // z = 10 − (x − 20)·slope, clipped at z = 0.
     static double Wedge(double slope) => 50 * (20 * 10 + 0.5 * (10 / slope) * 10);
@@ -260,6 +274,7 @@ public static class Documents
         .. Holes.Select(b => new object[] { b.Name, b.Document, b.Volume }),
         .. Angles.Select(b => new object[] { b.Name, b.Document, b.Volume }),
         .. Rounds.Select(b => new object[] { b.Name, b.Document, b.Volume }),
+        .. Cones.Select(b => new object[] { b.Name, b.Document, b.Volume }),
     ];
 
     public static PartDocument Named(string name) => name switch
@@ -267,6 +282,6 @@ public static class Documents
         "mounting plate" => MountingPlate,
         "bracket" => Bracket,
         "two pads" => TwoPads,
-        _ => Booleans.Concat(Holes).Concat(Angles).Concat(Rounds).Single(b => b.Name == name).Document,
+        _ => Booleans.Concat(Holes).Concat(Angles).Concat(Rounds).Concat(Cones).Single(b => b.Name == name).Document,
     };
 }

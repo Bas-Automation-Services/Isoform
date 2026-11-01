@@ -109,10 +109,11 @@ the quartic of two cylinders at an angle), tangent contact, and sliver tolerance
 
 ## Open questions
 
-- `Plane3D`'s U and V axes in `BasAutomation.Geometry` are left-handed (U × V = −N). The kernel builds its own
-  frames; anything that shares `Plane3D` with it has to know.
-- `BasAutomation.Geometry` types compare with a tolerance in `==` but hash exactly, so equal values can hash apart.
-- The 2D segment distances in `Profile.cs` could move to `BasAutomation.Geometry`.
+- Fixed on the Geometry branch (2026-11-01), not released: `Plane3D`'s V axis is now N × U, so its U/V axes are
+  right-handed (they were left-handed, against its doc comment; no addin used them), and types whose `==` takes a
+  tolerance hash to a constant, so equal values no longer hash apart. Whether to merge is open.
+- The 2D segment distances in `Profile.cs` stay in the kernel: they work on its own segments (lines, arcs and
+  `CurveSegment`), and `BasAutomation.Geometry` has no arc distance to move them onto.
 - The STEP conventions come from OCCT's reader (experiment 4); whether other readers, Inventor's first, agree is
   not checked yet.
 
@@ -284,14 +285,45 @@ volume is exact), but where four faces meet in one point at each corner, the F-r
 into an edge, in an order-dependent pattern, and its own exact export then refuses its counts. `BlendTests` covers
 the kernel's.
 
-## Experiment 8: candidates (to decide)
+## Experiment 8: cones (done, 2026-11-01)
 
-1. **Cones:** chamfers round holes and bosses (loop chamfers with arcs), revolves of lines at an angle.
-2. **Ball corners:** three fillets meeting at a corner, a sphere carrier.
-3. **Arcs meeting lines at a corner** in loop fillets: a torus mitring with a cylinder (a quartic, unless the radii
+Chosen from the candidates below (1), as it completes chamfers.
+
+**Kernel:**
+- *Carrier:* `Cone`, round its frame's Z: radius `Radius + Slope · v` at height v, above zero at the frame's origin
+  (which flat (u, v) scales u by, as a cylinder's radius). Circles round the axis and the straight lines through the
+  apex are lines in (u, v), so tracing, classification, sewing and `MassProperties` take it unchanged.
+- *Intersections:* a plane square to the axis meets it in a circle; a plane through the apex in its generators (two,
+  or one where the plane touches it: a chamfer's plane running on into a chamfer round an arc). A cylinder, cone or
+  torus round the same axis meets it in circles, where their sections cross in the half-plane through the axis. Other
+  planes (ellipses, parabolas, hyperbolas) are refused, and fall to the "faces only touch" check.
+- *Ray hits:* the quadric, kept on the cone's own nappe.
+- *Revolve:* a line at an angle to the axis sweeps a cone (regions touching the axis, which would need an apex, are
+  still refused).
+- *Chamfers:* round a whole circle where a flat face meets a cylinder square to it (a hole's rim, a boss's top), the
+  triangle turned round the axis; round the arcs of a loop, a part turn of it between the tangent straight pieces.
+  Only convex edges, as for straight chamfers.
+
+**Adapter:** reaches and `FaceNear` know cones. **STEP:** a cone is written as Isoform's: apex, opening axis, half-angle.
+
+**Results:** 3 more documents: a chamfered hole edge, a hole chamfered at both ends, a stadium boss with a loop
+chamfer. All 51 documents match the F-rep core, agree with `ExactBrep`, have exact volumes and read back in OCCT
+valid without healing (cones included). Kernel tests add cones
+by revolution (whole and part turns, a frustum), chamfers on hole and boss rims and round a stadium, and booleans of
+a cone against a torus and another cone round one axis, each checked by Pappus. Tests: `tests/Isoform.Brep.Tests` 231, `BrepKernelStepTests` 51.
+
+**Comparison:** the F-rep side's chamfer faces keep the chamfer's size in `Surface.Radius`, which neither a plane nor
+Isoform's cone uses; the `ExactBrep` comparison now leaves radius out for both and compares a cone by apex, opening
+and angle.
+
+## Next: candidates (to decide)
+
+1. **Ball corners:** three fillets meeting at a corner, a sphere carrier.
+2. **Arcs meeting lines at a corner** in loop fillets: a torus mitring with a cylinder (a quartic, unless the radii
    make it a circle or ellipse).
-4. **Inventor as a second STEP reader**, parked.
-5. **Speed:** vertex and edge matching are quadratic, every face pair is intersected after a box test, and loop
+3. **Inventor as a second STEP reader**, parked.
+4. **Speed:** vertex and edge matching are quadratic, every face pair is intersected after a box test, and loop
    fillets run one boolean per edge. Fine at these sizes, not for a part with hundreds of faces.
+5. **Apexes:** revolves that reach the axis (a pointed cone, a disc), which need a degenerate edge.
 
-Recommended: 1 (it completes chamfers), then 5 before any real part goes through the kernel.
+Recommended: 4 before any real part goes through the kernel.

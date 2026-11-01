@@ -70,10 +70,15 @@ public class BackendTests(ITestOutputHelper output)
     }
 
     // The same kind of surface, radius and axis, and the other's origin on mine: on the plane, or on the cylinder's axis.
+    // A cone is its apex, opening and angle. Planes and cones have no radius (the F-rep side's chamfer faces keep the
+    // chamfer's size in it).
     static bool Same(Isoform.Geometry.Surface s, Isoform.Geometry.Surface g)
     {
         var d = g.Origin - s.Origin;
-        return s.Kind == g.Kind && Math.Abs(s.Radius - g.Radius) <= 1e-12 && Math.Abs(Math.Abs(s.Axis.Dot(g.Axis)) - 1) <= 1e-12
+        if (s.Kind == Isoform.Geometry.SurfaceKind.Cone)
+            return g.Kind == s.Kind && d.Length < 1e-9 && Math.Abs(s.Angle - g.Angle) <= 1e-12 && s.Axis.Dot(g.Axis) >= 1 - 1e-12;
+        var radius = s.Kind == Isoform.Geometry.SurfaceKind.Plane || Math.Abs(s.Radius - g.Radius) <= 1e-12;
+        return s.Kind == g.Kind && radius && Math.Abs(Math.Abs(s.Axis.Dot(g.Axis)) - 1) <= 1e-12
                && (s.Kind == Isoform.Geometry.SurfaceKind.Plane ? Math.Abs(s.Axis.Dot(d)) : (d - s.Axis * s.Axis.Dot(d)).Length) < 1e-9;
     }
 

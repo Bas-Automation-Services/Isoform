@@ -44,13 +44,39 @@ public class RevolutionTests(ITestOutputHelper output)
         body.Faces.Select(f => f.Surface.GetType().Name).Order().Should().Equal("Cylinder", "Plane", "Torus");
     }
 
+    // A triangle on the axis side of a slope from (10, 0) up to (5, 4): area 10, centroid 20/3 from the axis.
+    static ProfileLoop Wedge() => new([new LineSegment(P(5, 0), P(10, 0)), new LineSegment(P(10, 0), P(5, 4)), new LineSegment(P(5, 4), P(5, 0))]);
+
     [Fact]
-    public void A_line_at_an_angle_is_refused_as_a_cone()
+    public void A_line_at_an_angle_turns_into_a_cone()
     {
-        var (r, problem) = Revolution.Revolve(new Region(new ProfileLoop([new LineSegment(P(5, 0), P(10, 0)), new LineSegment(P(10, 0), P(5, 4)), new LineSegment(P(5, 4), P(5, 0))])),
-            RigidTransform3D.Identity);
-        r.Should().BeNull();
-        problem.Should().Contain("cone");
+        var body = Revolve(Wedge());
+        MassProperties.Volume(body).Should().BeApproximately(2 * Math.PI * 20.0 / 3 * 10, 1e-9);
+        body.Faces.Select(f => f.Surface.GetType().Name).Order().Should().Equal("Cone", "Cylinder", "Plane");
+        BodyCheck.Problems(body).Should().BeEmpty();
+    }
+
+    [Fact]
+    public void A_frustum_widening_upwards()
+    {
+        // The slope runs from (8, 4) down to (10, 0) on the right of a ring 5..10: area 5·4 − 4, centroid by parts.
+        var loop = new ProfileLoop([new LineSegment(P(5, 0), P(10, 0)), new LineSegment(P(10, 0), P(12, 4)), new LineSegment(P(12, 4), P(5, 4)), new LineSegment(P(5, 4), P(5, 0))]);
+        var body = Revolve(loop);
+        // Rectangle 5..10 × 4 plus the triangle (10, 0), (12, 4), (10, 4) of area 4, centroid x = 32/3.
+        MassProperties.Volume(body).Should().BeApproximately(2 * Math.PI * (20 * 7.5 + 4 * 32.0 / 3), 1e-9);
+        BodyCheck.Problems(body).Should().BeEmpty();
+    }
+
+    [Fact]
+    public void A_quarter_turn_of_a_cone_has_its_ends_closed()
+    {
+        // The flat ends hold the cone's straight lines through its apex.
+        var (r, problem) = Revolution.Revolve(new Region(Wedge()), RigidTransform3D.Identity, angle: Math.PI / 2);
+        output.WriteLine(problem ?? "");
+        problem.Should().BeNull();
+        MassProperties.Volume(r!.Body).Should().BeApproximately(Math.PI / 2 * 20.0 / 3 * 10, 1e-9);
+        r.Body.Faces.Should().HaveCount(5);
+        BodyCheck.Problems(r.Body).Should().BeEmpty();
     }
 
     [Fact]

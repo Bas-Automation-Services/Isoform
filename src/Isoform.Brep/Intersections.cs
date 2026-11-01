@@ -35,6 +35,10 @@ internal static class Intersections
         (Cylinder c, Torus t) => CylinderTorus(c, t),
         (Torus t, Cylinder c) => CylinderTorus(c, t),
         (Torus t, Torus u) => SameTorus(t, u) ? SurfaceMeeting.Same : SurfaceMeeting.Refused("two tori that are not the same"),
+        (Plane p, Cone k) => PlaneCone(p, k),
+        (Cone k, Plane p) => PlaneCone(p, k),
+        (Cone k, _) => Coaxial(k, b),
+        (_, Cone k) => Coaxial(k, a),
         _ => SurfaceMeeting.Refused($"a {a.GetType().Name.ToLowerInvariant()} against a {b.GetType().Name.ToLowerInvariant()}"),
     };
 
@@ -141,6 +145,90 @@ internal static class Intersections
             circles.Add(new Circle3(RigidTransform3D.FromFrame(t.Frame.Origin + t.Frame.ZAxis * height, t.Frame.ZAxis, t.Frame.XAxis), radius));
         }
         return SurfaceMeeting.Along([.. circles]);
+    }
+
+    // A plane square to the cone's axis meets it in a circle round the axis. A plane through the apex holds the
+    // generators along which s·(n·e_r(u)) + n·Z = 0: two, or one where it touches the cone (a chamfer's plane running
+    // on into a chamfer round an arc), or none. Any other plane meets it in an ellipse, parabola or hyperbola, refused.
+    static SurfaceMeeting PlaneCone(Plane p, Cone k)
+    {
+        var (n, a) = (p.Frame.ZAxis, k.Frame.ZAxis);
+        if (Math.Abs(n.Dot(a)) >= 1 - Parallel) return Ring(k, (p.Frame.Origin - k.Frame.Origin).Dot(a));
+        if (Math.Abs((k.Apex - p.Frame.Origin).Dot(n)) > Snap)
+            return SurfaceMeeting.Refused("a plane at an angle to a cone's axis and not through its apex (an ellipse, parabola or hyperbola)");
+        var (nx, ny) = (n.Dot(k.Frame.XAxis), n.Dot(k.Frame.YAxis));
+        var m = Math.Sqrt(nx * nx + ny * ny);
+        var phi = Math.Atan2(ny, nx);
+        // cos(u − φ) = c; at the frame's height the two generators lie R·√(1 − c²) either side of the plane's foot.
+        var c = -n.Dot(a) / (k.Slope * m);
+        var half = k.Radius * Math.Sqrt(Math.Abs(1 - c * c));
+        if (half <= Snap) return SurfaceMeeting.Along(Generator(k, c > 0 ? phi : phi + Math.PI));
+        if (Math.Abs(c) > 1) return SurfaceMeeting.Nothing;
+        var delta = Math.Acos(c);
+        return SurfaceMeeting.Along(Generator(k, phi - delta), Generator(k, phi + delta));
+    }
+
+    // The straight line of the cone at angle u, from its point at the frame's height, running up the axis.
+    static Line3 Generator(Cone k, double u)
+    {
+        var (sin, cos) = Math.SinCos(u);
+        var radial = k.Frame.XAxis * cos + k.Frame.YAxis * sin;
+        return new Line3(k.Frame.Origin + radial * k.Radius, (radial * k.Slope + k.Frame.ZAxis).Normalized());
+    }
+
+    // The cone's circle at height h above its frame's origin; none at or past the apex.
+    static SurfaceMeeting Ring(Cone k, double h)
+    {
+        var radius = k.RadiusAt(h);
+        return radius <= Snap ? SurfaceMeeting.Nothing
+            : SurfaceMeeting.Along(new Circle3(RigidTransform3D.FromFrame(k.Frame.Origin + k.Frame.ZAxis * h, k.Frame.ZAxis, k.Frame.XAxis), radius));
+    }
+
+    // A cone and a cylinder, cone or torus round the same axis meet in circles round it, where their sections in the
+    // half-plane through the axis cross: the cone's is the line ρ = R + s·h (h up the cone's axis from its origin).
+    static SurfaceMeeting Coaxial(Cone k, Surface other)
+    {
+        var a = k.Frame.ZAxis;
+        var frame = other switch
+        {
+            Cylinder c => c.Frame,
+            Cone m => m.Frame,
+            Torus t => t.Frame,
+            _ => throw new NotSupportedException(other.GetType().Name),
+        };
+        var w = frame.Origin - k.Frame.Origin;
+        if (frame.ZAxis.Cross(a).Length >= Parallel || (w - a * w.Dot(a)).Length > Snap)
+            return SurfaceMeeting.Refused($"a {other.GetType().Name.ToLowerInvariant()} that is not round a cone's axis");
+        var h0 = w.Dot(a);
+        switch (other)
+        {
+            case Cylinder c:
+                return Ring(k, (c.Radius - k.Radius) / k.Slope);
+            case Cone m:
+            {
+                // The other's section as ρ = r0 + b·h on this cone's h.
+                var b = m.Frame.ZAxis.Dot(a) > 0 ? m.Slope : -m.Slope;
+                var r0 = m.Radius - b * h0;
+                if (Math.Abs(b - k.Slope) <= 1e-12 * (1 + Math.Abs(b)))
+                    return Math.Abs(r0 - k.Radius) <= Snap ? SurfaceMeeting.Same : SurfaceMeeting.Nothing;
+                return Ring(k, (r0 - k.Radius) / (k.Slope - b));
+            }
+            case Torus t:
+            {
+                // The line against the tube's section, the circle of radius r round (M, h0): the foot of the
+                // perpendicular from its centre, and half a chord either side of it along the line.
+                var norm = Math.Sqrt(1 + k.Slope * k.Slope);
+                var gap = (k.RadiusAt(h0) - t.Major) / norm;
+                if (Math.Abs(gap) > t.Minor + Snap) return SurfaceMeeting.Nothing;
+                var foot = h0 - k.Slope * gap / norm;
+                var chord = Math.Sqrt(Math.Max(0, t.Minor * t.Minor - gap * gap));
+                if (chord <= Snap) return Ring(k, foot);
+                var step = chord / norm;
+                return SurfaceMeeting.Along([.. Ring(k, foot - step).Curves, .. Ring(k, foot + step).Curves]);
+            }
+            default:
+                throw new NotSupportedException(other.GetType().Name);
+        }
     }
 
     static bool SameTorus(Torus t, Torus u) => (t.Frame.Origin - u.Frame.Origin).Length <= Snap && t.Frame.ZAxis.Cross(u.Frame.ZAxis).Length < Parallel &&
@@ -404,9 +492,36 @@ internal static class Intersections
             case Torus t:
                 foreach (var hit in TorusHits(p, d, t)) yield return hit;
                 break;
+            case Cone k:
+                foreach (var hit in ConeHits(p, d, k)) yield return hit;
+                break;
             default:
                 throw new NotSupportedException(s.GetType().Name);
         }
+    }
+
+    // The ray against x² + y² = (R + s·z)² in the cone's frame, kept where R + s·z > 0 (this nappe, not the one past
+    // the apex).
+    static IEnumerable<double> ConeHits(Point3D p, Vector3D d, Cone k)
+    {
+        var (q, e) = (k.Frame.ApplyInverse(p), k.Frame.ApplyInverse(d));
+        var (r0, dr) = (k.RadiusAt(q.Z), k.Slope * e.Z);
+        var (qa, qb, qc) = (e.X * e.X + e.Y * e.Y - dr * dr, 2 * (q.X * e.X + q.Y * e.Y - r0 * dr), q.X * q.X + q.Y * q.Y - r0 * r0);
+        var roots = new List<double>();
+        if (Math.Abs(qa) < Parallel)
+        {
+            if (Math.Abs(qb) > Parallel) roots.Add(-qc / qb);
+        }
+        else
+        {
+            var disc = qb * qb - 4 * qa * qc;
+            if (disc < 0) yield break;
+            var root = Math.Sqrt(disc);
+            roots.Add((-qb - root) / (2 * qa));
+            roots.Add((-qb + root) / (2 * qa));
+        }
+        foreach (var t in roots)
+            if (r0 + dr * t > 0) yield return t;
     }
 
     // The ray against the torus's quartic (|q|² + R² − r²)² = 4R²(qx² + qy²), within the sphere round it: sign changes
@@ -453,7 +568,8 @@ internal static class Intersections
 }
 
 /// <summary>
-/// Surface parameters and the flat (u, v) the boolean works in: (u, v) itself on a plane, (R·u, v) on a cylinder,
+/// Surface parameters and the flat (u, v) the boolean works in: (u, v) itself on a plane, (R·u, v) on a cylinder (and
+/// on a cone, R its radius at the frame's origin),
 /// so that lengths and angles in it are the surface's own, (R·u, r·v) on a torus, where they are not, but where every
 /// curve the kernel puts on one runs along u or v.
 /// </summary>
@@ -466,6 +582,8 @@ internal static class Uv
         Cylinder c => new(Math.Atan2((p - c.Frame.Origin).Dot(c.Frame.YAxis), (p - c.Frame.Origin).Dot(c.Frame.XAxis)),
             (p - c.Frame.Origin).Dot(c.Frame.ZAxis)),
         Torus t => TorusUv(t, p),
+        Cone k => new(Math.Atan2((p - k.Frame.Origin).Dot(k.Frame.YAxis), (p - k.Frame.Origin).Dot(k.Frame.XAxis)),
+            (p - k.Frame.Origin).Dot(k.Frame.ZAxis)),
         _ => throw new NotSupportedException(s.GetType().Name),
     };
 
@@ -475,8 +593,9 @@ internal static class Uv
         return new Point2D(Math.Atan2(q.Y, q.X), Math.Atan2(q.Z, Math.Sqrt(q.X * q.X + q.Y * q.Y) - t.Major));
     }
 
-    /// <summary>How flat (u, v) scales u: the radius on a cylinder, the major radius on a torus.</summary>
-    public static double Scale(Surface s) => s switch { Cylinder c => c.Radius, Torus t => t.Major, _ => 1 };
+    /// <summary>How flat (u, v) scales u: the radius on a cylinder, the major radius on a torus, the radius at the
+    /// frame's origin on a cone.</summary>
+    public static double Scale(Surface s) => s switch { Cylinder c => c.Radius, Torus t => t.Major, Cone k => k.Radius, _ => 1 };
 
     /// <summary>How flat (u, v) scales v: the minor radius on a torus.</summary>
     public static double ScaleV(Surface s) => s is Torus t ? t.Minor : 1;
@@ -488,8 +607,16 @@ internal static class Uv
         Plane plane => (p - plane.Frame.Origin).Dot(plane.Frame.ZAxis),
         Cylinder c => Radial(c, p) - c.Radius,
         Torus t => TorusSide(t, p),
+        Cone k => ConeSide(k, p),
         _ => throw new NotSupportedException(s.GetType().Name),
     };
+
+    // The signed distance from the cone's section, the line ρ = R + s·h in the half-plane through the axis.
+    static double ConeSide(Cone k, Point3D p)
+    {
+        var q = k.Frame.ApplyInverse(p);
+        return (Math.Sqrt(q.X * q.X + q.Y * q.Y) - k.RadiusAt(q.Z)) / Math.Sqrt(1 + k.Slope * k.Slope);
+    }
 
     static double TorusSide(Torus t, Point3D p)
     {
@@ -504,6 +631,7 @@ internal static class Uv
         Plane plane => Math.Abs((p - plane.Frame.Origin).Dot(plane.Frame.ZAxis)),
         Cylinder c => Math.Abs(Radial(c, p) - c.Radius),
         Torus t => TorusDistance(t, p),
+        Cone k => Math.Abs(ConeSide(k, p)),
         _ => throw new NotSupportedException(s.GetType().Name),
     };
 
@@ -563,6 +691,23 @@ internal static class Uv
                 var slope = xp.Cross(yp).Dot(z) > 0 ? 1 : -1;
                 var (ca, cb) = (e.Major * xe.Dot(z), e.Minor * ye.Dot(z));
                 return new Wave2(u0, (e.Frame.Origin - cyl.Frame.Origin).Dot(z), slope, Math.Sqrt(ca * ca + cb * cb), Math.Atan2(-cb, ca));
+            }
+            case (Cone k, Line3 l):
+            {
+                // A generator: u fixed, v runs with t. Its angle comes from the direction, whose part away from the
+                // axis points along e_r(u) as the line climbs the slope, so the origin may lie anywhere on it.
+                var z = k.Frame.ZAxis;
+                var away = (l.Direction - z * l.Direction.Dot(z)) * Math.Sign(k.Slope * l.Direction.Dot(z));
+                var u = Math.Atan2(away.Dot(k.Frame.YAxis), away.Dot(k.Frame.XAxis));
+                return new Line2(new Point2D(u, (l.Origin - k.Frame.Origin).Dot(z)), new Vector2D(0, l.Direction.Dot(z)));
+            }
+            case (Cone cone, Circle3 k) when k.Frame.ZAxis.Cross(cone.Frame.ZAxis).Length < 1e-9:
+            {
+                // Round the axis: v fixed, u runs with t.
+                var x = k.Frame.XAxis;
+                var phase = Math.Atan2(x.Dot(cone.Frame.YAxis), x.Dot(cone.Frame.XAxis));
+                var sense = k.Frame.ZAxis.Dot(cone.Frame.ZAxis) > 0 ? 1 : -1;
+                return new Line2(new Point2D(phase, (k.Frame.Origin - cone.Frame.Origin).Dot(cone.Frame.ZAxis)), new Vector2D(sense, 0));
             }
             case (Torus t, Circle3 k) when k.Frame.ZAxis.Cross(t.Frame.ZAxis).Length < 1e-9:
             {
