@@ -21,10 +21,23 @@ internal sealed record Use(Curve3 Curve, double From, double To, Curve2 Pcurve)
 /// A face being built: a surface, its sense, and loops of uses in the B-rep's convention (the face on the left seen
 /// from outside the solid; the first loop the outer one).
 /// </summary>
+/// <summary>
+/// A hole of a flat face of a boolean's first operand that the boolean leaves alone, carried whole into the piece
+/// round it: its loop there, its flat loop (as that face's <see cref="FlatFace"/> has it, with its box) and its uses
+/// when it must be sewn after all.
+/// </summary>
+internal sealed record Carried(LoopId Loop, ProfileLoop Flat, (Point2D Min, Point2D Max) Box, Func<IReadOnlyList<Use>> Uses);
+
 internal sealed record Patch(Surface Surface, bool SameSense, IReadOnlyList<IReadOnlyList<Use>> Loops, IReadOnlySet<Origin> Origins)
 {
     /// <summary>A face of a valid body come through a boolean whole and as it was: already checked.</summary>
     public bool Unchanged { get; init; }
+
+    /// <summary>Holes kept out of <see cref="Loops"/>, copied whole (see <see cref="Carried"/>).</summary>
+    public IReadOnlyList<Carried> Carried { get; init; } = [];
+
+    /// <summary>The patch with its carried holes among its loops.</summary>
+    public Patch Expanded() => Carried.Count == 0 ? this : this with { Loops = [.. Loops, .. Carried.Select(c => c.Uses())], Carried = [] };
 
     /// <summary>The loops with the face on their left in (u, v): the B-rep's own where the face has its surface's sense, reversed where not.</summary>
     public IEnumerable<IReadOnlyList<Use>> UvLoops => Loops.Select(l => Arrangement.Sensed(l, SameSense));

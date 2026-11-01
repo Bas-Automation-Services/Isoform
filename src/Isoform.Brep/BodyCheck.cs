@@ -47,9 +47,11 @@ public static class BodyCheck
     /// not checked again, and a shell holding one faces the way it did (its edges' uses run opposite, which is checked),
     /// so its volume need not be found.
     /// </summary>
-    public static IReadOnlyList<Problem> Problems(Body body, IReadOnlySet<int>? unchanged = null)
+    public static IReadOnlyList<Problem> Problems(Body body, IReadOnlySet<int>? unchanged = null, IReadOnlySet<int>? loops = null)
     {
         bool Known(FaceId f) => unchanged?.Contains(f.Index) == true;
+        // Loops of a valid body carried whole into a face that changed.
+        bool KnownLoop(LoopId l) => loops?.Contains(l.Index) == true;
         var problems = new List<Problem>();
         void Add(ProblemKind kind, string where, string message) => problems.Add(new Problem(kind, where, message));
 
@@ -57,6 +59,9 @@ public static class BodyCheck
         {
             var edge = body.Edges[e];
             var uses = body.UsesOf(new EdgeId(e));
+            if (unchanged is not null && uses.Length > 0 && uses.All(u => Known(body.FaceOf(u)) || KnownLoop(body[u].Loop)) &&
+                (edge.Curve is Pole ? uses.Length == 1 : uses.Length == 2 && body[uses[0]].Forward != body[uses[1]].Forward))
+                continue;
             var pole = edge.Curve is Pole;
             if (uses.Length != (pole ? 1 : 2)) Add(ProblemKind.EdgeUses, $"edge {e}", $"used {uses.Length} times, a closed manifold shell uses every edge twice (a pole's once)");
             else if (!pole && body[uses[0]].Forward == body[uses[1]].Forward) Add(ProblemKind.EdgeSenses, $"edge {e}", "both uses run the same way");
@@ -77,7 +82,7 @@ public static class BodyCheck
         for (var l = 0; l < body.Loops.Length; l++)
         {
             var loopId = new LoopId(l);
-            if (Known(body[loopId].Face)) continue;
+            if (Known(body[loopId].Face) || KnownLoop(loopId)) continue;
             var surface = body[body[loopId].Face].Surface;
             foreach (var c in body.CoedgesOf(loopId))
             {
@@ -115,6 +120,7 @@ public static class BodyCheck
             var sense = face.SameSense ? 1 : -1;
             for (var i = 0; i < face.Loops.Length; i++)
             {
+                if (KnownLoop(face.Loops[i])) continue;
                 var area = sense * MassProperties.SignedUvArea(body, face.Loops[i]);
                 if (i == 0 ? area <= 0 : area >= 0)
                     Add(ProblemKind.FaceOrientation, $"face {f} loop {face.Loops[i].Index}",

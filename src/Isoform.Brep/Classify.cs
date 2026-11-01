@@ -13,18 +13,19 @@ internal enum Containment { Out, In, OnSame, OnOpposite }
 /// </summary>
 internal sealed class FlatFace
 {
-    public FlatFace(Body body, FaceId id)
+    /// <param name="known">Flat loops (and boxes) already made, by the loop's place in the face.</param>
+    public FlatFace(Body body, FaceId id, IReadOnlyDictionary<int, (ProfileLoop Loop, (Point2D, Point2D) Box)>? known = null)
     {
         var face = body[id];
         Surface = face.Surface;
         SameSense = face.SameSense;
         Edges = [.. face.Loops.SelectMany(body.CoedgesOf).Select(c => body[c].Edge).Distinct()];
-        Loops = [.. face.Loops.Select(l => new ProfileLoop([.. body.CoedgesOf(l).Select(c =>
+        Loops = [.. face.Loops.Select((l, i) => known is not null && known.TryGetValue(i, out var k) ? k.Loop : new ProfileLoop([.. body.CoedgesOf(l).Select(c =>
         {
             var (from, to) = body.ParametersOf(c);
             return Uv.Flat(Surface, body[c].Pcurve, from, to);
         })]))];
-        boxes = [.. Loops.Select(BoxOf)];
+        boxes = [.. Loops.Select((l, i) => known is not null && known.TryGetValue(i, out var k) ? k.Box : BoxOf(l))];
         // The windows of a periodic u or v: from the lowest the face's p-curves reach.
         var ends = face.Loops.SelectMany(body.CoedgesOf).SelectMany(c =>
         {
@@ -37,7 +38,9 @@ internal sealed class FlatFace
         // The edges' ends and the points where they turn back along an axis, grown to hold the whole face: a plane,
         // cylinder or cone face lies between its edges (on lines across it); a torus face reaches at most the tube's
         // diameter from them; a sphere face may bulge anywhere on the sphere (a ball's edges are only its seam and poles).
-        var points = Edges.SelectMany(e => Extremes(body[e])).ToList();
+        // A flat face lies within its outer loop.
+        var bounding = Surface is Plane ? [.. body.CoedgesOf(face.Loops[0]).Select(c => body[c].Edge).Distinct()] : Edges;
+        var points = bounding.SelectMany(e => Extremes(body[e])).ToList();
         if (Surface is Sphere o)
         {
             var r = new Vector3D(o.Radius, o.Radius, o.Radius);
@@ -47,6 +50,15 @@ internal sealed class FlatFace
         Box = (new Point3D(points.Min(p => p.X) - pad, points.Min(p => p.Y) - pad, points.Min(p => p.Z) - pad),
                new Point3D(points.Max(p => p.X) + pad, points.Max(p => p.Y) + pad, points.Max(p => p.Z) + pad));
     }
+
+    // The same face in a body whose edges are numbered otherwise.
+    FlatFace(FlatFace face, IReadOnlyList<EdgeId> edges)
+    {
+        (Surface, SameSense, Edges, Loops, UMin, VMin, Box, boxes) = (face.Surface, face.SameSense, edges, face.Loops, face.UMin, face.VMin, face.Box, face.boxes);
+    }
+
+    /// <summary>This face copied whole into another body, its edges there by <paramref name="edge"/>.</summary>
+    public FlatFace Renumbered(Func<EdgeId, EdgeId> edge) => new(this, [.. Edges.Select(edge)]);
 
     public Surface Surface { get; }
     public bool SameSense { get; }
@@ -123,6 +135,8 @@ internal sealed class FlatFace
     // Each loop's box in flat (u, v), grown by the snap and, round a curve's samples, by a tenth of the loop's size.
     (Point2D Min, Point2D Max)[] boxes = [];
 
+    public (Point2D Min, Point2D Max) BoxOfLoop(int loop) => boxes[loop];
+
     static (Point2D, Point2D) BoxOf(ProfileLoop loop)
     {
         var points = loop.Segments.SelectMany(s => s switch
@@ -137,7 +151,7 @@ internal sealed class FlatFace
         return (new Point2D(lo.X - pad, lo.Y - pad), new Point2D(hi.X + pad, hi.Y + pad));
     }
 
-    static bool Within((Point2D Min, Point2D Max) box, Point2D p) => p.X >= box.Min.X && p.X <= box.Max.X && p.Y >= box.Min.Y && p.Y <= box.Max.Y;
+    public static bool Within((Point2D Min, Point2D Max) box, Point2D p) => p.X >= box.Min.X && p.X <= box.Max.X && p.Y >= box.Min.Y && p.Y <= box.Max.Y;
 
     /// <summary>
     /// Whether this face crosses the other's surface at a point inside the other face: on a grid over this face (and
@@ -213,8 +227,22 @@ internal sealed class FlatFace
 /// <summary>A body's faces in flat form, for locating points against it.</summary>
 internal sealed class Solid(Body body)
 {
+    // Faces a boolean copied whole into a body, as they were, and holes it carried whole into a face: not flattened again.
+    static readonly System.Runtime.CompilerServices.ConditionalWeakTable<Body, Kept> carried = [];
+
+    sealed record Kept(FlatFace?[] Faces, Dictionary<int, Dictionary<int, (ProfileLoop, (Point2D, Point2D))>> Loops);
+
+    /// <summary>
+    /// Keeps the flat faces of the faces copied whole into <paramref name="body"/> (null where not), and of the holes
+    /// carried whole into its others (by face, then by the hole's place in the face).
+    /// </summary>
+    public static void Carry(Body body, FlatFace?[] faces, Dictionary<int, Dictionary<int, (ProfileLoop, (Point2D, Point2D))>> loops) =>
+        carried.AddOrUpdate(body, new Kept(faces, loops));
+
     public Body Body { get; } = body;
-    public FlatFace[] Faces { get; } = [.. Enumerable.Range(0, body.Faces.Length).Select(f => new FlatFace(body, new FaceId(f)))];
+    public FlatFace[] Faces { get; } = [.. Enumerable.Range(0, body.Faces.Length).Select(f =>
+        !carried.TryGetValue(body, out var kept) ? new FlatFace(body, new FaceId(f))
+        : kept.Faces[f] ?? new FlatFace(body, new FaceId(f), kept.Loops.GetValueOrDefault(f)))];
 
     /// <summary>A box round the whole solid.</summary>
     public (Point3D Min, Point3D Max) Box => box ??= (

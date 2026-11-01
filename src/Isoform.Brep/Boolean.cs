@@ -98,11 +98,16 @@ public static class Booleans
                 Intersect(ops, fa, fb);
             }
 
+            // The first operand's faces that come through whole and miss the other solid's box are kept as they are: the
+            // result is an edit of that operand where it can be (Sewing.Edit), else everything is sewn.
             var kept = new List<Patch>();
+            var whole = new HashSet<int>();
+            for (var f = 0; f < a.Faces.Length; f++)
+                if (ops[0].Whole(f) && !ops[0].Solid.Faces[f].Overlaps(ops[1].Solid.Box)) whole.Add(f);
             for (var o = 0; o < 2; o++)
             {
                 var other = ops[1 - o].Solid;
-                foreach (var (patch, face) in ops[o].Patches())
+                foreach (var (patch, face) in ops[o].Patches(o == 0 ? whole : []))
                 {
                     // A piece of a face whose box misses the other solid's lies outside it.
                     var where = ops[o].Solid.Faces[face].Overlaps(other.Box) ? Locate(patch, other) : Containment.Out;
@@ -117,7 +122,10 @@ public static class Booleans
                     if (keep is not null) kept.Add(keep);
                 }
             }
-            return (Sewing.Sew(Sewing.MergeSurfaces(kept), Math.Max(a.Tolerance, b.Tolerance)), null);
+            var tolerance = Math.Max(a.Tolerance, b.Tolerance);
+            if (whole.Count > 0 && Sewing.Edit(ops[0].Solid, whole, kept, tolerance) is { } edited) return ([edited], null);
+            kept = [.. kept.Select(p => p.Expanded()), .. whole.Select(f => PatchOf(a, new FaceId(f), 0) with { Unchanged = true })];
+            return (Sewing.Sew(Sewing.MergeSurfaces(kept), tolerance), null);
         }
         catch (BooleanFailure failure)
         {
@@ -129,11 +137,15 @@ public static class Booleans
     static Containment Locate(Patch patch, Solid other)
     {
         var uv = Arrangement.Inside(patch.Surface, patch.UvLoops);
+        // Away from the carried holes too (a flat face's: (u, v) is flat there); else found among them all.
+        var flat = new Point2D(uv.X * Uv.Scale(patch.Surface), uv.Y * Uv.ScaleV(patch.Surface));
+        if (patch.Carried.Any(c => FlatFace.Within(c.Box, flat) && c.Flat.Winding(flat) != 0))
+            uv = Arrangement.Inside(patch.Surface, patch.Expanded().UvLoops);
         var p = patch.Surface.At(uv.X, uv.Y);
         return other.Classify(p, patch.Surface.Normal(uv.X, uv.Y) * (patch.SameSense ? 1 : -1));
     }
 
-    static Patch PatchOf(Body body, FaceId f, int operand)
+    internal static Patch PatchOf(Body body, FaceId f, int operand)
     {
         var face = body[f];
         var loops = face.Loops.Select(l => (IReadOnlyList<Use>)[.. body.CoedgesOf(l).Select(c =>
@@ -329,21 +341,32 @@ public static class Booleans
             return [.. bounds.Zip(bounds.Skip(1))];
         }
 
-        /// <summary>Every face cut into the faces its cuts bound, with the face each comes from.</summary>
-        public IEnumerable<(Patch Patch, int Face)> Patches()
+        /// <summary>A face neither cut nor split comes through whole.</summary>
+        public bool Whole(int f) => cuts[f].Count == 0 && Solid.Faces[f].Edges.All(e => splits[e.Index].Count == 0);
+
+        /// <summary>
+        /// Every face cut into the faces its cuts bound, with the face each comes from, but for those in
+        /// <paramref name="skip"/> (kept as they are). Of the first operand's flat faces, a hole whose every edge runs
+        /// along a face kept as it is stays out of the arrangement and is carried whole into the piece round it
+        /// (<see cref="Carried"/>).
+        /// </summary>
+        public IEnumerable<(Patch Patch, int Face)> Patches(IReadOnlySet<int> skip)
         {
             for (var f = 0; f < Body.Faces.Length; f++)
             {
+                if (skip.Contains(f)) continue;
                 var face = Body.Faces[f];
                 var flat = Solid.Faces[f];
-                // A face neither cut nor split comes through whole.
-                if (cuts[f].Count == 0 && flat.Edges.All(e => splits[e.Index].Count == 0))
+                if (Whole(f))
                 {
                     yield return (PatchOf(Body, new FaceId(f), index) with { Unchanged = true }, f);
                     continue;
                 }
+                var carry = index == 0 && face.Surface is Plane
+                    ? face.Loops.Skip(1).Where(l => Body.CoedgesOf(l).All(c => Body.UsesOf(Body[c].Edge).All(u => Body.FaceOf(u).Index == f || skip.Contains(Body.FaceOf(u).Index)))).ToHashSet()
+                    : [];
                 var uses = new List<Use>();
-                foreach (var loop in face.Loops)
+                foreach (var loop in face.Loops.Where(l => !carry.Contains(l)))
                 foreach (var c in Body.CoedgesOf(loop))
                 {
                     var coedge = Body[c];
@@ -371,9 +394,29 @@ public static class Booleans
                 {
                     throw new BooleanFailure($"{failure.Message} (face {f} of the {(index == 0 ? "first" : "second")} solid, a {face.Surface.GetType().Name.ToLowerInvariant()}, {cuts[f].Count} cuts)");
                 }
-                foreach (var loops in faces)
-                    yield return (new Patch(face.Surface, face.SameSense, [.. loops.Select(l => Arrangement.Sensed(l, face.SameSense))],
-                        new HashSet<Origin> { new(index, new FaceId(f)) }), f);
+                var made = faces.Select(loops => new Patch(face.Surface, face.SameSense, [.. loops.Select(l => Arrangement.Sensed(l, face.SameSense))],
+                    new HashSet<Origin> { new(index, new FaceId(f)) })).ToList();
+                // Each carried hole into the piece round its first corner (in flat (u, v), where the face's loops are).
+                var flats = faces.Select(loops => loops.Select(l => new ProfileLoop([.. l.Select(u => Uv.Flat(face.Surface, u.Pcurve, u.From, u.To))])).ToList()).ToList();
+                var into = made.Select(_ => new List<Carried>()).ToList();
+                // Pieces by the size of their outer loop's box: a hole in none of the smaller ones lies in the largest.
+                static double Size(ProfileLoop l) => l.Segments.SelectMany(s => new[] { s.Start, s.End }).Aggregate((Lo: (X: double.MaxValue, Y: double.MaxValue), Hi: (X: double.MinValue, Y: double.MinValue)),
+                    (b, p) => ((Math.Min(b.Lo.X, p.X), Math.Min(b.Lo.Y, p.Y)), (Math.Max(b.Hi.X, p.X), Math.Max(b.Hi.Y, p.Y))), b => (b.Hi.X - b.Lo.X) * (b.Hi.Y - b.Lo.Y));
+                var order = Enumerable.Range(0, flats.Count).OrderBy(k => Size(flats[k][0])).ToList();
+                foreach (var loop in carry)
+                {
+                    var k = face.Loops.IndexOf(loop);
+                    var corner = flat.FlatOf(Body[Body.StartOf(Body[loop].First)].Point);
+                    var piece = order.Take(order.Count - 1).FirstOrDefault(p => flats[p].Sum(l => l.Winding(corner)) != 0, order[^1]);
+                    var body = Body;
+                    into[piece].Add(new Carried(loop, flat.Loops[k], flat.BoxOfLoop(k), () => [.. body.CoedgesOf(loop).Select(c =>
+                    {
+                        var (from, to) = body.ParametersOf(c);
+                        return new Use(body[body[c].Edge].Curve, from, to, body[c].Pcurve);
+                    })]));
+                }
+                for (var k = 0; k < made.Count; k++)
+                    yield return (into[k].Count == 0 ? made[k] : made[k] with { Carried = into[k] }, f);
             }
         }
 

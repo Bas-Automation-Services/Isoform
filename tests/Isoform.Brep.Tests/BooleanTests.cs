@@ -230,4 +230,22 @@ public class BooleanTests(ITestOutputHelper output)
         MassProperties.Volume(left!.Single().Body).Should().BeApproximately(27 - Math.PI * 4 / 3, 1e-12);
         left.Single().Body.Faces.Should().ContainSingle(f => f.Surface is Sphere);
     }
+
+    [Fact]
+    public void Holes_drilled_one_by_one_are_carried_and_one_drilled_round_another_takes_it()
+    {
+        // Each boolean edits the plate: the walls copied, the earlier holes carried whole into the top and bottom.
+        var body = Plate;
+        for (var i = 0; i < 5; i++)
+        for (var j = 0; j < 3; j++)
+            body = One(Booleans.Subtract(body, Prism(Circle(10 + 20 * i, 10 + 20 * j, 2), -1, 11))).Body;
+        MassProperties.Volume(body).Should().BeApproximately(60_000 - 15 * Math.PI * 4 * 10, 1e-9);
+        BodyCheck.Problems(body).Should().BeEmpty();
+
+        // A hole of radius 8 round the one at (30, 30): that one's loop lies in the disc it takes out.
+        var wider = One(Booleans.Subtract(body, Prism(Circle(30, 30, 8), -1, 11))).Body;
+        MassProperties.Volume(wider).Should().BeApproximately(60_000 - 14 * Math.PI * 4 * 10 - Math.PI * 64 * 10, 1e-9);
+        BodyCheck.Problems(wider).Should().BeEmpty();
+        wider.Faces.Count(f => f.Surface is Cylinder).Should().Be(15);
+    }
 }

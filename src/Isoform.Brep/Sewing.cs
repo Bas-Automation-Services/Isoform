@@ -260,19 +260,222 @@ internal static class Sewing
         return [.. solids.Select(s => Checked(Build([shells[s], .. voidsOf[s].Select(v => shells[v])])))];
     }
 
-    static Shaped Checked((Shaped Shaped, HashSet<int> Unchanged) built) => BodyCheck.Problems(built.Shaped.Body, built.Unchanged) is [var first, ..]
+    /// <summary>
+    /// A boolean's result as an edit of its first operand <paramref name="a"/>: the faces in <paramref name="whole"/>
+    /// come through untouched and are copied as they are, with their edges, vertices and p-curves, but for those next
+    /// to the rest on the same surface (which merge with it). The rest (the other kept pieces) is sewn as
+    /// <see cref="Sew"/> sews, onto the copied faces' own edges where it meets them, its edges joined through a corner
+    /// only where the copied faces leave none there either. Null where that does not fit (a use nothing pairs, a vertex
+    /// claimed twice, more than one shell, a copied corner left with two edges on one curve): the caller then sews
+    /// everything.
+    /// </summary>
+    internal static Shaped? Edit(Solid solid, IReadOnlySet<int> whole, List<Patch> rest, double tolerance)
+    {
+        var a = solid.Body;
+        // Untouched faces next to a face that is not, on a surface of the rest: they merge with it, so are sewn again.
+        var ring = new HashSet<int>();
+        for (var e = 0; e < a.Edges.Length; e++)
+        {
+            var faces = a.UsesOf(new EdgeId(e)).Select(u => a.FaceOf(u).Index).Distinct().ToList();
+            if (faces.All(whole.Contains)) continue;
+            foreach (var f in faces.Where(whole.Contains))
+                if (rest.Any(p => Intersections.SameSurface(p.Surface, a.Faces[f].Surface))) ring.Add(f);
+        }
+        var copied = whole.Where(f => !ring.Contains(f)).Order().ToList();
+        if (copied.Count == 0) return null;
+        var isCopied = new HashSet<int>(copied);
+
+        // Where the region meets the copied faces: a's edges between a copied face and one sewn again, by curve and range,
+        // and how many copied coedges leave each of their ends (for joining).
+        var boundary = new Dictionary<(Curve3, double, double), int>(new BoundaryKey());
+        var ends = new HashSet<VertexId>();
+        for (var e = 0; e < a.Edges.Length; e++)
+        {
+            var faces = a.UsesOf(new EdgeId(e)).Select(u => a.FaceOf(u).Index).ToList();
+            if (!faces.Any(isCopied.Contains) || faces.All(isCopied.Contains)) continue;
+            boundary[(a.Edges[e].Curve, a.Edges[e].T0, a.Edges[e].T1)] = e;
+            ends.Add(a.Edges[e].Start);
+            ends.Add(a.Edges[e].End);
+        }
+        // Carried holes stay whole where every edge of theirs runs along a copied face and their patch merges with
+        // nothing; otherwise they are sewn with the rest.
+        bool Keeps(Carried c) => a.CoedgesOf(c.Loop).All(co => a.UsesOf(a[co].Edge).Any(u => isCopied.Contains(a.FaceOf(u).Index)));
+        var patches = rest.Concat(ring.Select(f => Booleans.PatchOf(a, new FaceId(f), 0) with { Unchanged = true })).ToList();
+        patches = [.. patches.Select(p => p.Carried.Count == 0 ? p
+            : p.Carried.All(Keeps) && !patches.Any(q => q != p && Mergeable(p, q)) ? p
+            : p.Expanded())];
+        var carried = patches.SelectMany(p => p.Carried).Select(c => c.Loop).ToHashSet();
+        var touched = new Welded();
+        foreach (var u in patches.SelectMany(p => p.Loops).SelectMany(l => l)) (_, _) = (touched[u.Start], touched[u.End]);
+        var leavingCopied = new List<Point3D>();
+        for (var c = 0; c < a.Coedges.Length; c++)
+        {
+            var co = new CoedgeId(c);
+            var from = a.StartOf(co);
+            if (ends.Contains(from) && (isCopied.Contains(a.FaceOf(co).Index) || carried.Contains(a[co].Loop)) && touched.Find(a[from].Point) is not null)
+                leavingCopied.Add(a[from].Point);
+        }
+        var region = JoinEdges(MergeSurfaces(patches), leavingCopied);
+
+        var uses = region.SelectMany((p, pi) => p.Loops.SelectMany((l, li) => l.Select((u, ui) => (Patch: pi, Loop: li, Index: ui, Use: u)))).ToList();
+        var welded = new Welded();
+        var start = uses.Select(u => welded[u.Use.Start]).ToArray();
+        var end = uses.Select(u => welded[u.Use.End]).ToArray();
+        var indexOf = Enumerable.Range(0, uses.Count).ToDictionary(i => (uses[i].Patch, uses[i].Loop, uses[i].Index));
+        // Each use's partner: another use, itself (a pole), or ~e for a's edge e on the boundary.
+        var partner = Enumerable.Repeat(int.MinValue, uses.Count).ToArray();
+        // The welded points that are a's vertices.
+        var vertexOfPoint = new Dictionary<int, VertexId>();
+        bool Claim(int point, VertexId v) => vertexOfPoint.TryGetValue(point, out var had) ? had == v : (vertexOfPoint[point] = v) == v;
+        for (var i = 0; i < uses.Count; i++)
+        {
+            var u = uses[i].Use;
+            if (u.Curve is Pole) partner[i] = i;
+            else if (boundary.TryGetValue((u.Curve, Math.Min(u.From, u.To), Math.Max(u.From, u.To)), out var e))
+            {
+                var edge = a.Edges[e];
+                var (s0, s1) = u.From < u.To ? (edge.Start, edge.End) : (edge.End, edge.Start);
+                if (!Claim(start[i], s0) || !Claim(end[i], s1)) return null;
+                partner[i] = ~e;
+            }
+        }
+        var byStart = Enumerable.Range(0, uses.Count).Where(i => partner[i] == int.MinValue).ToLookup(i => start[i]);
+        for (var i = 0; i < uses.Count; i++)
+        {
+            if (partner[i] != int.MinValue) continue;
+            foreach (var j in byStart[end[i]])
+            {
+                if (j == i || partner[j] != int.MinValue || end[j] != start[i] || !Opposite(uses[i].Use, uses[j].Use)) continue;
+                (partner[i], partner[j]) = (j, i);
+                break;
+            }
+            if (partner[i] == int.MinValue) return null;
+        }
+
+        // One shell, or the full sewing sorts solids from voids.
+        var parent = Enumerable.Range(0, region.Count + a.Faces.Length).ToArray();
+        int Find(int i) => parent[i] == i ? i : parent[i] = Find(parent[i]);
+        void Union(int x, int y) => parent[Find(x)] = Find(y);
+        for (var i = 0; i < uses.Count; i++)
+            if (partner[i] >= 0) Union(uses[i].Patch, uses[partner[i]].Patch);
+            else Union(uses[i].Patch, region.Count + a.UsesOf(new EdgeId(~partner[i])).Select(c => a.FaceOf(c).Index).First(isCopied.Contains));
+        for (var e = 0; e < a.Edges.Length; e++)
+        {
+            var faces = a.UsesOf(new EdgeId(e)).Select(c => a.FaceOf(c).Index).Where(isCopied.Contains).ToList();
+            for (var k = 1; k < faces.Count; k++) Union(region.Count + faces[0], region.Count + faces[k]);
+        }
+        for (var pi = 0; pi < region.Count; pi++)
+        foreach (var c in region[pi].Carried)
+            Union(pi, region.Count + a.UsesOf(a[a[c.Loop].First].Edge).Select(u => a.FaceOf(u).Index).First(isCopied.Contains));
+        var roots = Enumerable.Range(0, region.Count).Select(Find).Concat(copied.Select(f => Find(region.Count + f))).Distinct().Count();
+        if (roots != 1) return null;
+
+        var builder = new BodyBuilder(tolerance);
+        var shell = builder.AddShell();
+        var vertexOfA = new Dictionary<VertexId, VertexId>();
+        VertexId VA(VertexId v) => vertexOfA.TryGetValue(v, out var id) ? id : vertexOfA[v] = builder.AddVertex(a[v].Point);
+        var edgeOfA = new Dictionary<int, EdgeId>();
+        EdgeId EA(int e) => edgeOfA.TryGetValue(e, out var id) ? id : edgeOfA[e] = builder.AddEdge(a.Edges[e].Curve, a.Edges[e].T0, a.Edges[e].T1, VA(a.Edges[e].Start), VA(a.Edges[e].End));
+        var pointIds = new Dictionary<int, VertexId>();
+        VertexId V(int point) => vertexOfPoint.TryGetValue(point, out var v) ? VA(v) : pointIds.TryGetValue(point, out var id) ? id : pointIds[point] = builder.AddVertex(welded.Points[point]);
+
+        var origins = new List<IReadOnlyList<Origin>>();
+        var unchanged = new HashSet<int>();
+        foreach (var f in copied)
+        {
+            var face = builder.AddFace(shell, a.Faces[f].Surface, a.Faces[f].SameSense);
+            unchanged.Add(face.Index);
+            origins.Add([new Origin(0, new FaceId(f))]);
+            foreach (var loop in a.Faces[f].Loops)
+                builder.AddLoop(face, [.. a.CoedgesOf(loop).Select(c => new BodyBuilder.Use(EA(a[c].Edge.Index), a[c].Forward, a[c].Pcurve))]);
+        }
+        var edgeOf = new Dictionary<int, (EdgeId Edge, bool Forward, Curve2 Pcurve)>();
+        var knownLoops = new HashSet<int>();
+        var flatLoops = new Dictionary<int, Dictionary<int, (ProfileLoop, (Point2D, Point2D))>>();
+        for (var pi = 0; pi < region.Count; pi++)
+        {
+            var patch = region[pi];
+            var face = builder.AddFace(shell, patch.Surface, patch.SameSense);
+            // Carried holes after the patch's own loops, with a's edges (shared with copied faces) and p-curves.
+            var hints = new Dictionary<int, (ProfileLoop, (Point2D, Point2D))>();
+            for (var k = 0; k < patch.Carried.Count; k++)
+            {
+                var c = patch.Carried[k];
+                hints[patch.Loops.Count + k] = (c.Flat, c.Box);
+            }
+            if (hints.Count > 0) flatLoops[face.Index] = hints;
+            if (patch.Unchanged) unchanged.Add(face.Index);
+            origins.Add([.. patch.Origins.OrderBy(o => o.Operand).ThenBy(o => o.Face.Index)]);
+            for (var li = 0; li < patch.Loops.Count; li++)
+            {
+                var loopUses = new List<BodyBuilder.Use>();
+                for (var ui = 0; ui < patch.Loops[li].Count; ui++)
+                {
+                    var i = indexOf[(pi, li, ui)];
+                    var u = uses[i].Use;
+                    if (partner[i] < 0 && partner[i] != int.MinValue)
+                    {
+                        loopUses.Add(new BodyBuilder.Use(EA(~partner[i]), u.From < u.To, u.Pcurve));
+                        continue;
+                    }
+                    if (!edgeOf.TryGetValue(i, out var e))
+                    {
+                        var w = uses[partner[i]].Use;
+                        var forward = u.From < u.To;
+                        var (t0, t1) = forward ? (u.From, u.To) : (u.To, u.From);
+                        var (s0, s1) = forward ? (start[i], end[i]) : (end[i], start[i]);
+                        var d = u.Curve.Period is not null ? 2 * Math.PI * Math.Floor(t0 / (2 * Math.PI) + 1e-12) : 0;
+                        var edge = builder.AddEdge(u.Curve, t0 - d, t1 - d, V(s0), V(s1));
+                        var alpha = (w.From - w.To) / (u.To - u.From);
+                        var beta = w.From - alpha * u.To;
+                        edgeOf[i] = e = (edge, forward, Uv.Reparametrised(u.Pcurve, 1, d));
+                        if (partner[i] != i) edgeOf[partner[i]] = (edge, !forward, Uv.Reparametrised(w.Pcurve, Math.Round(alpha), beta + alpha * d));
+                    }
+                    loopUses.Add(new BodyBuilder.Use(e.Edge, e.Forward, e.Pcurve));
+                }
+                builder.AddLoop(face, loopUses);
+            }
+            foreach (var c in patch.Carried)
+                knownLoops.Add(builder.AddLoop(face, [.. a.CoedgesOf(c.Loop).Select(co => new BodyBuilder.Use(EA(a[co].Edge.Index), a[co].Forward, a[co].Pcurve))]).Index);
+        }
+        var body = builder.Build();
+        // A corner where the region meets the copied faces, left with two edges on one curve: the full sewing joins them.
+        var corners = ends.Where(vertexOfA.ContainsKey).Select(v => vertexOfA[v]).ToHashSet();
+        var at = corners.ToDictionary(v => v, _ => new List<int>());
+        for (var e = 0; e < body.Edges.Length; e++)
+            foreach (var v in new[] { body.Edges[e].Start, body.Edges[e].End }.Distinct())
+                if (at.TryGetValue(v, out var list)) list.Add(e);
+        if (at.Values.Any(l => l.Count == 2 && SameCarrier(body.Edges[l[0]].Curve, body.Edges[l[1]].Curve))) return null;
+        // The copied faces come first; the next boolean on the body takes their flat faces as they were.
+        var flat = new FlatFace?[body.Faces.Length];
+        for (var k = 0; k < copied.Count; k++) flat[k] = solid.Faces[copied[k]].Renumbered(e => edgeOfA[e.Index]);
+        Solid.Carry(body, flat, flatLoops);
+        return Checked((new Shaped(body, origins), unchanged), knownLoops);
+    }
+
+    // A curve by reference and a range to the snap: a's edge as a use of it runs.
+    sealed class BoundaryKey : IEqualityComparer<(Curve3 Curve, double T0, double T1)>
+    {
+        public bool Equals((Curve3 Curve, double T0, double T1) x, (Curve3 Curve, double T0, double T1) y) =>
+            ReferenceEquals(x.Curve, y.Curve) && Math.Abs(x.T0 - y.T0) <= 1e-9 && Math.Abs(x.T1 - y.T1) <= 1e-9;
+
+        public int GetHashCode((Curve3 Curve, double T0, double T1) x) => System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(x.Curve);
+    }
+
+    static Shaped Checked((Shaped Shaped, HashSet<int> Unchanged) built, IReadOnlySet<int>? loops = null) => BodyCheck.Problems(built.Shaped.Body, built.Unchanged, loops) is [var first, ..]
         ? throw new BooleanFailure($"the result is not a valid solid: {first.Kind} at {first.Where}: {first.Message}")
         : built.Shaped;
 
     // Consecutive uses on one curve through a vertex where only their two edges meet, joined into one use.
-    static List<Patch> JoinEdges(List<Patch> patches)
+    // `more`: the starts of uses outside the patches that leave their corners too (faces an edit copies).
+    static List<Patch> JoinEdges(List<Patch> patches, IEnumerable<Point3D>? more = null)
     {
         var points = new Welded();
         int Vertex(Point3D p) => points[p];
         var leaving = new Dictionary<int, int>();
-        foreach (var u in patches.SelectMany(p => p.Loops).SelectMany(l => l))
+        foreach (var start in patches.SelectMany(p => p.Loops).SelectMany(l => l).Select(u => u.Start).Concat(more ?? []))
         {
-            var v = Vertex(u.Start);
+            var v = Vertex(start);
             leaving[v] = leaving.GetValueOrDefault(v) + 1;
         }
 
@@ -335,6 +538,20 @@ internal sealed class Welded
     readonly Dictionary<(long, long, long), List<int>> cells = [];
 
     public List<Point3D> Points { get; } = [];
+
+    /// <summary>The point within the snap of p, if there is one (none is added).</summary>
+    public int? Find(Point3D p)
+    {
+        static (long, long) Span(double x) => ((long)Math.Floor((x - Intersections.Snap) / Cell), (long)Math.Floor((x + Intersections.Snap) / Cell));
+        var ((x0, x1), (y0, y1), (z0, z1)) = (Span(p.X), Span(p.Y), Span(p.Z));
+        for (var i = x0; i <= x1; i++)
+        for (var j = y0; j <= y1; j++)
+        for (var k = z0; k <= z1; k++)
+            if (cells.TryGetValue((i, j, k), out var list))
+                foreach (var n in list)
+                    if ((Points[n] - p).Length <= Intersections.Snap) return n;
+        return null;
+    }
 
     public int this[Point3D p]
     {

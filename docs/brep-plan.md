@@ -554,7 +554,7 @@ generator's u. A half domed post and a half cone match the F-rep core's names an
 edge on between the same two faces where the file has two, so for a body with a pole OCCT's counts are taken
 against the file's own. Tests: `tests/Isoform.Brep.Tests` 358, `BrepKernelStepTests` 90.
 
-## Experiment 17: local booleans, step 1 (2026-11-01)
+## Experiment 17: local booleans (2026-11-01)
 
 `Isoform.Bench brep drill n` drills n holes one feature at a time, each a boolean against the whole plate so far:
 quadratic, 400 holes 10.4 s processor (192 joins 2.97 s wall). Profiled, 55% of it was `BodyCheck` on the whole
@@ -570,10 +570,25 @@ body after every boolean: every shell's volume and every loop's (u, v) area agai
 Still quadratic: every boolean welds every use's ends, sews every face, builds every face's flat (u, v) outline
 (`FlatFace`) and merges surfaces over the whole body.
 
-**Step 2 (designed, not done):** edit the body in place. Untouched faces keep their old vertices and edges (paired by
-their old edge, no welding), only the uses round the cut faces are welded (against the vertices of the faces next
-to them), and a body keeps its `Solid` with each untouched face's `FlatFace` carried over with its edges renumbered;
-surfaces are merged only among new and neighbouring faces.
+**Step 2 (done):** a boolean's result is an edit of its first operand where it can be (`Sewing.Edit`), else sewn
+whole as before.
+
+- *Copied faces:* the first operand's faces that come through whole and miss the other solid's box are not made
+  patches at all; they are copied with their edges, vertices and p-curves, but for those on a surface of a new
+  piece (which merge with it). The rest is sewn as before, onto the copied faces' own edges where it meets them
+  (matched by curve and range, not by welding), its edges joined through a corner only where no copied edge leaves
+  it either. A use nothing pairs, a vertex claimed twice, more than one shell or a copied corner left with two edges
+  on one curve sends it back to the full sewing.
+- *Carried holes:* a flat face's hole whose every edge runs along a face kept as it is stays out of the arrangement
+  and is carried whole into the piece round it (`Carried`), copied with its edges; a piece's point for classifying
+  it is checked against them. (A loop fillet's tool can take a hole's edge without splitting it: hence along faces
+  kept as they are, not merely unsplit.)
+- *Kept between booleans:* a copied face's `FlatFace` (renumbered) and a carried hole's flat loop and box; a flat
+  face's box from its outer loop; `BodyCheck` passes over edges and loops all of whose uses are known.
+
+400 holes one by one 7.2 → 5.0 s processor, 800 holes 19 → 9.4 s: twice the holes now cost 1.9 times, not 2.6.
+The joins do not change: each block's sides merge with the base's into one comb-shaped face that grows with every
+block, which only an edit inside one loop would make local.
 
 ## Experiment 18: mixed models (2026-11-01)
 
@@ -647,7 +662,7 @@ What still stops the playground's examples, and what is left from before:
    and its exact export does not follow the mitre either).
 3. **Arcs meeting lines at a corner** in loop fillets (a quartic, unless the radii make it a circle or ellipse).
 4. **Inventor as a second STEP reader**, parked.
-5. **Local booleans, step 2:** edit the body in place (see experiment 17).
+5. **Local booleans, further:** a face that grows with every feature (one loop edited, not rebuilt).
 6. **Mixed models, further** (see experiment 18; first, earlier text): today one model goes through one engine, and the B-rep modeler refuses the
    whole model at the first feature it does not take. Both share the document, `IModeler`, the face names and
    topology (identical on every test document) and the exact output (`Isoform.Step.Brep`), which makes a hand-off
