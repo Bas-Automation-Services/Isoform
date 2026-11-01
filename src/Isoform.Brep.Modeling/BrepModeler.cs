@@ -30,7 +30,26 @@ public sealed class BrepModeler(ModelingSettings settings) : IModeler
 
     public BrepResult Regenerate(PartDocument document)
     {
-        if (DocumentRules.FirstProblem(document, settings.Tolerance) is { } invalid) return Failed(invalid);
+        var (_, solids, _, problem) = Run(document, head: false);
+        if (problem is not null) return Failed(problem);
+        var bodies = solids.Select(s => s.Solid).ToList();
+        return new BrepResult([], TopologyOf(bodies), bodies);
+    }
+
+    /// <summary>
+    /// How far the kernel gets: the features before the first it cannot build, the solids they make (each with the
+    /// name of its body) and the body of each of those features.
+    /// </summary>
+    public (int Count, IReadOnlyList<(NamedBody Solid, string Body)> Solids, IReadOnlyDictionary<string, string> BodyOf) Head(PartDocument document)
+    {
+        var (count, solids, bodyOf, _) = Run(document, head: true);
+        return (count, solids, bodyOf);
+    }
+
+    // The features in turn; at the first that fails, the problem, and for a head the solids as they were before it.
+    (int Count, List<(NamedBody Solid, string Body)> Solids, Dictionary<string, string> BodyOf, Diagnostic? Problem) Run(PartDocument document, bool head)
+    {
+        if (DocumentRules.FirstProblem(document, settings.Tolerance) is { } invalid) return (0, [], [], invalid);
         document = Parametric.Resolve(document);
 
         var solids = new List<(NamedBody Solid, string Body)>();
@@ -50,15 +69,11 @@ public sealed class BrepModeler(ModelingSettings settings) : IModeler
         Isoform.Document.Shell? rounding = null;
         for (var i = 0; i < features.Count; i++)
         {
-            if (features[i] is Offset offset)
-            {
-                if (Grown(offset, i) is { } problemGrowing) return Failed(problemGrowing);
-                continue;
-            }
-            if (Build(i) is { } problem) return Failed(problem);
+            var kept = head ? (Solids: solids.ToList(), BodyOf: new Dictionary<string, string>(bodyOf)) : default;
+            if ((features[i] is Offset offset ? Grown(offset, i) : Build(i)) is { } problem)
+                return head ? (i, kept.Solids, kept.BodyOf, problem) : (i, solids, bodyOf, problem);
         }
-        var bodies = solids.Select(s => s.Solid).ToList();
-        return new BrepResult([], TopologyOf(bodies), bodies);
+        return (features.Count, solids, bodyOf, null);
 
         // Feature i on the solids so far.
         Diagnostic? Build(int i)

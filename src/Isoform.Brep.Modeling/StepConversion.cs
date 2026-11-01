@@ -152,7 +152,7 @@ public static class StepConversion
         };
     }
 
-    static IsoSurface Surface(Surface s, int id, string source) => s switch
+    internal static IsoSurface Surface(Surface s, int id, string source) => s switch
     {
         Plane p => new IsoSurface(id, source, SurfaceKind.Plane, p.Frame.Origin, p.Frame.ZAxis),
         Cylinder c => new IsoSurface(id, source, SurfaceKind.Cylinder, c.Frame.Origin, c.Frame.ZAxis, c.Radius),

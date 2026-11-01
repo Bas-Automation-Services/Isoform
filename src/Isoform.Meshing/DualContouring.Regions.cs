@@ -700,6 +700,7 @@ public static partial class DualContouring
                     Add(p.Frame);
                     Add(p.Revolved);
                     Add(p.Grown);
+                    Add(p.Mitred);
                     break;
                 case PlacedField p:
                     Add(10);
@@ -723,6 +724,12 @@ public static partial class DualContouring
                     Add(l.Active.Count);
                     foreach (var i in l.Active) Add(i);
                     Add(l.Surface);
+                    break;
+                case FacesField faces:
+                    // Computed elsewhere: unique per object, as below, but with its faces, which it owns.
+                    Add(14);
+                    Add((long)Unknown.GetValue(field, _ => Interlocked.Increment(ref _unknown)));
+                    foreach (var l in faces.Leaves) Add(l);
                     break;
                 default:
                     // A kind this hash does not know: unique per object, so it never matches another compile.

@@ -77,14 +77,23 @@ public sealed record ProfileLoop(IReadOnlyList<Segment> Segments)
                 angle += curve.Subtended(p);
                 continue;
             }
-            // An arc in two halves: a point on its whole chord (often, where the chord runs through other vertices)
-            // sees that chord at ±π either way, and lies on neither side of it.
-            foreach (var piece in s is ArcSegment { IsFullCircle: false } whole
-                         ? [whole with { Sweep = whole.Sweep / 2 }, whole with { StartAngle = whole.StartAngle + whole.Sweep / 2, Sweep = whole.Sweep / 2 }]
-                         : new[] { s })
+            // An arc in halves: a point on a piece's chord (often, where the chord runs through other vertices) sees
+            // that chord at ±π either way and lies on neither side of it, so that piece is halved again. The side of
+            // each chord is the exact predicate's, for the angle and the circular segment alike.
+            var pieces = new Stack<Segment>(s is ArcSegment { IsFullCircle: false } whole
+                ? [whole with { StartAngle = whole.StartAngle + whole.Sweep / 2, Sweep = whole.Sweep / 2 }, whole with { Sweep = whole.Sweep / 2 }]
+                : new[] { s });
+            while (pieces.TryPop(out var piece))
             {
                 var (a, b) = (piece.Start - p, piece.End - p);
-                angle += Math.Atan2(a.X * b.Y - a.Y * b.X, a.X * b.X + a.Y * b.Y);
+                var side = Math.Sign(Predicates.Orient2D(piece.Start, piece.End, p));
+                if (side == 0 && a.Dot(b) < 0 && piece is ArcSegment split)
+                {
+                    pieces.Push(split with { StartAngle = split.StartAngle + split.Sweep / 2, Sweep = split.Sweep / 2 });
+                    pieces.Push(split with { Sweep = split.Sweep / 2 });
+                    continue;
+                }
+                angle += side * Math.Atan2(Math.Abs(a.X * b.Y - a.Y * b.X), a.X * b.X + a.Y * b.Y);
                 if (piece is ArcSegment arc && InCircularSegment(arc, p)) turns += Math.Sign(arc.Sweep);
             }
         }

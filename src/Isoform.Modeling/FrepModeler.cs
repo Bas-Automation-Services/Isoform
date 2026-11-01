@@ -21,6 +21,9 @@ public sealed class FrepModeler(ModelingSettings settings, RegionCache? cache = 
 
     public PartCache? Parts { get; } = parts;
 
+    /// <summary>The document's first features built elsewhere (see <see cref="PartHead"/>); not for use with a cache.</summary>
+    public PartHead? Head { get; init; }
+
     ModelResult IModeler.Regenerate(PartDocument document) => Regenerate(document);
 
     sealed record Prepared(string Hash, CompiledPart Part, MeshPlan[] Plans);
@@ -33,7 +36,7 @@ public sealed class FrepModeler(ModelingSettings settings, RegionCache? cache = 
     {
         var hash = Cache is null ? "" : CanonicalFormat.Hash(document);
         if (_last is { } last && Cache is not null && last.Hash == hash) return last;
-        var part = new Compiler(Settings).Compile(document);
+        var part = new Compiler(Settings).Compile(document, Head);
         var plans = part.Field is null ? [] : part.Bodies.Select(b => DualContouring.Plan(b.Field, b.Min, b.Max, Settings.CellSize, Settings.ChordTolerance, Settings.SnapGrid)).ToArray();
         var prepared = new Prepared(hash, part, plans);
         if (Cache is not null) _last = prepared;

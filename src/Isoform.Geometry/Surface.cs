@@ -21,6 +21,9 @@ public enum SurfaceKind { Plane, Cylinder, Fillet, Sphere, Cone, Torus, Blend, L
 /// </summary>
 public sealed record Surface(int Id, string Source, SurfaceKind Kind, Point3D Origin, Vector3D Axis, double Radius = 0, double Minor = 0, double Angle = 0)
 {
+    /// <summary>More names of the face, for one made of several (another kernel's faces merged on one surface).</summary>
+    public IReadOnlyList<string> Also { get; init; } = [];
+
     /// <summary>A closed-form surface with a distance of its own; fillet, blend and lattice faces have theirs from their fields.</summary>
     public bool Analytic => Kind is not (SurfaceKind.Fillet or SurfaceKind.Blend or SurfaceKind.Lattice);
 

@@ -60,6 +60,15 @@ public abstract class Field
     static double Sq(double x) => x * x;
 }
 
+/// <summary>
+/// A solid known by its faces alone, its field computed elsewhere (another kernel's body): <see cref="Leaves"/> are its
+/// faces with their material sides, for the features that move faces (a shell's cavity).
+/// </summary>
+public abstract class FacesField : Field
+{
+    public abstract IReadOnlyList<LeafField> Leaves { get; }
+}
+
 public sealed class LeafField(Surface surface, bool complement = false) : Field
 {
     public Surface Surface { get; } = surface;

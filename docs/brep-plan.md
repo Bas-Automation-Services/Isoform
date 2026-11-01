@@ -575,6 +575,39 @@ their old edge, no welding), only the uses round the cut faces are welded (again
 to them), and a body keeps its `Solid` with each untouched face's `FlatFace` carried over with its edges renumbered;
 surfaces are merged only among new and neighbouring faces.
 
+## Experiment 18: mixed models (2026-11-01)
+
+A document runs on both kernels: the managed one builds it as far as it can, the F-rep core carries on from the
+first feature it cannot (a lattice, a blended extrude, a shell after them), and the result is an `FrepResult`, as
+the rest of Isoform takes it.
+
+- *`BrepModeler.Head`:* the features before the first the kernel refuses, the solids they made (each with its body's
+  name) and the body of each feature.
+- *`BodyDistance` (kernel):* the exact signed distance to a body: each face's nearest point is its surface's foot
+  where that lies on the face, else its edges' nearest point; faces boxed farther than the best so far skipped; the
+  sign the nearest face's side, or near an edge or corner the solid's own inside test; exactly 0 on the boundary.
+- *`BrepField` (`FacesField`):* the solids of one body as a field, owned by their faces, each registered as an F-rep
+  surface under the face's name (a merged face's other names as `Surface.Also`, which the topology lists). Its faces
+  are leaves a shell's cavity can move in.
+- *`PartHead`:* the compiler starts the head's bodies from their fields and skips the features they made (sketches
+  are still placed: on a face, the kernel's faces are registered there).
+- *`MixedModeler`:* `Head`, then `FrepModeler { Head }`.
+- *Fixed on the way:* the kernel's winding count took a point exactly on the chord of half an arc as on either side
+  of it (a mesh grid point lay on one at a slot's end round, and put a point of the slot's opening inside the top
+  face): the chord's side is now the exact predicate's, and such a piece is halved again. The mesher's region
+  fingerprint now holds `ProfileField.Mitred` (a sharp and a round shell could have shared cached regions) and a
+  `FacesField`'s faces.
+
+**Results:** all 13 of the playground's examples build through it; 11 have the same faces, names and neighbours as
+the F-rep core alone and the same mesh volume. The two others: the clamp's lip, a loop fillet round a circle of two
+named halves, is one face of both names in the kernel and two in the F-rep core; a lattice's skin is cut into
+patches whose names follow the lattice. `MixedTests`: a plate with a boss and a hole (the kernel's alone), a rounded
+outline with a slot, smooth blends and a shell, a strut lattice in a cube. Slower than the F-rep core alone (1–2 s
+against 0.1–0.3 s on the examples): the distance is found face by face at every sample.
+
+**Next:** speed (a body's field simplified, in a box near one face only, to that face's leaf, so the mesher sees
+ordinary leaves away from edges); faces the F-rep features leave alone exported exactly from the kernel's B-rep.
+
 ## Next: candidates (to decide)
 
 What still stops the playground's examples, and what is left from before:
@@ -584,7 +617,7 @@ What still stops the playground's examples, and what is left from before:
 3. **Arcs meeting lines at a corner** in loop fillets (a quartic, unless the radii make it a circle or ellipse).
 4. **Inventor as a second STEP reader**, parked.
 5. **Local booleans, step 2:** edit the body in place (see experiment 17).
-6. **Mixed models (B-rep, then F-rep):** today one model goes through one engine, and the B-rep modeler refuses the
+6. **Mixed models, further** (see experiment 18; first, earlier text): today one model goes through one engine, and the B-rep modeler refuses the
    whole model at the first feature it does not take. Both share the document, `IModeler`, the face names and
    topology (identical on every test document) and the exact output (`Isoform.Step.Brep`), which makes a hand-off
    possible: run the history in the kernel while it can, and at the first F-rep-only feature (lattice, smooth blend)

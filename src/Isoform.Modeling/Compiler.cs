@@ -24,12 +24,24 @@ public sealed class CompiledPart(Field? field, IReadOnlyList<Surface> surfaces, 
     public IReadOnlyList<Diagnostic> Diagnostics { get; } = diagnostics;
 }
 
+/// <summary>
+/// The first <see cref="Count"/> features of a document built by another kernel (the managed B-rep one): each body's
+/// solid as a field, the compiler carrying on from there.
+/// </summary>
+public sealed record PartHead(int Count, IReadOnlyList<HeadBody> Bodies);
+
+/// <summary>
+/// A body the head built: <see cref="Make"/> gives its field and box, registering its faces through the function it is
+/// given (so they keep their names); <see cref="Features"/> made it.
+/// </summary>
+public sealed record HeadBody(string Name, IReadOnlyList<string> Features, Func<Func<Surface, Surface>, (Field Field, Point3D Min, Point3D Max)> Make);
+
 /// <summary>Feature graph → CSG field. Every surface is named after its feature, e.g. <c>plate/z+</c>.</summary>
 public sealed class Compiler(ModelingSettings settings)
 {
     readonly double _tol = settings.Tolerance;
 
-    public CompiledPart Compile(PartDocument doc)
+    public CompiledPart Compile(PartDocument doc, PartHead? head = null)
     {
         var surfaces = new List<Surface>();
         var diagnostics = new List<Diagnostic>();
@@ -254,14 +266,28 @@ public sealed class Compiler(ModelingSettings settings)
             }
         }
 
-        foreach (var feature in doc.Features)
+        // The head: the first features, built elsewhere, each body's solid a field with its faces registered here.
+        if (head is not null)
         {
+            foreach (var b in head.Bodies)
+            {
+                Start(b.Name);
+                (tree, min, max) = b.Make(Register);
+                foreach (var id in b.Features) bodyOfFeature[id] = b.Name;
+            }
+            if (doc.Features.Take(head.Count).LastOrDefault(f => bodyOfFeature.ContainsKey(f.Id)) is { } last) Switch(bodyOfFeature[last.Id]);
+        }
+
+        for (var index = 0; index < doc.Features.Count; index++)
+        {
+            var feature = doc.Features[index];
             // A sketch makes no solid and belongs to no body.
             if (feature is Sketch sketch)
             {
                 Prepare(sketch);
                 continue;
             }
+            if (index < (head?.Count ?? 0)) continue;
 
             // Pick the body: a new one, the one the feature names, or for an edge the body that has its faces.
             if (DocumentRules.StartsBody(feature)) Start(feature.Body ?? feature.Id);
@@ -457,6 +483,7 @@ public sealed class Compiler(ModelingSettings settings)
             var inner = s.Offset(0, $"{sh.Id}/inner:{s.Source}", complement ? t : -t);
             // A flat inner face looks back at its outer face: it keeps the outer face's sense only if complemented.
             if (s.Kind == SurfaceKind.Plane && !complement) inner = inner with { Axis = -inner.Axis };
+            inner = inner with { Also = [.. s.Also.Select(a => $"{sh.Id}/inner:{a}")] };
             innerOf[s.Id] = register(inner).Id;
         }
         // Walk with the number of complements above each face, so a face of a cut, or a fillet that adds material,
@@ -498,6 +525,9 @@ public sealed class Compiler(ModelingSettings settings)
                 case ProfileField p:
                     profiles.Add((p, negated));
                     foreach (var l in p.Leaves) Walk(l, negated);
+                    break;
+                case FacesField b:
+                    foreach (var l in b.Leaves) Walk(l, negated);
                     break;
             }
         }

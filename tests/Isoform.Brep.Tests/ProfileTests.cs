@@ -77,6 +77,21 @@ public class ProfileTests
     }
 
     [Fact]
+    public void A_point_on_the_chord_of_half_an_arc_is_counted_once()
+    {
+        // A slot's end round (55, 25), radius 6.5: the chord of its first half runs from (55, 18.5) to (61.5, 25), and a
+        // mesher's grid point lay exactly on it (x − y = 36.5).
+        var slot = new ProfileLoop(
+        [
+            new LineSegment(P(25, 18.5), P(55, 18.5)), new ArcSegment(P(55, 25), 6.5, -Math.PI / 2, Math.PI),
+            new LineSegment(P(55, 31.5), P(25, 31.5)), new ArcSegment(P(25, 25), 6.5, Math.PI / 2, Math.PI),
+        ]);
+        slot.Winding(P(60.340844056908104, 23.840844056908104)).Should().Be(1);
+        slot.Winding(P(58.25, 21.75)).Should().Be(1);
+        slot.Winding(P(62, 25.5)).Should().Be(0);
+    }
+
+    [Fact]
     public void Grown_corners_turn_round_and_shrunk_ones_stay_sharp()
     {
         bool Never(Point2D _) => false;

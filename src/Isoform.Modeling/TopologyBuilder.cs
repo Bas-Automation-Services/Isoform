@@ -74,7 +74,7 @@ public static class TopologyBuilder
             faceBody[faceOfQuad[q]] = bodyOfQuad.Index[q];
         }
         var topoFaces = Enumerable.Range(0, faceCount).Select(f => new TopoFace(f,
-            faceOwners[f].Select(o => surfaces[o].Source).Distinct().Order(StringComparer.Ordinal).ToList(), faceBody[f])).ToList();
+            faceOwners[f].SelectMany(o => surfaces[o].Also.Prepend(surfaces[o].Source)).Distinct().Order(StringComparer.Ordinal).ToList(), faceBody[f])).ToList();
 
         // Edges: connected chains of mesh edges separating two faces. Each mesh edge is visited once, from the
         // lowest-numbered quad around it.

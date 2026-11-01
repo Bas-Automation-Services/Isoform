@@ -32,6 +32,31 @@ static class BrepBench
         if (which is "all" or "examples")
             foreach (var (name, doc) in Examples.All)
                 Time(name.Length > 28 ? name[..28] : name, doc);
+        if (which is "mixed")
+            foreach (var (name, doc) in Examples.All)
+                Mixed(name.Length > 28 ? name[..28] : name, doc);
+    }
+
+    // The mixed modeler against the F-rep core alone: time, faces, whether the topology and names agree, mesh volumes.
+    static void Mixed(string name, PartDocument document)
+    {
+        var settings = new ModelingSettings();
+        var watch = Stopwatch.StartNew();
+        var mixed = new MixedModeler(settings).Regenerate(document);
+        var tm = watch.Elapsed.TotalSeconds;
+        watch.Restart();
+        var frep = new FrepModeler(settings).Regenerate(document);
+        var tf = watch.Elapsed.TotalSeconds;
+        static List<string> Describe(Topology? t) => t is null ? [] : [.. t.Faces.Select(f => $"{string.Join("+", f.Sources)} | {string.Join(",", t.Signature(f.Index))}").Order()];
+        static double Volume(Isoform.Meshing.Mesh? m) => m is null ? 0 : m.Triangles().Sum(t => m.Vertices[t.A].AsVector().Dot(m.Vertices[t.B].AsVector().Cross(m.Vertices[t.C].AsVector()))) / 6;
+        var (dm, df) = (Describe(mixed.Topology), Describe(frep.Topology));
+        var same = dm.SequenceEqual(df);
+        Console.WriteLine($"  {name,-28} mixed {tm,6:F2} s, F-rep {tf,6:F2} s; {dm.Count}/{df.Count} faces, topology {(same ? "same" : "DIFFERS")}; volume {Volume(mixed.Mesh):F3} / {Volume(frep.Mesh):F3}; {string.Join("; ", mixed.Diagnostics.Select(d => d.Message))}");
+        if (!same)
+        {
+            foreach (var l in dm.Except(df)) Console.WriteLine($"      mixed only: {l}");
+            foreach (var l in df.Except(dm)) Console.WriteLine($"      F-rep only: {l}");
+        }
     }
 
     static void Time(string name, PartDocument document)
