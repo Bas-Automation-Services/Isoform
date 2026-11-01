@@ -457,6 +457,32 @@ dome does (`StepExportTests` marks them so: STEP cannot say a degenerate edge). 
 Not yet: pointed cones (`ExactBrep` has no apex either, so nothing to compare with), spheres off a revolve's axis
 (ball corners).
 
+## Experiment 13: offsets (done, 2026-11-01)
+
+Chosen from the candidates (2), for the playground's "Mirror and offset".
+
+- *What an offset is:* the F-rep core moves the faces of its tree: max(a, b) − d = max(a − d, b − d), so each
+  feature's own faces move and the booleans between them stay. Flat edges of a block stay sharp; an extruded or
+  revolved profile grows in its plane, and where two of its edges part (a convex corner growing, a reflex one
+  shrinking) a round corner fills the gap, a cylinder (extrude) or torus (revolve) named `offset/corner:a+b`; a
+  cut's tool shrinks as the part grows; a fillet's radius grows with its faces.
+- *The kernel does the same by history:* an offset rebuilds every feature before it with its tool grown by the
+  offsets after it (a pattern's copies by those after the pattern): blocks bigger, profiles grown (`ProfileOffset`:
+  each segment moved right of travel by its own distance, neighbours met, round corners where they part; a
+  revolve's axis edges stay and its corners there stay sharp), caps moved, holes narrower and shallower, plane cuts
+  back, fillets rounder (tighter round a concave edge, sharp once gone). Sketch planes and the faces holes are
+  drilled into stay where they were first placed, as the F-rep core places them once.
+- *Names:* tools are named through the pattern's renaming as they are built (as the F-rep core's `Named`), so a
+  copy's corner is `grow/corner:mirror/1:rib/a+mirror/1:rib/b`.
+- *Refused:* an offset of a part with more than one body (the F-rep offsets only the current one), of a part turn
+  (its ends move off the axis), a sweep, a chamfer; a profile whose offset uses up a segment.
+
+**Results:** 5 more documents: the playground's mirrored ribs grown, a pocket and bore grown (the tools shrink), a
+domed post grown (a torus corner at its base, the dome still a sphere), a filleted plate grown, an L shrunk (its
+reflex corner turns round). All 74 documents match the F-rep core and `ExactBrep` and have exact volumes; OCCT reads
+them all back valid. Tests: `tests/Isoform.Brep.Tests` 311, `BrepKernelStepTests` 74. Nine of the playground's 13
+examples build; the other four are a blended extrude with a shell and three lattices.
+
 ## Next: candidates (to decide)
 
 What still stops the playground's examples, and what is left from before:
@@ -464,17 +490,17 @@ What still stops the playground's examples, and what is left from before:
 1. **Ball corners:** where three fillets meet, a piece of a sphere bounded by the three fillets' ends (circles that
    are not its parallels), which `ExactBrep` writes with the sphere's poles turned away from the piece. Then pointed
    cones (an apex as a pole of the cone).
-2. **Offset**, which moves every face (planes along their normal, cylinders, cones and tori by radius).
+2. **Shell** (a closed skin): the cavity is the history rebuilt shrunk by the wall, its faces named
+   `id/inner:face`, cut out of the solid. Cheap now that offsets rebuild the history.
 3. **Arcs meeting lines at a corner** in loop fillets (a quartic, unless the radii make it a circle or ellipse).
 4. **Inventor as a second STEP reader**, parked.
 5. **Local booleans:** rebuild only the faces a boolean touches.
 6. **Mixed models (B-rep, then F-rep):** today one model goes through one engine, and the B-rep modeler refuses the
    whole model at the first feature it does not take. Both share the document, `IModeler`, the face names and
    topology (identical on every test document) and the exact output (`Isoform.Step.Brep`), which makes a hand-off
-   possible: run the history in the kernel while it can, and at the first F-rep-only feature (lattice, smooth blend,
-   shell, offset) turn the B-rep body into a field and go on in the F-rep core. Inside/outside is enough for lattices
-   and blends (the kernel's point classification); shells and offsets need the true distance to the nearest face,
-   closed-form on planes, cylinders, cones and tori. Faces the F-rep features leave alone keep their exact form, so
+   possible: run the history in the kernel while it can, and at the first F-rep-only feature (lattice, smooth blend)
+   turn the B-rep body into a field and go on in the F-rep core. Inside/outside is enough for lattices
+   and blends (the kernel's point classification). Faces the F-rep features leave alone keep their exact form, so
    a part with an infill lattice could still export its skin exactly (`ExactBrep` refuses lattice and blend faces
    today). The other way, F-rep faces into the B-rep, gives only triangles for lattices and blends. Worth it once
    the kernel covers the common features; the product (playground, build tool, MCP, assemblies) uses the F-rep
@@ -482,4 +508,4 @@ What still stops the playground's examples, and what is left from before:
 
 Blended extrudes and shells (smooth F-rep blends) and lattices stay with the F-rep core.
 
-Recommended: 2 (offset, the last playground feature with exact faces: it unblocks "Mirror and offset"), then 1.
+Recommended: 2 (shell, small now), then 1 (ball corners).

@@ -1,3 +1,4 @@
+using BasAutomation.Geometry;
 using static Isoform.Brep.Tests.Shapes;
 
 namespace Isoform.Brep.Tests;
@@ -73,5 +74,32 @@ public class ProfileTests
     public void A_hole_just_clear_of_the_side_is_accepted()
     {
         new Region(Rectangle(0, 0, 10, 10), [Circle(8 - 1e-6, 5, 2)]).Problem(Tolerance).Should().BeNull();
+    }
+
+    [Fact]
+    public void Grown_corners_turn_round_and_shrunk_ones_stay_sharp()
+    {
+        bool Never(Point2D _) => false;
+        var (grown, origins, problem) = ProfileOffset.Grow(Rectangle(0, 0, 3, 2), [1, 1, 1, 1], Never, Tolerance);
+        problem.Should().BeNull();
+        origins.Should().Equal(0, ~0, 1, ~1, 2, ~2, 3, ~3);
+        grown!.SignedArea.Should().BeApproximately(6 + 10 + Math.PI, 1e-12);
+
+        var (shrunk, kept, _) = ProfileOffset.Grow(Rectangle(0, 0, 3, 2), [-0.5, -0.5, -0.5, -0.5], Never, Tolerance);
+        kept.Should().Equal(0, 1, 2, 3);
+        shrunk!.SignedArea.Should().BeApproximately(2, 1e-12);
+
+        // A slot's ends stay half circles, one radius bigger; a smooth join gets no corner.
+        var (slot, ends, _) = ProfileOffset.Grow(Slot(10, 1), [1, 1, 1, 1], Never, Tolerance);
+        ends.Should().Equal(0, 1, 2, 3);
+        slot!.SignedArea.Should().BeApproximately(40 + 4 * Math.PI, 1e-12);
+    }
+
+    [Fact]
+    public void An_offset_that_uses_up_a_segment_is_refused()
+    {
+        bool Never(Point2D _) => false;
+        ProfileOffset.Grow(Rectangle(0, 0, 3, 2), [-1, -1, -1, -1], Never, Tolerance).Problem.Should().Contain("used up");
+        ProfileOffset.Grow(Circle(0, 0, 1), [-1], Never, Tolerance).Problem.Should().Contain("shrinks to nothing");
     }
 }

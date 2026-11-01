@@ -2,7 +2,7 @@ using Isoform.Document;
 
 namespace Isoform.Brep.Tests;
 
-/// <summary>Isoform part documents the managed kernel builds (experiments 1 to 12), with their exact volumes.</summary>
+/// <summary>Isoform part documents the managed kernel builds (experiments 1 to 13), with their exact volumes.</summary>
 public static class Documents
 {
     static readonly SketchPlane Xy = new([0, 0, 0], [1, 0, 0], [0, 0, 1]);
@@ -411,6 +411,51 @@ public static class Documents
         ("domed post cut flat", new([DomedPost("post"), new PlaneCut("cut", [0, 0, 13], [0, 0, 1])]), Math.PI * 25 * 10 + Math.PI * (75 - 9)),
     ];
 
+    // Experiment 13: offsets. Every face so far moves out: blocks grow, cut tools shrink, fillets get rounder, and a
+    // profile's corners that part as it grows turn round (named id/corner:a+b after the two faces).
+    static Profile Ell(double z) => new([5, 5],
+    [
+        new ProfileEdge("a", [30, 5]), new ProfileEdge("b", [30, 12]), new ProfileEdge("c", [12, 12]),
+        new ProfileEdge("d", [12, 40]), new ProfileEdge("e", [5, 40]), new ProfileEdge("f", [5, 5]),
+    ]);
+
+    static readonly (string Name, PartDocument Document, double Volume)[] Offsets =
+    [
+        // The playground's: the plate grows to 102 × 52 × 12; each rib's L (area 371, edges 120 long) gains a strip
+        // 1 wide round it, a quarter circle at each of its five convex corners, less the square where the strips
+        // overlap at its reflex corner; it stands 6 above the plate.
+        ("mirrored ribs grown", new(
+        [
+            new Block("plate", BooleanOp.New, [0, 0, 0], [100, 50, 10]),
+            new Extrude("rib", BooleanOp.Join, Top, Ell(10), 0, 6),
+            new Pattern("mirror", ["rib"], new MirrorMotion([50, 0, 0], [1, 0, 0])),
+            new Offset("grow", 1),
+        ]), 102 * 52 * 12 + 2 * 6 * (371 + 120 - 1 + 5 * Math.PI / 4)),
+        // The pocket's tool shrinks to 18 × 8, from 7 up past the top at 11; the bore to radius 1.
+        ("pocket and bore grown", new(
+        [
+            new Block("plate", BooleanOp.New, [0, 0, 0], [40, 30, 10]),
+            new Extrude("pocket", BooleanOp.Cut, Top, new Profile([10, 10],
+                [new ProfileEdge("a", [30, 10]), new ProfileEdge("b", [30, 20]), new ProfileEdge("c", [10, 20]), new ProfileEdge("d", [10, 10])]), -4, 3),
+            new Hole("bore", [5, 5], 4),
+            new Offset("grow", 1),
+        ]), 42 * 32 * 12 - 18 * 8 * 4 - Math.PI * 12),
+        // The post grows to radius 6 on a base 1 lower, its dome to radius 6; the corner at the base turns round a
+        // circle of radius 5 (a quarter disc of radius 1, centroid 4/3π out from it).
+        ("domed post grown", new([DomedPost("post"), new Offset("grow", 1)]),
+            Math.PI * 36 * 10 + 2 * Math.PI / 3 * 216 + Math.PI * 25 + 2 * Math.PI * (5 + 4 / (3 * Math.PI)) * Math.PI / 4),
+        // The plate grows to 42 × 32 × 12 and the round to radius 3 along its 32.
+        ("filleted plate grown", new(
+        [
+            new Block("plate", BooleanOp.New, [0, 0, 0], [40, 30, 10]),
+            new Fillet("round", ["plate/z+", "plate/x+"], 2),
+            new Offset("grow", 1),
+        ]), 42 * 32 * 12 - 9 * (1 - Math.PI / 4) * 32),
+        // Shrunk, the L's reflex corner turns round instead: arms 23 × 5 and 5 × 28, and the corner square less a
+        // quarter circle; 4 high.
+        ("ell shrunk", new([new Extrude("rib", BooleanOp.New, Xy, Ell(0), 0, 6), new Offset("shrink", -1)]), 4 * (256 - Math.PI / 4)),
+    ];
+
     public static IEnumerable<object[]> All =>
     [
         ["mounting plate", MountingPlate, MountingPlateVolume],
@@ -424,6 +469,7 @@ public static class Documents
         .. Copies.Select(b => new object[] { b.Name, b.Document, b.Volume }),
         .. Sweeps.Select(b => new object[] { b.Name, b.Document, b.Volume }),
         .. Domes.Select(b => new object[] { b.Name, b.Document, b.Volume }),
+        .. Offsets.Select(b => new object[] { b.Name, b.Document, b.Volume }),
     ];
 
     public static PartDocument Named(string name) => name switch
@@ -431,6 +477,6 @@ public static class Documents
         "mounting plate" => MountingPlate,
         "bracket" => Bracket,
         "two pads" => TwoPads,
-        _ => Booleans.Concat(Holes).Concat(Angles).Concat(Rounds).Concat(Cones).Concat(Copies).Concat(Sweeps).Concat(Domes).Single(b => b.Name == name).Document,
+        _ => Booleans.Concat(Holes).Concat(Angles).Concat(Rounds).Concat(Cones).Concat(Copies).Concat(Sweeps).Concat(Domes).Concat(Offsets).Single(b => b.Name == name).Document,
     };
 }
