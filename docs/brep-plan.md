@@ -13,8 +13,8 @@ Decisions (2026-10-25):
 
 ## Build
 
-The kernel needs `RigidTransform3D` and `Predicates`, which are not in a released `BasAutomation.Geometry` yet
-(2.0.0 does not have them). Build against a source checkout:
+The kernel needs `RigidTransform3D` and `Predicates`, released in `BasAutomation.Geometry` 3.0.0, so a plain build
+works. To try unreleased Geometry changes, build against a source checkout:
 
 ```sh
 dotnet test tests/Isoform.Brep.Tests -p:BasAutomationGeometryProject=<path to BasAutomation.Geometry.csproj>
@@ -109,9 +109,6 @@ the quartic of two cylinders at an angle), tangent contact, and sliver tolerance
 
 ## Open questions
 
-- Fixed on the Geometry branch (2026-11-01), not released: `Plane3D`'s V axis is now N × U, so its U/V axes are
-  right-handed (they were left-handed, against its doc comment; no addin used them), and types whose `==` takes a
-  tolerance hash to a constant, so equal values no longer hash apart. Whether to merge is open.
 - The 2D segment distances in `Profile.cs` stay in the kernel: they work on its own segments (lines, arcs and
   `CurveSegment`), and `BasAutomation.Geometry` has no arc distance to move them onto.
 - The STEP conventions come from OCCT's reader (experiment 4); whether other readers, Inventor's first, agree is
@@ -647,8 +644,8 @@ and the playground say which (`from`: kernel or frep).
 - *Safety:* the kernel is only taken where the topologies agree; a refusal, a different face or an exception in the
   kernel means the F-rep core's export, never a different file.
 - *Dependency:* `Isoform.Build` (and so the playground and the MCP server) now references `Isoform.Brep.Modeling`,
-  which needs the unreleased BasAutomation.Geometry branch (`feature/geometry-kernel-primitives`): merging this
-  branch into main needs that released first.
+  which needs BasAutomation.Geometry 3.0.0 (released 2026-11-04, with a right-handed `Plane3D` V axis and constant
+  hashes for tolerance-equal types; see its changelog).
 
 **Tests:** `ExactStepTests` (a part the kernel builds comes from it and reads back without healing at its exact
 volume; a chamfer before an offset falls back to the F-rep core's), the MCP export test expects `from: kernel` for a
