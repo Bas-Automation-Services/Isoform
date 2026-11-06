@@ -185,8 +185,25 @@ public static class Documents
     // Experiment 8: chamfers round circles and arcs are cones. Pappus: the triangle d²/2, its centroid d/3 from the wall.
     static double Triangle(double d) => d * d / 2;
 
+    static double ObliqueTip()
+    {
+        var (x1, x2) = (2.5 / 0.8125, -2.5 / 1.1875);
+        var a = (x1 - x2) * Math.Sqrt(1.09) / 2;
+        var xc = (x1 + x2) / 2;
+        var rho = 5.0 / 8 * (4 + 0.3 * xc);
+        var b = Math.Sqrt(rho * rho - xc * xc);
+        return Math.PI * a * b * (4 / Math.Sqrt(1.09)) / 3;
+    }
+
     static readonly (string Name, PartDocument Document, double Volume)[] Cones =
     [
+        // A cone (radius 5, apex 8 up) with its tip cut off by a plane leaning 0.3 in x through (0, 0, 4): an ellipse.
+        // In the plane z = 4 − 0.3x the cone is ρ = (5/8)(4 + 0.3x): its vertices on y = 0 at x = 2.5/0.8125 and
+        // −2.5/1.1875, the minor axis at their middle reaching the cone's circle there. What goes is an oblique cone
+        // on that ellipse: π a b times the apex's distance from the plane, 4/√1.09, over 3.
+        ("oblique cut off a cone", new([new Revolve("cone", BooleanOp.New, Upright(0, 0), new Profile([0, 0],
+            [new ProfileEdge("bottom", [5, 0]), new ProfileEdge("side", [0, 8]), new ProfileEdge("axis", [0, 0])])),
+            new PlaneCut("cut", [0, 0, 4], [0.3, 0, 1])]), Math.PI * 25 * 8 / 3 - ObliqueTip()),
         ("chamfered hole edge", OnSlab(new Hole("hole", [30, 25], 10), new Chamfer("bevel", ["plate/z+", "hole/wall"], 1.5)),
             50_000 - Math.PI * 250 - 2 * Math.PI * (5 + 0.5) * Triangle(1.5)),
         ("hole chamfered at both ends", OnSlab(new Hole("hole", [30, 25], 10), new Chamfer("top", ["plate/z+", "hole/wall"], 1), new Chamfer("bottom", ["plate/z-", "hole/wall"], 1)),

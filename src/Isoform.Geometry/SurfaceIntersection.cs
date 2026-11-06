@@ -32,9 +32,36 @@ public static class SurfaceIntersection
         if (a.Kind == SurfaceKind.Cylinder && b.Kind == SurfaceKind.Plane) (a, b) = (b, a);
         if (a.Kind == SurfaceKind.Plane && b.Kind == SurfaceKind.Cylinder) return Oblique(a, b);
         if (a.Kind == SurfaceKind.Cylinder && b.Kind == SurfaceKind.Cylinder) return Mitre(a, b, seed);
+        if (a.Kind == SurfaceKind.Cone && b.Kind == SurfaceKind.Plane) (a, b) = (b, a);
+        if (a.Kind == SurfaceKind.Plane && b.Kind == SurfaceKind.Cone) return ConeSection(a, b);
         if (a.Kind == SurfaceKind.Torus && b.Kind == SurfaceKind.Cylinder) (a, b) = (b, a);
         if (a.Kind == SurfaceKind.Cylinder && b.Kind == SurfaceKind.Torus) return TubeCircle(a, b);
         return null;
+    }
+
+    /// <summary>
+    /// A plane less steep than a cone's side cuts each generator of its open nappe once: an ellipse round the axis. With
+    /// the apex A, the opening axis a and ρ = h tan α at height h along it, the plane n · (p − P) = 0 meets the
+    /// generator at angle u from its tilt at h = −n · (A − P) / (n · a + m tan α cos u) (m the normal's part across the
+    /// axis): the ends of the major axis at cos u = ±1, the minor axis square to the axis through their middle. Null for
+    /// a plane along a generator or steeper, or one that misses the open nappe.
+    /// </summary>
+    static Ellipse? ConeSection(Surface plane, Surface cone)
+    {
+        var (n, a, tan) = (plane.Axis, cone.Axis, Math.Tan(cone.Angle));
+        var na = n.Dot(a);
+        var radial = n - a * na;
+        var m = radial.Length;
+        if (m <= Parallel || Math.Abs(na) <= m * tan * (1 + 1e-9)) return null;
+        var e = radial / m;
+        var d0 = n.Dot(cone.Origin - plane.Origin);
+        var (h1, h2) = (-d0 / (na + m * tan), -d0 / (na - m * tan));
+        if (h1 <= OnAxis || h2 <= OnAxis) return null;
+        var (v1, v2) = (cone.Origin + a * h1 + e * (tan * h1), cone.Origin + a * h2 - e * (tan * h2));
+        var centre = v1 + (v2 - v1) * 0.5;
+        var hc = a.Dot(centre - cone.Origin);
+        var off = (centre - cone.Origin - a * hc).Length;
+        return new Ellipse(centre, n, (v2 - v1).Normalized(), (v2 - v1).Length / 2, Math.Sqrt(tan * hc * tan * hc - off * off));
     }
 
     /// <summary>

@@ -187,7 +187,7 @@ internal static class Intersections
         var (n, a) = (p.Frame.ZAxis, k.Frame.ZAxis);
         if (Math.Abs(n.Dot(a)) >= 1 - Parallel) return Ring(k, (p.Frame.Origin - k.Frame.Origin).Dot(a));
         if (Math.Abs((k.Apex - p.Frame.Origin).Dot(n)) > Snap)
-            return SurfaceMeeting.Refused("a plane at an angle to a cone's axis and not through its apex (an ellipse, parabola or hyperbola)");
+            return Section(p, k) ?? SurfaceMeeting.Refused("a plane at an angle to a cone's axis, not through its apex and as steep as its side or steeper (a parabola or hyperbola)");
         var (nx, ny) = (n.Dot(k.Frame.XAxis), n.Dot(k.Frame.YAxis));
         var m = Math.Sqrt(nx * nx + ny * ny);
         var phi = Math.Atan2(ny, nx);
@@ -198,6 +198,35 @@ internal static class Intersections
         if (Math.Abs(c) > 1) return SurfaceMeeting.Nothing;
         var delta = Math.Acos(c);
         return SurfaceMeeting.Along(Generator(k, phi - delta), Generator(k, phi + delta));
+    }
+
+    // A plane less steep than the cone's side cuts each generator once: an ellipse round the axis. Its major axis lies
+    // in the half-planes towards and away from the plane's tilt (u = φ and φ + π, where n_a h + m ρ cos(u − φ) = d with
+    // ρ = R + s h), its minor axis square to the axis through its centre, reaching the cone's circle at that height.
+    // Null for a plane along a generator or steeper (a parabola or hyperbola); nothing where it cuts only the cone's
+    // other nappe, past the apex.
+    static SurfaceMeeting? Section(Plane p, Cone k)
+    {
+        var (n, a) = (p.Frame.ZAxis, k.Frame.ZAxis);
+        var na = n.Dot(a);
+        var radial = n - a * na;
+        var m = radial.Length;
+        if (Math.Abs(na) <= m * Math.Abs(k.Slope) * (1 + 1e-9)) return null;
+        var e = radial / m;
+        var d = n.Dot(p.Frame.Origin - k.Frame.Origin);
+        (Point3D Point, double Rho) Vertex(int side)
+        {
+            var h = (d - k.Radius * m * side) / (na + k.Slope * m * side);
+            return (k.Frame.Origin + e * (k.RadiusAt(h) * side) + a * h, k.RadiusAt(h));
+        }
+        var (near, far) = (Vertex(1), Vertex(-1));
+        if (near.Rho <= Snap || far.Rho <= Snap) return SurfaceMeeting.Nothing;
+        var centre = near.Point + (far.Point - near.Point) / 2;
+        var along = far.Point - near.Point;
+        var h0 = (centre - k.Frame.Origin).Dot(a);
+        var off = (centre - k.Frame.Origin - a * h0).Length;
+        var minor = Math.Sqrt(k.RadiusAt(h0) * k.RadiusAt(h0) - off * off);
+        return SurfaceMeeting.Along(new Ellipse3(RigidTransform3D.FromFrame(centre, n, along.Normalized()), along.Length / 2, minor));
     }
 
     // The straight line of the cone at angle u, from its point at the frame's height, running up the axis.
@@ -791,6 +820,9 @@ internal static class Uv
                 var v = Of(o, k.At(0)).Y;
                 return new Line2(new Point2D(phase, v), new Vector2D(k.Frame.ZAxis.Dot(o.Frame.ZAxis) > 0 ? 1 : -1, 0));
             }
+            case (Cone k, Ellipse3 e):
+                // A plane's section round the axis: u round it, v the height.
+                return ConeSection2.Of(k, e);
             case (Sphere o, Circle3 k) when Math.Abs(k.Frame.ZAxis.Dot(o.Frame.ZAxis)) > 1e-9 || (k.Frame.Origin - o.Frame.Origin).Length > Intersections.Snap:
                 // Any other circle: longitude and latitude along it.
                 return SphereCircle2.Of(o, k) ?? throw new NotSupportedException("a circle through a sphere's pole");
@@ -843,6 +875,7 @@ internal static class Uv
         Ellipse2 e => e with { Center = new Point2D(e.Center.X + du, e.Center.Y) },
         Wave2 w => w with { U0 = w.U0 + du },
         SphereCircle2 c => c with { U0 = c.U0 + du },
+        ConeSection2 c => c with { U0 = c.U0 + du },
         _ => throw new NotSupportedException(pc.GetType().Name),
     };
 
@@ -854,6 +887,7 @@ internal static class Uv
         Ellipse2 e => e with { Offset = alpha * (beta + e.Offset), Sense = e.Sense * (int)Math.Round(alpha) },
         Wave2 w => w with { U0 = w.U0 + w.Slope * beta, Slope = w.Slope * (int)Math.Round(alpha), Phase = alpha * (beta + w.Phase) },
         SphereCircle2 c => c with { Phase = c.Phase + c.Sense * beta, Sense = c.Sense * (int)Math.Round(alpha) },
+        ConeSection2 c => c with { Phase = c.Phase + c.Sense * beta, Sense = c.Sense * (int)Math.Round(alpha) },
         _ => throw new NotSupportedException(pc.GetType().Name),
     };
 
@@ -872,6 +906,7 @@ internal static class Uv
             case Wave2 when s is Cylinder:
                 return new CurveSegment(pc, from, to, k);
             case SphereCircle2 when s is Sphere:
+            case ConeSection2 when s is Cone:
                 return new CurveSegment(pc, from, to, k, kv);
             default:
                 throw new NotSupportedException($"a {pc.GetType().Name} on a {s.GetType().Name}");

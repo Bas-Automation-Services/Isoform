@@ -759,6 +759,26 @@ The scratch test that does it is not kept; it is a page of code over `Robustness
   quartic); slivers at the tolerance (about 10: curve ends 1e-7 from their vertex, faces that do not close); a few
   offsets and shells of more than one body or of part turns. No part met arcs meeting lines in a loop fillet.
 
+## Experiment 22: a cone cut by an oblique plane, the ellipse (2026-11-06)
+
+Chosen from the candidates (7), after the survey.
+
+- *Kernel:* a plane less steep than the cone's side (|n · a| > m · |slope|, m the normal's part across the axis) cuts
+  each generator of a nappe once, in an ellipse round the axis (`Intersections.Section`): the ends of its major axis
+  where the plane's tilt points towards and away from it, h = (d − R m cos) / (n_a + s m cos) at cos = ±1, the minor
+  axis square to the axis through their middle, reaching the cone's circle there. Nothing where only the far nappe
+  is cut. On the cone its p-curve is `ConeSection2`: u round the axis (continuous, within half a turn of the ellipse's
+  own angle), v the height, as a sphere's circles are `SphereCircle2`.
+- *F-rep core:* `SurfaceIntersection` gives the same ellipse (by apex, opening axis and half-angle), so `ExactBrep`
+  exports such parts and section curves and sketch projections get the edge too.
+- *Still refused:* a plane as steep as the side or steeper (a parabola or hyperbola), which is every one of the
+  survey's oblique plane–cone cuts: a wall parallel to a bore's axis through its drill point or countersink cuts it in
+  a hyperbola. A hyperbola curve (and its p-curves, meetings, STEP) is the next step there.
+
+**Tests:** a cone with its tip cut off by a plane leaning 0.3: the volume to 1e-12 against the oblique cone on the
+section ellipse (π a b times the apex's distance from the plane, over 3, its axes found in the plane's own
+coordinates), faces and names as the F-rep core's, exact faces and corners as `ExactBrep`'s, read back by OCCT.
+
 ## Next: candidates (to decide)
 
 What still stops the playground's examples, and what is left from before:
@@ -768,9 +788,9 @@ What still stops the playground's examples, and what is left from before:
    not square: done (experiment 21).
 3. **Arcs meeting lines at a corner** in loop fillets (a quartic, unless the radii make it a circle or ellipse). The
    survey met none.
-7. **A cone met off its axis** (the survey's most common refusal past the ones by design): an oblique plane cuts it in
-   an ellipse (a parabola or hyperbola where it runs parallel to a generator or steeper), a cylinder across it in a
-   quartic. The ellipse first: a countersink or chamfered bore on an angled face.
+7. **A cone met off its axis:** the ellipse is done (experiment 22); the survey's five oblique cuts are all
+   hyperbolas (a wall parallel to a bore's axis through its drill point or countersink); a cylinder across a cone is a
+   quartic (8 in the survey).
 4. **Inventor as a second STEP reader**, parked.
 5. **Local booleans, further:** a body edited in place, not copied whole by every boolean (experiment 20 left that
    as the cost); a grown face's flat loops spliced too, not flattened again.
@@ -787,4 +807,4 @@ What still stops the playground's examples, and what is left from before:
 
 Blended extrudes and shells (smooth F-rep blends) and lattices stay with the F-rep core.
 
-Recommended: 7 (its ellipse case); 5 only if real parts reach hundreds of features.
+Recommended: 7, the hyperbola; 5 only if real parts reach hundreds of features.

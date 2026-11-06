@@ -324,6 +324,48 @@ public sealed record SphereCircle2(Sphere Sphere, Circle3 Circle, double Phase, 
 }
 
 /// <summary>
+/// A plane's ellipse round a cone's axis in the cone's (u, v): the point at angle θ = Phase + Sense · t round the ellipse,
+/// as the angle u round the axis and the height v along it. u runs on continuously, within half a turn of
+/// U0 + Winding · θ: the ellipse goes once round the axis, Winding ±1 by which way.
+/// </summary>
+public sealed record ConeSection2(Cone Cone, Ellipse3 Ellipse, double Phase, int Sense, double U0, int Winding) : Curve2
+{
+    /// <summary>The p-curve of the ellipse with θ = t.</summary>
+    public static ConeSection2 Of(Cone cone, Ellipse3 ellipse)
+    {
+        var winding = ellipse.Frame.ZAxis.Dot(cone.Frame.ZAxis) > 0 ? 1 : -1;
+        var p = new ConeSection2(cone, ellipse, 0, 1, 0, winding).Local(0).P;
+        return new ConeSection2(cone, ellipse, 0, 1, Math.Atan2(p.Y, p.X), winding);
+    }
+
+    // The point at t less the cone's origin, and its derivative, in the cone's frame.
+    (Vector3D P, Vector3D D) Local(double t)
+    {
+        var (sin, cos) = Math.SinCos(Phase + Sense * t);
+        var f = Ellipse.Frame;
+        var p = f.Origin - Cone.Frame.Origin + f.XAxis * (Ellipse.Major * cos) + f.YAxis * (Ellipse.Minor * sin);
+        var d = (f.YAxis * (Ellipse.Minor * cos) - f.XAxis * (Ellipse.Major * sin)) * Sense;
+        var (x, y, z) = (Cone.Frame.XAxis, Cone.Frame.YAxis, Cone.Frame.ZAxis);
+        return (new Vector3D(p.Dot(x), p.Dot(y), p.Dot(z)), new Vector3D(d.Dot(x), d.Dot(y), d.Dot(z)));
+    }
+
+    public override Point2D At(double t)
+    {
+        var (p, _) = Local(t);
+        var near = U0 + Winding * (Phase + Sense * t);
+        var u = Math.Atan2(p.Y, p.X);
+        return new Point2D(u + 2 * Math.PI * Math.Round((near - u) / (2 * Math.PI)), p.Z);
+    }
+
+    // u = atan2(y, x), v = z: u' = (x y' − y x') / (x² + y²), v' = z'.
+    public override Vector2D Derivative(double t)
+    {
+        var (p, d) = Local(t);
+        return new Vector2D((p.X * d.Y - p.Y * d.X) / (p.X * p.X + p.Y * p.Y), d.Z);
+    }
+}
+
+/// <summary>
 /// A sphere round the frame's origin: <c>S(u, v) = Origin + Radius · (cos v · (cos u · X + sin u · Y) + sin v · Z)</c>.
 /// u is the angle round Z (periodic), v the latitude in [−π/2, π/2]; at the poles, ±Z, u runs over a single point. The
 /// normal points out. A dome where a revolve's arc ends on its axis is a piece of one.
