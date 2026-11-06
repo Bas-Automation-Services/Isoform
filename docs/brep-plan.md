@@ -779,15 +779,17 @@ Chosen from the candidates (7), after the survey.
 section ellipse (π a b times the apex's distance from the plane, over 3, its axes found in the plane's own
 coordinates), faces and names as the F-rep core's, exact faces and corners as `ExactBrep`'s, read back by OCCT.
 
-## Experiment 23: a cone cut by a steep plane, the hyperbola (2026-11-06, in progress)
+## Experiment 23: a cone cut by a steep plane, the hyperbola (2026-11-06)
 
 `Hyperbola3` (one branch: a cosh t X + b sinh t Y) for a plane as steep as a cone's side or steeper, the branch on the
 cone's own nappe (`Intersections.Branch`); `Hyperbola2` on planes, `ConeSection2` generalised to any plane section
 (winding 0 for a branch); conic meetings take the sign of y² and keep a hyperbola's own branch. The F-rep core's
 `SurfaceIntersection.ConeBranch` gives the same branch; STEP writes `HYPERBOLA`. Tests: a cone and a frustum cut by
-x = 2 along the axis, volumes in closed form; the kernel's suite passes (388), the frustum agrees with `ExactBrep`.
-**Not yet run:** the OCCT read-back of `HYPERBOLA` and the F-rep suites (sections, sketch projections, fillets), nor
-the survey's five hyperbola parts. Run those before pushing.
+x = 2 along the axis, volumes in closed form; the frustum agrees with `ExactBrep`; OCCT reads both back unhealed at
+their exact volumes. The kernel's read-back test now compares OCCT with the file's own counts and the file's faces and
+corners with the topology: where a seam ends on a hyperbola the file has the branch in two edges, as through a pole.
+The survey's five hyperbola parts all build now (four agree with the F-rep core, one is among the parts it warns
+about); its clean-input disagreements are still the three known ones.
 
 ## Next: candidates (to decide)
 

@@ -37,10 +37,13 @@ public class BrepKernelStepTests(ITestOutputHelper output)
 
         shape.IsValid.Should().BeTrue();
         shape.SolidCount.Should().Be(t.BodyCount);
-        // Through a pole the topology runs one edge on between the same two faces (a half cone's two generators), where
-        // the file has two edges meeting at it: there the file's own counts.
+        // OCCT reads the file's own faces, edges and corners. The topology runs one edge on between the same two faces
+        // where the file has two meeting at a point of only those faces (through a pole, a half cone's two generators;
+        // at a seam's foot, a hyperbola the seam ends on), so against it only faces and corners are compared.
         var pole = result.Bodies.Any(b => b.Body.Edges.Any(e => e.Curve is Isoform.Brep.Pole));
-        StepExportTests.Counts(shape).Should().Be(pole ? StepExportTests.Counts(step) : (t.Faces.Count, t.Edges.Count, t.Vertices.Count));
+        var file = StepExportTests.Counts(step);
+        StepExportTests.Counts(shape).Should().Be(file);
+        if (!pole) (file.Faces, file.Vertices).Should().Be((t.Faces.Count, t.Vertices.Count));
         shape.Volume.Should().BeApproximately(volume, volume * 1e-11);
         // A sphere cap holding a pole needs the reader's healing, as Isoform's own export does (StepExportTests): the
         // degenerate edge there is one STEP cannot say.
