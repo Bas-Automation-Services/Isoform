@@ -978,6 +978,10 @@ public static class ExactBrep
             foreach (var c in circles)
                 if (Through(l, c) is { } hit && (hit.Point - seed).Length <= reach && (best is null || hit.Transversality > best.Value.Transversality))
                     best = hit;
+            for (var i = 0; i < circles.Count; i++)
+            for (var j = i + 1; j < circles.Count; j++)
+                if (Across(circles[i], circles[j], seed) is { } hit && (hit.Point - seed).Length <= reach && (best is null || hit.Transversality > best.Value.Transversality))
+                    best = hit;
             if (best is null) throw new NotSupportedException($"no closed-form vertex of {string.Join(", ", faces.Select(Name))}");
             return _vertexOfMesh[meshVertex] = AddVertex(best.Value.Point);
         }
@@ -1005,6 +1009,28 @@ public static class ExactBrep
             if (Math.Abs(s) < 1e-9) return null;
             var p = l.At(c.Normal.Dot(c.Center - l.Origin) / s);
             return Math.Abs((p - c.Center).Length - c.Radius) > 1e-9 ? null : (p, Math.Abs(s));
+        }
+
+        /// <summary>
+        /// Where two circles meet, through the line their planes share, and the sine of the planes' angle; null if the
+        /// planes are parallel or the circles pass apart. Where a ball touches a face, the curves at its point graze
+        /// every surface there, but the circles where the ball meets two fillets lie in planes across each other.
+        /// </summary>
+        static (Point3D Point, double Transversality)? Across(Circle a, Circle b, Point3D seed)
+        {
+            var d = a.Normal.Cross(b.Normal);
+            var sin = d.Length;
+            if (sin < 1e-9) return null;
+            d /= sin;
+            // The point of both planes nearest the seed (from a's centre), then along the shared line to a's circle.
+            var (hb, hd) = (b.Normal.Dot(b.Center - a.Center), d.Dot(seed - a.Center));
+            var w = (d.Cross(a.Normal) * hb + a.Normal.Cross(b.Normal) * hd) / a.Normal.Dot(b.Normal.Cross(d));
+            var on = a.Center + w;
+            var (half, disc) = (w.Dot(d), w.Dot(d) * w.Dot(d) - w.LengthSquared + a.Radius * a.Radius);
+            if (disc < -1e-12) return null;
+            var root = Math.Sqrt(Math.Max(disc, 0));
+            var p = new[] { on + d * (-half + root), on + d * (-half - root) }.MinBy(q => (q - seed).Length);
+            return Math.Abs((p - b.Center).Length - b.Radius) > 1e-9 ? null : (p, sin);
         }
 
         // Corners found from different mesh vertices (a corner spread over several cells) are one vertex.

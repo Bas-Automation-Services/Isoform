@@ -142,6 +142,31 @@ public class CornerFilletTests(ITestOutputHelper output)
         Deviation(result, sphere.Source, p => (p - sphere.Origin).Length - 1.5).Should().BeLessThan(1e-7);
     }
 
+    [Theory]
+    [InlineData(90)]
+    [InlineData(120)]
+    public void A_corner_of_an_extruded_profile_is_a_sphere_too(double angle)
+    {
+        // The top's two edges first, then the profile's corner between the sides: rounding that corner rounds the
+        // profile, and the ball comes with it.
+        var t = angle * Math.PI / 180;
+        var profile = new Profile([0, 0],
+        [
+            new ProfileEdge("side1", [30, 0]), new ProfileEdge("end1", [30, 30 * Math.Tan(t / 2)]),
+            new ProfileEdge("end2", [30 * Math.Cos(t), 30 * Math.Sin(t)]), new ProfileEdge("side2", [0, 0]),
+        ]);
+        var result = Modeler.Regenerate(new PartDocument(
+        [
+            new Extrude("corner", BooleanOp.New, new SketchPlane([0, 0, 0], [1, 0, 0], [0, 0, 1]), profile, 0, 10),
+            new Fillet("r1", ["corner/end", "corner/side1"], 2), new Fillet("r2", ["corner/end", "corner/side2"], 2),
+            new Fillet("r3", ["corner/side1", "corner/side2"], 2),
+        ]));
+
+        result.Diagnostics.Should().BeEmpty();
+        var sphere = result.Part.Surfaces.Single(s => s.Source == "r3/corner:r1+r2+r3");
+        Deviation(result, sphere.Source, p => (p - sphere.Origin).Length - 2).Should().BeLessThan(1e-7);
+    }
+
     // A 20 × 16 × 8 boss joined on a plate, the inside edges round its foot rounded: two meeting at its corner at
     // (20, 10, 10), or all four.
     public static PartDocument Boss(double r, double? r2 = null, bool all = false) => new(

@@ -714,18 +714,24 @@ Chosen from the candidates (1, its first half).
   the third face) − Ω r³/3 (Ω the solid angle the normals span). Where two fillets' strips overlap outside the sector
   (an obtuse corner), what the overlap takes off one strip it gives back on the other, worked out for 120° and 135°.
 
-**Found on the way:** the F-rep core makes no ball where the corner's two side faces are sides of one extruded
-profile, at any angle (square included): the three fillets meet in a mitre, without a diagnostic. Its corner search
-looks for the earlier fillets among the children of the face pair's host, and an extrude's sides are one profile
-field. The kernel finds corners by geometry and makes the ball there, so on such parts the topologies differ and the
-product's STEP takes the F-rep core's B-rep (as it did for square corners on extrusions before). At an acute corner
-(60°) the F-rep core refuses the top fillets ("radius 2 does not fit between the faces next to the edge"); with the
-upright edge first, the top fillet runs on round the upright one's face instead (`r1/r3/face`, no closed form).
+**Found on the way, and fixed in the F-rep core:** it made no ball where the corner's two side faces are sides of one
+extruded profile, at any angle (square included): rounding the edge between two sides rounds the profile's corner,
+which its corner search (the earlier fillets among the children of the face pair's host) never saw. Now, when a
+profile corner is rounded and both sides already meet a flat cap in fillets of that radius, the profile's new arc is
+taken as the fillet of the two sides and the corner search runs with it (`Compiler`, the profile-corner path). An
+offset or shell of such a part drops that ball (the offset finds a corner's fillets among the host's children; the
+profile's round is not one), noted, not handled. At an acute corner (60°) the F-rep core still refuses the top
+fillets ("radius 2 does not fit between the faces next to the edge"); with the upright edge first, the top fillet runs
+on round the upright one's face (`r1/r3/face`, no closed form), in both engines alike.
+- *`ExactBrep`:* a corner where a ball touches a flat face, seen from a mesh vertex among the two fillets and the ball
+  only, had nothing but grazing crossings and came out 5e-8 off. Two circles now also meet through the line their
+  planes share (here a vertical line through the ball's centre).
 
 **Tests:** a box with its top end cut back at 45° and that cut ended square by another, the side's top edge, the
-cut's top edge and its edge on the side rounded: one ball (`r3/corner:r1+r2+r3`), faces, names and neighbours as the
-F-rep core's, its exact faces as `ExactBrep`'s, the volume in closed form to 1e-12, read back by OCCT. The square ball
-corners are unchanged.
+cut's top edge and its edge on the side rounded; an extruded profile with a 120° corner and one with a square corner,
+top edges then the profile's corner: one ball each (`r3/corner:r1+r2+r3`), faces, names and neighbours as the F-rep
+core's, exact faces and corners as `ExactBrep`'s, volumes in closed form to 1e-12, read back by OCCT. The F-rep core's
+own `CornerFilletTests` take the extruded corner at 90° and 120°. The square ball corners are unchanged.
 
 ## Next: candidates (to decide)
 
@@ -734,8 +740,7 @@ What still stops the playground's examples, and what is left from before:
 1. **Ball corners of other kinds:** unequal radii (the F-rep core mitres them with a warning, and its exact export
    does not follow the mitre either; the kernel would need unequal cylinders crossing, a quartic). Corners that are
    not square: done (experiment 21).
-2. **The F-rep core's balls on extruded profiles:** it mitres corners whose side faces come from one profile
-   (experiment 21), where the kernel makes the ball; a fix in the F-rep core's corner search, not in the kernel.
+2. **Balls on extruded profiles after an offset or shell:** the F-rep core drops them there (experiment 21).
 3. **Arcs meeting lines at a corner** in loop fillets (a quartic, unless the radii make it a circle or ellipse).
 4. **Inventor as a second STEP reader**, parked.
 5. **Local booleans, further:** a body edited in place, not copied whole by every boolean (experiment 20 left that
@@ -753,5 +758,4 @@ What still stops the playground's examples, and what is left from before:
 
 Blended extrudes and shells (smooth F-rep blends) and lattices stay with the F-rep core.
 
-Recommended: 2 (the F-rep core, so both engines round extruded corners alike), then 3; 5 only if real parts reach
-hundreds of features.
+Recommended: 3 (arcs meeting lines in loop fillets); 5 only if real parts reach hundreds of features.

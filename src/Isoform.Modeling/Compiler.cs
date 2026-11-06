@@ -594,11 +594,12 @@ public sealed class Compiler(ModelingSettings settings)
                 return grown.Any(c => c is null) ? null : new MaxField(grown!);
             }
             case MaxField m:
-                // A corner sphere is set again on its fillets as they moved; it goes when they shrank to nothing.
+                // A corner sphere is set again on its fillets as they moved; it goes when they shrank to nothing, or when
+                // one of them is a profile's rounded corner (not one of the fillets here).
                 var flat = m.Children.Where(c => c is not VertexSphereField).ToList();
                 return Each(flat, moved =>
                 {
-                    foreach (var v in m.Children.OfType<VertexSphereField>())
+                    foreach (var v in m.Children.OfType<VertexSphereField>().Where(v => v.Edges.All(flat.Contains)))
                         if (v.Edges.Select(e => moved[flat.IndexOf(e)]).OfType<RoundedEdgeField>().ToList() is { Count: 3 } edges) moved.Add(v.With(edges, register));
                     return new MaxField(moved);
                 });
@@ -870,6 +871,15 @@ public sealed class Compiler(ModelingSettings settings)
                 if (Leaning(tree, la, lb, rebuilt.Leaves.Except(p.Leaves).SelectMany(l => rebuilt.MiddleOf(l, (max - min).Length)), size) is { } inside)
                     return Fail(unsupported, LeaningMessage(inside, edge));
                 next = Replace(next, p, rebuilt);
+                // Both sides already rounded off a flat cap to this radius: the three fillets meet in a ball, as on three
+                // faces of a block, the profile's new arc taken as the fillet of the two sides it joins.
+                if (fillet && !p.Revolved && p.Turn(corner) > 0 && !p.Edges[corner].IsArc && !p.Edges[(corner + 1) % p.Edges.Count].IsArc
+                    && Intersections(next, null).FirstOrDefault(x => x.Host.Children.Contains(rebuilt)).Host is { } holder)
+                {
+                    var sides = new RoundedEdgeField(la, lb, size, rebuilt.Leaves[corner + 1].Surface);
+                    var balls = Corners(feature.Id, [.. holder.Children.OfType<RoundedEdgeField>(), sides], tree, register, diagnostics);
+                    if (balls.Count > 0) next = Replace(next, holder, new MaxField([.. holder.Children, .. balls.Select(c => c.Field)]));
+                }
                 // In a shell, the new face must stay clear of the cavity: probe its middle line on the new outside.
                 // Project onto the new outside alone: where the wall is cut through, the shelled field is not zero there.
                 var around = Intersections(next, null).FirstOrDefault(x => x.Shell is not null && FieldAlgebra.Descendants(x.Host).Contains(rebuilt)).Shell;

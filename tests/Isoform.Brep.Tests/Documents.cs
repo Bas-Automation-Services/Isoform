@@ -506,6 +506,14 @@ public static class Documents
     static readonly double Spandrel2 = 4 - Math.PI;
     static readonly double CornerCap = 8 - 4 * Math.PI / 3;
 
+    // From a 120° corner at the origin along x and at 120° to it, 30 each way, square at both far ends: they meet at
+    // 60° at (30, 30√3).
+    static readonly Profile Obtuse = new([0, 0],
+    [
+        new ProfileEdge("side1", [30, 0]), new ProfileEdge("end1", [30, 30 * Math.Sqrt(3)]),
+        new ProfileEdge("end2", [-15, 15 * Math.Sqrt(3)]), new ProfileEdge("side2", [0, 0]),
+    ]);
+
     static readonly (string Name, PartDocument Document, double Volume)[] Balls =
     [
         ("ball corner", new(
@@ -543,6 +551,21 @@ public static class Documents
         ]), 152 * 16
             - Spandrel2 * (8 - 2 * (Math.Sqrt(2) - 1) + 8 * Math.Sqrt(2) - 2 * (Math.Sqrt(2) - 1))
             - 4 * (Math.Sqrt(2) - 1 - Math.PI / 8) * 14 - (8 * (Math.Sqrt(2) - 1) - 8 * Math.PI / 12)),
+        // On an extruded profile: from a 120° corner 30 along each side (square at their other ends), 10 high, its top
+        // edges there and then the profile's corner rounded to 2. As above, with the kite r² cot 60° across, the side
+        // normals 60° apart (π r³/9), the top fillets 30 − r/√3 and the upright one 10 − r, spandrel r² (cot 60° − π/6).
+        ("ball at a 120° corner of a profile", new(
+        [
+            new Extrude("corner", BooleanOp.New, Xy, Obtuse, 0, 10),
+            new Fillet("r1", ["corner/end", "corner/side1"], 2), new Fillet("r2", ["corner/end", "corner/side2"], 2), new Fillet("r3", ["corner/side1", "corner/side2"], 2),
+        ]), Math.Sqrt(3) * 900 * 10
+            - Spandrel2 * 2 * (30 - 2 / Math.Sqrt(3)) - (1 / Math.Sqrt(3) - Math.PI / 6) * 4 * 8 - (8 / Math.Sqrt(3) - Math.PI * 8 / 9)),
+        // A square corner of a profile: the ball corner of a box, on an extrude.
+        ("ball at a square corner of a profile", new(
+        [
+            new Extrude("plate", BooleanOp.New, Xy, Rectangle(0, 0, 40, 30), 0, 10),
+            new Fillet("r1", ["plate/end", "plate/e"], 2), new Fillet("r2", ["plate/end", "plate/n"], 2), new Fillet("r3", ["plate/e", "plate/n"], 2),
+        ]), 12000 - Spandrel2 * (28 + 38 + 8) - CornerCap),
     ];
 
     // Pointed cones: a revolve's line at an angle that ends on the axis closes its cone at the apex, a pole.
