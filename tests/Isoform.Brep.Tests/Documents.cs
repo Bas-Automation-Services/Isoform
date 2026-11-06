@@ -527,6 +527,22 @@ public static class Documents
             new Fillet("u1", ["plate/x+", "plate/y+"], 2), new Fillet("u2", ["plate/x+", "plate/y-"], 2),
             new Fillet("u3", ["plate/x-", "plate/y+"], 2), new Fillet("u4", ["plate/x-", "plate/y-"], 2),
         ]), 12000 - Spandrel2 * (2 * 36 + 2 * 26 + 4 * 8) - 4 * CornerCap),
+        // A corner that is not square: a 20 × 16 × 12 box, its top end cut back at 45° from x = 8 on top and that cut
+        // ended square by another (the end a pentagon across y, 152 in area); the top edge along x, the cut's top edge
+        // and its edge on the far side rounded to 2. The ball is the sphere r inside all three faces, in the sector
+        // their normals span from its centre: there the corner (the kite between the centre, the tangent points and
+        // the tip, r² cot 67.5° across the 135° edge, r deep) less the ball's share (the normals of the top and the
+        // cut 45° apart, both square to the side: a lune of π/4, π r³/12). Outside it each fillet runs from its far end
+        // (square to it) to the sector: the side's top edge 8 − r cot 67.5°, its edge on the cut 8√2 − r cot 67.5°,
+        // the cut's top edge 16 − r.
+        ("ball at a 135° corner", new(
+        [
+            new Block("box", BooleanOp.New, [0, 0, 0], [20, 16, 12]),
+            new PlaneCut("cut", [8, 0, 12], [1, 0, 1]), new PlaneCut("cut2", [16, 0, 4], [1, 0, -1]),
+            new Fillet("r1", ["cut/face", "box/y+"], 2), new Fillet("r2", ["box/y+", "box/z+"], 2), new Fillet("r3", ["box/z+", "cut/face"], 2),
+        ]), 152 * 16
+            - Spandrel2 * (8 - 2 * (Math.Sqrt(2) - 1) + 8 * Math.Sqrt(2) - 2 * (Math.Sqrt(2) - 1))
+            - 4 * (Math.Sqrt(2) - 1 - Math.PI / 8) * 14 - (8 * (Math.Sqrt(2) - 1) - 8 * Math.PI / 12)),
     ];
 
     // Pointed cones: a revolve's line at an angle that ends on the axis closes its cone at the apex, a pole.

@@ -20,7 +20,7 @@ public static class Blends
     /// The body with the edge between faces <paramref name="a"/> and <paramref name="b"/> rounded to radius
     /// <paramref name="size"/> or chamfered back by it on both faces. Origins: operand 0 the body's faces, operand 1
     /// the blend's; <c>Face</c> is the blend's own face among operand 1's (the arc or the chamfer's slope). Where a
-    /// fillet's edge ends between two earlier fillets of its radius at a square corner, a ball rounds the corner:
+    /// fillet's edge ends between two earlier fillets of its radius at a corner of three flat faces, a ball rounds it:
     /// <c>Corners</c> gives the two fillets' faces of each, and operand 2 + k holds the k-th ball's face.
     /// </summary>
     public static (Shaped? Result, FaceId Face, IReadOnlyList<FaceId[]> Corners, string? Problem) Apply(Body body, FaceId a, FaceId b, double size, BlendKind kind)
@@ -58,9 +58,9 @@ public static class Blends
         var ts = edges.SelectMany(e => new[] { body[e].T0, body[e].T1 }.Select(t => (body[e].Curve.At(t) - line.Origin).Dot(d))).ToList();
         var margin = convex ? 2 * size + 1 : 0;
         // Where the edge ends against two earlier fillets, three meet at a corner: Isoform rounds that with a ball, its
-        // centre r inside all three faces. The kernel makes it where the fillets are of one radius and the corner square:
-        // each fillet's axis then runs through the centre, square to the other two.
-        var corners = new List<(Point3D Centre, Vector3D Out, FaceId[] Fillets)>();
+        // centre r inside all three faces, where the three fillets' axes meet. The kernel makes it where the fillets are
+        // of one radius and the three faces flat (the third the one both earlier fillets round off).
+        var corners = new List<(Point3D Centre, Vector3D Third, FaceId[] Fillets)>();
         foreach (var t in new[] { ts.Min(), ts.Max() })
         {
             var tip = line.Origin + d * t;
@@ -68,12 +68,10 @@ public static class Blends
                 .Where(co => (body[body.StartOf(co)].Point - tip).Length <= Intersections.Snap)
                 .Select(body.FaceOf).Distinct().Where(f => f != a && f != b && body[f].Surface is not Plane).ToArray();
             if (curved.Length < 2) continue;
-            var centre = tip - (nA + nB) * (size / (1 + c));
-            bool Fits(FaceId f) => body[f].Surface is Cylinder k && Math.Abs(k.Radius - size) <= 1e-9 && Math.Abs(k.Frame.ZAxis.Dot(d)) <= 1e-9
-                                   && Math.Abs(k.Frame.ZAxis.Dot(nA)) + Math.Abs(k.Frame.ZAxis.Dot(nB)) >= 1 - 1e-9 && Off(k, centre) <= Intersections.Snap;
-            if (curved.Length > 2 || kind != BlendKind.Fillet || !convex || Math.Abs(c) > 1e-9 || !curved.All(Fits))
-                return (null, default, [], "three blends meeting at a corner need a ball there, which the managed kernel makes only for three fillets of one radius at a square corner");
-            corners.Add((centre, d * (t == ts.Max() ? 1 : -1), curved));
+            const string refused = "three blends meeting at a corner need a ball there, which the managed kernel makes only for three fillets of one radius between flat faces";
+            if (curved.Length > 2 || kind != BlendKind.Fillet || !convex) return (null, default, [], refused);
+            if (BallCentre(body, curved, [a, b], tip - (nA + nB) * (size / (1 + c)), d, size) is not { } corner) return (null, default, [], refused);
+            corners.Add((corner.Centre, corner.Third, curved));
         }
         if (!convex)
         {
@@ -118,9 +116,9 @@ public static class Blends
         // The three fillets run on past the corner and cross there in a mitre, which holds the ball: what lies beyond
         // the ball's centre outside it goes.
         var result = settled!;
-        foreach (var (centre, ahead, _) in corners)
+        foreach (var (centre, third, _) in corners)
         {
-            var (cap, failed) = Cap(centre, nA, nB, ahead, size, body.Tolerance);
+            var (cap, failed) = Cap(centre, nA, nB, third, size, body.Tolerance);
             if (cap is null) return (null, default, [], $"the ball at the corner cannot be made: {failed}");
             var (cut, why2) = Booleans.Subtract(result.Body, cap.Body);
             if (why2 is not null) return (null, default, [], $"the ball at the corner cannot be cut: {why2}");
@@ -142,28 +140,125 @@ public static class Blends
     }
 
     /// <summary>
-    /// The corner a ball of radius r round <paramref name="centre"/> takes off a square corner whose faces look along
-    /// x, y and z (unit, square to each other): the cube from the centre 3r/2 along each, less the ball. The ball's
-    /// axis is square to the corner's diagonal and in none of the cube's sides, so neither pole nor its seam (opposite
-    /// the diagonal) lies on the corner's piece of it. Origins: operand 0 the cube's faces, 1 the ball's.
+    /// The ball's centre where the edge between <paramref name="faces"/> ends between two earlier fillets (cylinders
+    /// of radius r): where this fillet's axis (through <paramref name="axis"/> along d) meets theirs, r inside the third
+    /// face, the flat face both earlier fillets round off; with that face's outward normal. Null where the fillets are of
+    /// other radii, their axes miss one point, or no such third face is r from the centre.
+    /// </summary>
+    static (Point3D Centre, Vector3D Third)? BallCentre(Body body, FaceId[] fillets, FaceId[] faces, Point3D axis, Vector3D d, double r)
+    {
+        if (fillets.Select(f => body[f].Surface).ToArray() is not [Cylinder k1, Cylinder k2] || Math.Abs(k1.Radius - r) > 1e-9 || Math.Abs(k2.Radius - r) > 1e-9)
+            return null;
+        // The point of this axis nearest the first earlier one's.
+        var (e, w) = (k1.Frame.ZAxis, axis - k1.Frame.Origin);
+        var (de, dw, ew) = (d.Dot(e), d.Dot(w), e.Dot(w));
+        if (1 - de * de < 1e-12) return null;
+        var centre = axis + d * ((de * ew - dw) / (1 - de * de));
+        if (Off(k1, centre) > Intersections.Snap || Off(k2, centre) > Intersections.Snap) return null;
+        HashSet<FaceId> Next(FaceId f) => [.. body[f].Loops.SelectMany(body.CoedgesOf).SelectMany(c => body.UsesOf(body[c].Edge)).Select(body.FaceOf)];
+        var third = Next(fillets[0]).Intersect(Next(fillets[1])).Where(f => !faces.Contains(f) && !fillets.Contains(f) && body[f].Surface is Plane).ToList();
+        if (third is not [var f3]) return null;
+        var plane = (Plane)body[f3].Surface;
+        var n = plane.Frame.ZAxis * (body[f3].SameSense ? 1 : -1);
+        return Math.Abs((centre - plane.Frame.Origin).Dot(n) + r) <= Intersections.Snap ? (centre, n) : null;
+    }
+
+    /// <summary>
+    /// The corner a ball of radius r round <paramref name="centre"/> takes off a corner whose faces look along the unit
+    /// normals x, y and z: the sector the normals span from the centre (where the F-rep core takes the ball instead of
+    /// the fillets' mitre), cut off far enough to hold the corner's material, less the ball. For a square corner that
+    /// is the cube from the centre 3r/2 along each. The ball's axis is square to the sector's middle and leaves both
+    /// poles outside it, and its seam lies opposite, so neither falls on the corner's piece of it. Origins: operand 0
+    /// the sector's faces, 1 the ball's.
     /// </summary>
     static (Shaped?, string?) Cap(Point3D centre, Vector3D x, Vector3D y, Vector3D z, double r, double tolerance)
     {
-        var side = 1.5 * r;
-        var frame = RigidTransform3D.FromFrame(centre, z, x);
-        var turn = frame.YAxis.Dot(y) > 0 ? 1 : -1;
-        Point2D Q(double u, double v) => new(u, v * turn);
-        var square = new ProfileLoop([new LineSegment(Q(0, 0), Q(side, 0)), new LineSegment(Q(side, 0), Q(side, side)),
-            new LineSegment(Q(side, side), Q(0, side)), new LineSegment(Q(0, side), Q(0, 0))]);
-        var (cube, why) = Extrusion.Extrude(new Region(turn > 0 ? square : square.Reversed()), frame, 0, side, tolerance);
-        if (cube is null) return (null, why);
+        Vector3D[] g = [x, y, z];
+        var det = x.Dot(y.Cross(z));
+        if (Math.Abs(det) < 1e-9) return (null, "the corner's faces do not meet in one point");
+        // The dual basis: u_i · g_j = δ_ij, so a point C + Σ α_j g_j has α_i = u_i · (p − C); the sector is α ≥ 0.
+        Vector3D[] u = [y.Cross(z) / det, z.Cross(x) / det, x.Cross(y) / det];
         var diagonal = (x + y + z).Normalized();
+        if (g.Any(n => n.Dot(diagonal) <= 1e-6)) return (null, "the corner is too flat for a ball");
+        var w = x - y * 2 + z;
+        var pole = (w - diagonal * w.Dot(diagonal)).Normalized();
+        if (new[] { pole, -pole }.Any(q => u.All(ui => ui.Dot(q) >= -1e-6))) return (null, "the corner is too flat for a ball");
+
+        // The corner's material in the sector: α ≥ 0 and r beyond the centre at most along each normal (G α ≤ r, G the
+        // normals' dot products). Its farthest α along each normal (at a vertex of that), half again; and far enough
+        // that the far sides miss the ball.
+        var reach = new double[3];
+        foreach (var vertex in SectorVertices(g, r))
+            for (var j = 0; j < 3; j++) reach[j] = Math.Max(reach[j], vertex[j]);
+        var sides = Enumerable.Range(0, 3).Select(j => Math.Max(1.5 * reach[j], 1.5 * r * u[j].Length)).ToArray();
+        var sector = Parallelepiped(centre, x * sides[0], y * sides[1], z * sides[2], tolerance);
+
         var half = new ProfileLoop([new ArcSegment(new Point2D(0, 0), r, -Math.PI / 2, Math.PI), new LineSegment(new Point2D(0, r), new Point2D(0, -r))]);
-        var (ball, whyBall) = Revolution.Revolve(new Region(half), RigidTransform3D.FromFrame(centre, (x - y * 2 + z).Normalized(), -diagonal), tolerance);
+        var (ball, whyBall) = Revolution.Revolve(new Region(half), RigidTransform3D.FromFrame(centre, pole, -diagonal), tolerance);
         if (ball is null) return (null, whyBall);
-        var (left, failed) = Booleans.Subtract(cube.Body, ball.Body);
+        var (left, failed) = Booleans.Subtract(sector, ball.Body);
         if (failed is not null) return (null, failed);
-        return left is [var one] ? (one, null) : (null, "the cube less the ball is not one piece");
+        return left is [var one] ? (one, null) : (null, "the corner less the ball is not one piece");
+    }
+
+    // The vertices of { α ≥ 0, G α ≤ r }: three of its six sides met, the point inside the others.
+    static IEnumerable<double[]> SectorVertices(Vector3D[] g, double r)
+    {
+        // Side k: α_k ≥ 0 for k < 3, (G α)_(k−3) ≤ r for k ≥ 3, as a row and its bound.
+        (double[] Row, double Bound) Side(int k) => k < 3
+            ? ([.. Enumerable.Range(0, 3).Select(j => j == k ? 1.0 : 0)], 0)
+            : ([.. Enumerable.Range(0, 3).Select(j => g[k - 3].Dot(g[j]))], r);
+        for (var i = 0; i < 6; i++)
+        for (var j = i + 1; j < 6; j++)
+        for (var k = j + 1; k < 6; k++)
+        {
+            var (a, b, c) = (Side(i), Side(j), Side(k));
+            var (ra, rb, rc) = (new Vector3D(a.Row[0], a.Row[1], a.Row[2]), new Vector3D(b.Row[0], b.Row[1], b.Row[2]), new Vector3D(c.Row[0], c.Row[1], c.Row[2]));
+            var det = ra.Dot(rb.Cross(rc));
+            if (Math.Abs(det) < 1e-12) continue;
+            var alpha = (rb.Cross(rc) * a.Bound + rc.Cross(ra) * b.Bound + ra.Cross(rb) * c.Bound) / det;
+            double[] v = [alpha.X, alpha.Y, alpha.Z];
+            if (v.All(x => x >= -1e-9) && g.All(n => n.Dot(g[0]) * v[0] + n.Dot(g[1]) * v[1] + n.Dot(g[2]) * v[2] <= r + 1e-9)) yield return v;
+        }
+    }
+
+    /// <summary>The solid o + Σ μ_i a_i, μ in [0, 1]³: six flat faces, their loops round them seen from outside.</summary>
+    static Body Parallelepiped(Point3D o, Vector3D a, Vector3D b, Vector3D c, double tolerance)
+    {
+        var points = Enumerable.Range(0, 8).Select(i => o + a * (i & 1) + b * ((i >> 1) & 1) + c * ((i >> 2) & 1)).ToArray();
+        var middle = o + (a + b + c) / 2;
+        var builder = new BodyBuilder(tolerance);
+        var shell = builder.AddShell();
+        var vertices = points.Select(builder.AddVertex).ToArray();
+        var edges = new Dictionary<(int, int), (EdgeId Edge, Line3 Line)>();
+        (EdgeId Edge, Line3 Line) EdgeOf(int from, int to)
+        {
+            var key = (Math.Min(from, to), Math.Max(from, to));
+            if (edges.TryGetValue(key, out var e)) return e;
+            var along = points[key.Item2] - points[key.Item1];
+            var line = new Line3(points[key.Item1], along.Normalized());
+            return edges[key] = (builder.AddEdge(line, 0, along.Length, vertices[key.Item1], vertices[key.Item2]), line);
+        }
+        // Each side: the vertices with bit k at 0 or 1, round it in the other two bits.
+        for (var k = 0; k < 3; k++)
+        for (var at = 0; at < 2; at++)
+        {
+            var (p, q) = ((k + 1) % 3, (k + 2) % 3);
+            int[] loop = [.. new[] { (0, 0), (1, 0), (1, 1), (0, 1) }.Select(s => (at << k) | (s.Item1 << p) | (s.Item2 << q))];
+            var normal = (points[loop[1]] - points[loop[0]]).Cross(points[loop[3]] - points[loop[0]]);
+            var centre = loop.Aggregate(new Vector3D(0, 0, 0), (sum, i) => sum + (points[i] - o)) / 4;
+            if (normal.Dot(o + centre - middle) < 0) loop = [.. loop.Reverse()];
+            normal = (points[loop[1]] - points[loop[0]]).Cross(points[loop[3]] - points[loop[0]]).Normalized();
+            var plane = new Plane(RigidTransform3D.FromFrame(points[loop[0]], normal, (points[loop[1]] - points[loop[0]]).Normalized()));
+            var face = builder.AddFace(shell, plane, sameSense: true);
+            builder.AddLoop(face, [.. Enumerable.Range(0, 4).Select(i =>
+            {
+                var (from, to) = (loop[i], loop[(i + 1) % 4]);
+                var (edge, along) = EdgeOf(from, to);
+                return new BodyBuilder.Use(edge, from < to, Uv.Pcurve(plane, along));
+            })]);
+        }
+        return builder.Build();
     }
 
     // The circle where a flat face meets a cylinder square to it: the spandrel (or the chamfer's triangle) in the
