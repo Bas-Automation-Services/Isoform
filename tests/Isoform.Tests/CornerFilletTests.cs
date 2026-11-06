@@ -147,24 +147,48 @@ public class CornerFilletTests(ITestOutputHelper output)
     [InlineData(120)]
     public void A_corner_of_an_extruded_profile_is_a_sphere_too(double angle)
     {
-        // The top's two edges first, then the profile's corner between the sides: rounding that corner rounds the
-        // profile, and the ball comes with it.
+        var result = Modeler.Regenerate(ExtrudedCorner(angle));
+
+        result.Diagnostics.Should().BeEmpty();
+        var sphere = result.Part.Surfaces.Single(s => s.Source == "r3/corner:r1+r2+r3");
+        Deviation(result, sphere.Source, p => (p - sphere.Origin).Length - 2).Should().BeLessThan(1e-7);
+    }
+
+    [Theory]
+    [InlineData(90)]
+    [InlineData(120)]
+    public void Offset_keeps_the_ball_at_a_corner_of_an_extruded_profile(double angle)
+    {
+        const double d = 0.5;
+        var plain = Modeler.Regenerate(ExtrudedCorner(angle));
+        var result = Modeler.Regenerate(new PartDocument([.. ExtrudedCorner(angle).Features, new Offset("grow", d)]));
+
+        result.Diagnostics.Should().BeEmpty();
+        // The profile's other corners, sharp, turn round as it grows; the rest keep their names.
+        static string[] Names(FrepResult x) => x.Topology!.Faces.SelectMany(f => f.Sources).Order(StringComparer.Ordinal).ToArray();
+        Names(result).Except(Names(plain)).Should().HaveCount(3).And.OnlyContain(n => n.StartsWith("grow/corner:"));
+        Names(plain).Should().BeSubsetOf(Names(result));
+        // Every face moved out by d: the ball round the same centre, of radius r + d.
+        var centre = plain.Part.Surfaces.Single(s => s.Source == "r3/corner:r1+r2+r3").Origin;
+        Deviation(result, "r3/corner:r1+r2+r3", q => (q - centre).Length - (2 + d)).Should().BeLessThan(1e-7);
+    }
+
+    // The top's two edges first, then the profile's corner between the sides: rounding that corner rounds the
+    // profile, and the ball comes with it.
+    static PartDocument ExtrudedCorner(double angle)
+    {
         var t = angle * Math.PI / 180;
         var profile = new Profile([0, 0],
         [
             new ProfileEdge("side1", [30, 0]), new ProfileEdge("end1", [30, 30 * Math.Tan(t / 2)]),
             new ProfileEdge("end2", [30 * Math.Cos(t), 30 * Math.Sin(t)]), new ProfileEdge("side2", [0, 0]),
         ]);
-        var result = Modeler.Regenerate(new PartDocument(
+        return new PartDocument(
         [
             new Extrude("corner", BooleanOp.New, new SketchPlane([0, 0, 0], [1, 0, 0], [0, 0, 1]), profile, 0, 10),
             new Fillet("r1", ["corner/end", "corner/side1"], 2), new Fillet("r2", ["corner/end", "corner/side2"], 2),
             new Fillet("r3", ["corner/side1", "corner/side2"], 2),
-        ]));
-
-        result.Diagnostics.Should().BeEmpty();
-        var sphere = result.Part.Surfaces.Single(s => s.Source == "r3/corner:r1+r2+r3");
-        Deviation(result, sphere.Source, p => (p - sphere.Origin).Length - 2).Should().BeLessThan(1e-7);
+        ]);
     }
 
     // A 20 × 16 × 8 boss joined on a plate, the inside edges round its foot rounded: two meeting at its corner at

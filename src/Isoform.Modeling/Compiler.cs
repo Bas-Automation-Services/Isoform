@@ -594,15 +594,22 @@ public sealed class Compiler(ModelingSettings settings)
                 return grown.Any(c => c is null) ? null : new MaxField(grown!);
             }
             case MaxField m:
-                // A corner sphere is set again on its fillets as they moved; it goes when they shrank to nothing, or when
-                // one of them is a profile's rounded corner (not one of the fillets here).
+                // A corner sphere is set again on its fillets as they moved; it goes when they shrank to nothing.
                 var flat = m.Children.Where(c => c is not VertexSphereField).ToList();
                 return Each(flat, moved =>
                 {
-                    foreach (var v in m.Children.OfType<VertexSphereField>().Where(v => v.Edges.All(flat.Contains)))
-                        if (v.Edges.Select(e => moved[flat.IndexOf(e)]).OfType<RoundedEdgeField>().ToList() is { Count: 3 } edges) moved.Add(v.With(edges, register));
+                    foreach (var v in m.Children.OfType<VertexSphereField>())
+                        if (v.Edges.Select(e => flat.IndexOf(e) is var k and >= 0 ? moved[k] as RoundedEdgeField : AtCorner(e)).ToList() is var edges && edges.All(e => e is not null))
+                            moved.Add(v.With(edges!, register));
                     return new MaxField(moved);
                 });
+
+                // A profile's rounded corner, the fillet of its two sides a sphere meets: the same corner of the profile
+                // as it moved, with the moved arc's own face.
+                RoundedEdgeField? AtCorner(RoundedEdgeField e) =>
+                    e.Radius + d > 1e-9 && flat.OfType<ProfileField>().SelectMany(p => p.Leaves).FirstOrDefault(l => l.Surface.Id == e.Fillet.Id) is { } arc
+                        ? new RoundedEdgeField(Leaf(e.A, d), Leaf(e.B, d), e.Radius + d, Leaf(arc, d).Surface)
+                        : null;
             case MinField m when m.Children.OfType<LoopEdgeField>().FirstOrDefault(l => l.Side is NegateField) is { Side: NegateField { Child: var tool } } rim
                                  && m.Children.Any(c => c is LeafField l && l.Surface.Id == rim.Cap.Surface.Id && l.Complement != rim.Cap.Complement):
                 // What a cut-out's rim round takes away, normalized to min(−cap, tool, rim): the cap and the outside of
