@@ -651,6 +651,51 @@ and the playground say which (`from`: kernel or frep).
 volume; a chamfer before an offset falls back to the F-rep core's), the MCP export test expects `from: kernel` for a
 drilled plate; the product's STEP, build and export tests pass unchanged.
 
+## Experiment 20: local booleans, step 3: a face that grows is spliced (2026-11-06)
+
+Chosen from the candidates (5). `brep join n` joins n ribs onto a base one by one; each rib's front and back merge
+with the base's into a comb-shaped face that gains a tooth per join. Before, that face went through every stage of
+every boolean whole (arrangement, point location, merging, joining, welding, pairing, checking, flattening): 800 ribs
+50.5 s processor, quadratic with a large constant (about 5 µs per element per join).
+
+- *A use that is a coedge:* `Use.Of` is the first operand's coedge a use is, whole (kept when the use is only
+  reversed or its p-curve re-expressed, dropped when it is joined or cut). A face that is only split, not cut, keeps
+  its loops (no arrangement), its unsplit coedges tagged.
+- *Settled uses:* in `Sewing.Edit`, a tagged use whose edge a copied face also uses keeps that edge as it is, neither
+  welded nor matched; a corner where a loop goes on from a settled use to another is that use's vertex. Only the other
+  (loose) uses are welded, can be shared between pieces, or are paired.
+- *Splice:* pieces on one plane that merge, where one is a face of the first operand and the rest are loose, are
+  joined by dropping the uses they share and linking the stretches left end to end (`Sewing.Spliced`), not traced
+  again; corners are welded only for the loose uses and in the box round them. It refuses (and the members are traced
+  as before) where that does not make one outer loop with the holes as they were (a block closing a C makes a hole),
+  where a corner is left with two uses leaving it, or where two members have settled uses.
+- *Ring:* whole faces sewn again are only those next to a changed face on the same surface (a first operand not in
+  merged form): a whole face misses the other solid's box, so it can merge with nothing else. Before, every old rib's
+  top counted (same plane as the new rib's).
+- *Joining edges:* the uses leaving a corner are counted only once two consecutive uses on one curve are found.
+- *An uncut face's place:* no cut crosses it, so it lies outside the other solid where any of its corners lies outside
+  that solid's box; else found inside its cached flat loops.
+- *Intersecting:* an edge whose box misses a face is skipped in `Imprint` (its pieces lie outside that face); along a
+  curve two faces share, the larger face's edges count only near the smaller face (the smaller face's own points bound
+  every piece inside it). Edge boxes made once per boolean; splits and cuts kept only where there are some.
+- *Point in a long loop:* `FlatFace.Locate` takes a loop of more than 64 segments in runs of 32 with a box each; a run
+  whose box a point is outside is not near it and subtends the angle of its chord (a path in a convex box that does
+  not hold the point cannot turn round it). Same answer, a tenth of the segments visited on the comb.
+- *Whole-body passes:* `BodyCheck` (Euler, connectedness), `BodyBuilder.Build`, the flat face constructor and the
+  modeler's face names without LINQ sets over the whole body; `ProfileLoop.Winding` without a stack per straight segment.
+
+**Results** (processor time, back to back with the code before): 400 ribs 10.7 → 2.7 s, 800 ribs 50.5 → 8.8 s;
+1600 holes drilled one by one 21 → 15 s; the hole grid, loop fillet and the playground's examples a little faster,
+the same faces. What is left is O(body) per boolean: the result is a new immutable body (copying, checking, building,
+renumbering the copied faces' flat faces, classifying points against every face), about 1 µs per element per join,
+the same per face for joins as for drills now. Going further needs a body edited in place.
+
+**Tests:** ribs joined one by one, each an edit (`Solid.Edited`; the kernel's tests now see its internals), the front
+one face with a loop of 4n + 4 coedges; a block filling the gap between two posts (four faces merge, the top edges join
+through the corners left); a block closing a C (the splice refuses, the front gains a hole, genus 1); a rib flush with
+the base's end (its side and the end merge). 370 kernel tests, the OCCT read-back of the kernel's STEP (94) and the MCP
+export test pass.
+
 ## Next: candidates (to decide)
 
 What still stops the playground's examples, and what is left from before:
@@ -659,7 +704,8 @@ What still stops the playground's examples, and what is left from before:
    and its exact export does not follow the mitre either).
 3. **Arcs meeting lines at a corner** in loop fillets (a quartic, unless the radii make it a circle or ellipse).
 4. **Inventor as a second STEP reader**, parked.
-5. **Local booleans, further:** a face that grows with every feature (one loop edited, not rebuilt).
+5. **Local booleans, further:** a body edited in place, not copied whole by every boolean (experiment 20 left that
+   as the cost); a grown face's flat loops spliced too, not flattened again.
 6. **Mixed models, further** (see experiment 18; first, earlier text): today one model goes through one engine, and the B-rep modeler refuses the
    whole model at the first feature it does not take. Both share the document, `IModeler`, the face names and
    topology (identical on every test document) and the exact output (`Isoform.Step.Brep`), which makes a hand-off
@@ -673,4 +719,4 @@ What still stops the playground's examples, and what is left from before:
 
 Blended extrudes and shells (smooth F-rep blends) and lattices stay with the F-rep core.
 
-Recommended: 5 (local booleans) or 6 (mixed models), now that the playground's exact features are covered.
+Recommended: 1 or 3 (features the kernel still refuses); 5 only if real parts reach hundreds of features.

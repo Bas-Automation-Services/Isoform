@@ -166,9 +166,19 @@ public sealed class BodyBuilder(double tolerance = Body.DefaultTolerance)
 
     public Body Build()
     {
-        var coedges = ImmutableArray.CreateBuilder<Coedge>();
+        var count = new int[edges.Count];
+        var total = 0;
+        foreach (var (_, uses) in loops)
+        foreach (var u in uses)
+        {
+            count[u.Edge.Index]++;
+            total++;
+        }
+        var edgeUses = count.Select(n => new CoedgeId[n]).ToArray();
+        var filled = new int[edges.Count];
+        var coedges = ImmutableArray.CreateBuilder<Coedge>(total);
         var loopArray = ImmutableArray.CreateBuilder<Loop>(loops.Count);
-        var edgeUses = edges.Select(_ => ImmutableArray.CreateBuilder<CoedgeId>(2)).ToList();
+        var loopsOf = faces.Select(_ => new List<LoopId>(1)).ToArray();
         for (var l = 0; l < loops.Count; l++)
         {
             var (face, uses) = loops[l];
@@ -176,18 +186,20 @@ public sealed class BodyBuilder(double tolerance = Body.DefaultTolerance)
             for (var i = 0; i < uses.Count; i++)
             {
                 var next = new CoedgeId(first + (i + 1) % uses.Count);
-                edgeUses[uses[i].Edge.Index].Add(new CoedgeId(coedges.Count));
+                var e = uses[i].Edge.Index;
+                edgeUses[e][filled[e]++] = new CoedgeId(coedges.Count);
                 coedges.Add(new Coedge(uses[i].Edge, uses[i].Forward, new LoopId(l), next, uses[i].Pcurve));
             }
             loopArray.Add(new Loop(face, new CoedgeId(first)));
+            loopsOf[face.Index].Add(new LoopId(l));
         }
 
-        var loopsOf = Enumerable.Range(0, loops.Count).ToLookup(l => loops[l].Face.Index, l => new LoopId(l));
-        var facesOf = Enumerable.Range(0, faces.Count).ToLookup(f => faces[f].Shell.Index, f => new FaceId(f));
+        var facesOf = Enumerable.Range(0, shells).Select(_ => new List<FaceId>()).ToArray();
+        for (var f = 0; f < faces.Count; f++) facesOf[faces[f].Shell.Index].Add(new FaceId(f));
         var faceArray = faces.Select((f, i) => new Face(f.Surface, f.SameSense, f.Shell, [.. loopsOf[i]])).ToImmutableArray();
-        var shellArray = Enumerable.Range(0, shells).Select(s => new Shell([.. facesOf[s]])).ToImmutableArray();
+        var shellArray = facesOf.Select(f => new Shell([.. f])).ToImmutableArray();
 
-        return new Body(tolerance, [.. vertices], [.. edges], coedges.ToImmutable(), loopArray.ToImmutable(), faceArray, shellArray,
-            [.. edgeUses.Select(u => u.ToImmutable())]);
+        return new Body(tolerance, [.. vertices], [.. edges], coedges.MoveToImmutable(), loopArray.MoveToImmutable(), faceArray, shellArray,
+            [.. edgeUses.Select(System.Runtime.InteropServices.ImmutableCollectionsMarshal.AsImmutableArray)]);
     }
 }

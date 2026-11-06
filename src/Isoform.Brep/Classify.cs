@@ -19,42 +19,68 @@ internal sealed class FlatFace
         var face = body[id];
         Surface = face.Surface;
         SameSense = face.SameSense;
-        Edges = [.. face.Loops.SelectMany(body.CoedgesOf).Select(c => body[c].Edge).Distinct()];
-        Loops = [.. face.Loops.Select((l, i) => known is not null && known.TryGetValue(i, out var k) ? k.Loop : new ProfileLoop([.. body.CoedgesOf(l).Select(c =>
-        {
-            var (from, to) = body.ParametersOf(c);
-            return Uv.Flat(Surface, body[c].Pcurve, from, to);
-        })]))];
-        boxes = [.. Loops.Select((l, i) => known is not null && known.TryGetValue(i, out var k) ? k.Box : BoxOf(l))];
+        var edges = new List<EdgeId>();
+        var seen = new HashSet<EdgeId>();
+        var loops = new ProfileLoop[face.Loops.Length];
+        boxes = new (Point2D, Point2D)[face.Loops.Length];
+        runs = new Run[]?[face.Loops.Length];
         // The windows of a periodic u or v: from the lowest the face's p-curves reach.
-        var ends = face.Loops.SelectMany(body.CoedgesOf).SelectMany(c =>
+        var periodic = Surface.PeriodU is not null || Surface.PeriodV is not null;
+        var (uMin, vMin) = (double.MaxValue, double.MaxValue);
+        for (var i = 0; i < face.Loops.Length; i++)
         {
-            var (from, to) = body.ParametersOf(c);
-            return new[] { body[c].Pcurve.At(from), body[c].Pcurve.At(to) };
-        }).ToList();
-        if (Surface.PeriodU is not null) UMin = ends.Min(p => p.X);
-        if (Surface.PeriodV is not null) VMin = ends.Min(p => p.Y);
+            var given = known is not null && known.TryGetValue(i, out var k) ? k : ((ProfileLoop, (Point2D, Point2D))?)null;
+            var segments = given is null ? new List<Segment>() : null;
+            foreach (var c in body.CoedgesOf(face.Loops[i]))
+            {
+                var coedge = body[c];
+                if (seen.Add(coedge.Edge)) edges.Add(coedge.Edge);
+                var (from, to) = body.ParametersOf(c);
+                segments?.Add(Uv.Flat(Surface, coedge.Pcurve, from, to));
+                if (!periodic) continue;
+                var (a, b) = (coedge.Pcurve.At(from), coedge.Pcurve.At(to));
+                (uMin, vMin) = (Math.Min(uMin, Math.Min(a.X, b.X)), Math.Min(vMin, Math.Min(a.Y, b.Y)));
+            }
+            loops[i] = given?.Item1 ?? new ProfileLoop(segments!);
+            boxes[i] = given?.Item2 ?? BoxOf(loops[i]);
+        }
+        (Edges, Loops) = (edges, loops);
+        if (Surface.PeriodU is not null) UMin = uMin;
+        if (Surface.PeriodV is not null) VMin = vMin;
 
         // The edges' ends and the points where they turn back along an axis, grown to hold the whole face: a plane,
         // cylinder or cone face lies between its edges (on lines across it); a torus face reaches at most the tube's
         // diameter from them; a sphere face may bulge anywhere on the sphere (a ball's edges are only its seam and poles).
         // A flat face lies within its outer loop.
-        var bounding = Surface is Plane ? [.. body.CoedgesOf(face.Loops[0]).Select(c => body[c].Edge).Distinct()] : Edges;
-        var points = bounding.SelectMany(e => Extremes(body[e])).ToList();
+        var (lo, hi) = (new Point3D(double.MaxValue, double.MaxValue, double.MaxValue), new Point3D(double.MinValue, double.MinValue, double.MinValue));
+        void Add(Point3D p) =>
+            (lo, hi) = (new Point3D(Math.Min(lo.X, p.X), Math.Min(lo.Y, p.Y), Math.Min(lo.Z, p.Z)), new Point3D(Math.Max(hi.X, p.X), Math.Max(hi.Y, p.Y), Math.Max(hi.Z, p.Z)));
+        IEnumerable<EdgeId> bounding = Surface is Plane ? body.CoedgesOf(face.Loops[0]).Select(c => body[c].Edge) : Edges;
+        foreach (var e in bounding)
+        {
+            var edge = body[e];
+            if (edge.Curve is Line3 or Pole)
+            {
+                Add(edge.Curve.At(edge.T0));
+                Add(edge.Curve.At(edge.T1));
+            }
+            else
+                foreach (var p in Extremes(edge)) Add(p);
+        }
         if (Surface is Sphere o)
         {
             var r = new Vector3D(o.Radius, o.Radius, o.Radius);
-            points.AddRange([o.Frame.Origin - r, o.Frame.Origin + r]);
+            Add(o.Frame.Origin - r);
+            Add(o.Frame.Origin + r);
         }
         var pad = (Surface is Torus t ? 2 * t.Minor : 0) + Intersections.Snap;
-        Box = (new Point3D(points.Min(p => p.X) - pad, points.Min(p => p.Y) - pad, points.Min(p => p.Z) - pad),
-               new Point3D(points.Max(p => p.X) + pad, points.Max(p => p.Y) + pad, points.Max(p => p.Z) + pad));
+        Box = (new Point3D(lo.X - pad, lo.Y - pad, lo.Z - pad), new Point3D(hi.X + pad, hi.Y + pad, hi.Z + pad));
     }
 
     // The same face in a body whose edges are numbered otherwise.
     FlatFace(FlatFace face, IReadOnlyList<EdgeId> edges)
     {
-        (Surface, SameSense, Edges, Loops, UMin, VMin, Box, boxes) = (face.Surface, face.SameSense, edges, face.Loops, face.UMin, face.VMin, face.Box, face.boxes);
+        (Surface, SameSense, Edges, Loops, UMin, VMin, Box, boxes, runs) = (face.Surface, face.SameSense, edges, face.Loops, face.UMin, face.VMin, face.Box, face.boxes, face.runs);
     }
 
     /// <summary>This face copied whole into another body, its edges there by <paramref name="edge"/>.</summary>
@@ -67,6 +93,26 @@ internal sealed class FlatFace
     public double UMin { get; }
     public double VMin { get; }
     public (Point3D Min, Point3D Max) Box { get; }
+
+    /// <summary>A box round an edge, grown by twice the snap.</summary>
+    public static (Point3D Min, Point3D Max) BoxOf(Edge e)
+    {
+        var (lo, hi) = (new Point3D(double.MaxValue, double.MaxValue, double.MaxValue), new Point3D(double.MinValue, double.MinValue, double.MinValue));
+        void Add(Point3D p) =>
+            (lo, hi) = (new Point3D(Math.Min(lo.X, p.X), Math.Min(lo.Y, p.Y), Math.Min(lo.Z, p.Z)), new Point3D(Math.Max(hi.X, p.X), Math.Max(hi.Y, p.Y), Math.Max(hi.Z, p.Z)));
+        if (e.Curve is Line3 or Pole)
+        {
+            Add(e.Curve.At(e.T0));
+            Add(e.Curve.At(e.T1));
+        }
+        else
+            foreach (var p in Extremes(e)) Add(p);
+        var pad = 2 * Intersections.Snap;
+        return (new Point3D(lo.X - pad, lo.Y - pad, lo.Z - pad), new Point3D(hi.X + pad, hi.Y + pad, hi.Z + pad));
+    }
+
+    public static bool Touch((Point3D Min, Point3D Max) a, (Point3D Min, Point3D Max) b) =>
+        a.Min.X <= b.Max.X && b.Min.X <= a.Max.X && a.Min.Y <= b.Max.Y && b.Min.Y <= a.Max.Y && a.Min.Z <= b.Max.Z && b.Min.Z <= a.Max.Z;
 
     // An edge's ends, and on a circle or ellipse (O + a cos t X + b sin t Y) the points within it where a coordinate
     // is least or greatest: tan t = b Y_i / (a X_i).
@@ -128,8 +174,75 @@ internal sealed class FlatFace
         // A loop whose box the point is outside is neither near it nor round it.
         var near = Enumerable.Range(0, Loops.Count).Where(l => Within(boxes[l], flat)).ToList();
         foreach (var l in near)
-            if (Loops[l].Segments.Any(s => Distances.To(s, flat) <= Intersections.Snap)) return Place.Boundary;
-        return near.Sum(l => Loops[l].Winding(flat)) != 0 ? Place.Inside : Place.Outside;
+            if (Touches(l, flat)) return Place.Boundary;
+        return near.Sum(l => Winding(l, flat)) != 0 ? Place.Inside : Place.Outside;
+    }
+
+    // A long loop in runs of consecutive segments, each with a box grown by the snap round all its points (made when
+    // first asked; none for a loop with segments of other curves). A run whose box a point is outside is not within the
+    // snap of it, and subtends at it the angle of the chord from the run's start to its end: a path in a convex box
+    // that does not hold the point cannot turn round it.
+    readonly record struct Run(int From, int To, (Point2D Min, Point2D Max) Box);
+
+    const int RunLength = 32;
+    readonly Run[]?[] runs = [];
+
+    Run[] RunsOf(int loop) => runs[loop] ??= Runs(Loops[loop].Segments);
+
+    static Run[] Runs(IReadOnlyList<Segment> segments)
+    {
+        if (segments.Count <= 2 * RunLength || segments.Any(s => s is CurveSegment)) return [];
+        var result = new List<Run>();
+        for (var from = 0; from < segments.Count; from += RunLength)
+        {
+            var to = Math.Min(from + RunLength, segments.Count);
+            var (lo, hi) = (new Point2D(double.MaxValue, double.MaxValue), new Point2D(double.MinValue, double.MinValue));
+            void Add(Point2D p) => (lo, hi) = (new Point2D(Math.Min(lo.X, p.X), Math.Min(lo.Y, p.Y)), new Point2D(Math.Max(hi.X, p.X), Math.Max(hi.Y, p.Y)));
+            for (var i = from; i < to; i++)
+            {
+                Add(segments[i].Start);
+                Add(segments[i].End);
+                // An arc's points farthest along each axis, where it reaches them.
+                if (segments[i] is ArcSegment a)
+                    for (var k = 0; k < 4; k++)
+                        if (a.Covers(k * Math.PI / 2)) Add(a.PointAt(k * Math.PI / 2));
+            }
+            var pad = Intersections.Snap;
+            result.Add(new Run(from, to, (new Point2D(lo.X - pad, lo.Y - pad), new Point2D(hi.X + pad, hi.Y + pad))));
+        }
+        return [.. result];
+    }
+
+    // Whether a loop passes within the snap of a point.
+    bool Touches(int loop, Point2D p)
+    {
+        var segments = Loops[loop].Segments;
+        if (RunsOf(loop) is not { Length: > 0 } runs)
+            return segments.Any(s => Distances.To(s, p) <= Intersections.Snap);
+        foreach (var run in runs)
+            if (Within(run.Box, p))
+                for (var i = run.From; i < run.To; i++)
+                    if (Distances.To(segments[i], p) <= Intersections.Snap) return true;
+        return false;
+    }
+
+    // How many times a loop winds round a point away from it.
+    int Winding(int loop, Point2D p)
+    {
+        var l = Loops[loop];
+        if (RunsOf(loop) is not { Length: > 0 } runs) return l.Winding(p);
+        var (angle, turns) = (0.0, 0);
+        foreach (var run in runs)
+        {
+            if (!Within(run.Box, p))
+            {
+                angle += ProfileLoop.Chord(l.Segments[run.From].Start, l.Segments[run.To - 1].End, p);
+                continue;
+            }
+            var (a, t) = l.Subtends(p, run.From, run.To);
+            (angle, turns) = (angle + a, turns + t);
+        }
+        return turns + (int)Math.Round(angle / (2 * Math.PI));
     }
 
     // Each loop's box in flat (u, v), grown by the snap and, round a curve's samples, by a tenth of the loop's size.
@@ -220,8 +333,7 @@ internal sealed class FlatFace
         return Surface.Normal(uv.X, uv.Y) * (SameSense ? 1 : -1);
     }
 
-    public bool Overlaps((Point3D Min, Point3D Max) b) =>
-        Box.Min.X <= b.Max.X && b.Min.X <= Box.Max.X && Box.Min.Y <= b.Max.Y && b.Min.Y <= Box.Max.Y && Box.Min.Z <= b.Max.Z && b.Min.Z <= Box.Max.Z;
+    public bool Overlaps((Point3D Min, Point3D Max) b) => Touch(Box, b);
 }
 
 /// <summary>A body's faces in flat form, for locating points against it.</summary>
@@ -238,6 +350,9 @@ internal sealed class Solid(Body body)
     /// </summary>
     public static void Carry(Body body, FlatFace?[] faces, Dictionary<int, Dictionary<int, (ProfileLoop, (Point2D, Point2D))>> loops) =>
         carried.AddOrUpdate(body, new Kept(faces, loops));
+
+    /// <summary>Whether a boolean made the body as an edit of its first operand (which keeps the faces it copied).</summary>
+    internal static bool Edited(Body body) => carried.TryGetValue(body, out _);
 
     public Body Body { get; } = body;
     public FlatFace[] Faces { get; } = [.. Enumerable.Range(0, body.Faces.Length).Select(f =>

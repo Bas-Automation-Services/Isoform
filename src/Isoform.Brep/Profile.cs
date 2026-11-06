@@ -68,13 +68,29 @@ public sealed record ProfileLoop(IReadOnlyList<Segment> Segments)
     /// </summary>
     public int Winding(Point2D p)
     {
+        var (angle, turns) = Subtends(p, 0, Segments.Count);
+        return turns + (int)Math.Round(angle / (2 * Math.PI));
+    }
+
+    /// <summary>
+    /// The angle segments <paramref name="from"/> to <paramref name="to"/> (exclusive) subtend at p, chords taken for
+    /// arcs, and the turns of the arcs whose circular segment holds p (see <see cref="Winding"/>).
+    /// </summary>
+    internal (double Angle, int Turns) Subtends(Point2D p, int from, int to)
+    {
         double angle = 0;
         var turns = 0;
-        foreach (var s in Segments)
+        for (var i = from; i < to; i++)
         {
+            var s = Segments[i];
             if (s is CurveSegment curve)
             {
                 angle += curve.Subtended(p);
+                continue;
+            }
+            if (s is LineSegment)
+            {
+                angle += Chord(s.Start, s.End, p);
                 continue;
             }
             // An arc in halves: a point on a piece's chord (often, where the chord runs through other vertices) sees
@@ -97,7 +113,14 @@ public sealed record ProfileLoop(IReadOnlyList<Segment> Segments)
                 if (piece is ArcSegment arc && InCircularSegment(arc, p)) turns += Math.Sign(arc.Sweep);
             }
         }
-        return turns + (int)Math.Round(angle / (2 * Math.PI));
+        return (angle, turns);
+    }
+
+    /// <summary>The angle the chord from <paramref name="a"/> to <paramref name="b"/> subtends at p, its sign the exact side of p.</summary>
+    internal static double Chord(Point2D a, Point2D b, Point2D p)
+    {
+        var (u, v) = (a - p, b - p);
+        return Math.Sign(Predicates.Orient2D(a, b, p)) * Math.Atan2(Math.Abs(u.X * v.Y - u.Y * v.X), u.X * v.X + u.Y * v.Y);
     }
 
     // Inside the circle and on the arc's side of its chord (a full circle has no chord).

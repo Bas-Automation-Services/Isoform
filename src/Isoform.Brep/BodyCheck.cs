@@ -59,7 +59,7 @@ public static class BodyCheck
         {
             var edge = body.Edges[e];
             var uses = body.UsesOf(new EdgeId(e));
-            if (unchanged is not null && uses.Length > 0 && uses.All(u => Known(body.FaceOf(u)) || KnownLoop(body[u].Loop)) &&
+            if (unchanged is not null && uses.Length > 0 && AllKnown(uses) &&
                 (edge.Curve is Pole ? uses.Length == 1 : uses.Length == 2 && body[uses[0]].Forward != body[uses[1]].Forward))
                 continue;
             var pole = edge.Curve is Pole;
@@ -69,6 +69,13 @@ public static class BodyCheck
             if (!(edge.T1 > edge.T0)) Add(ProblemKind.EdgeEnds, $"edge {e}", $"empty parameter range [{edge.T0}, {edge.T1}]");
             CheckEnd(e, edge.Start, edge.T0, "start");
             CheckEnd(e, edge.End, edge.T1, "end");
+        }
+
+        bool AllKnown(System.Collections.Immutable.ImmutableArray<CoedgeId> uses)
+        {
+            foreach (var u in uses)
+                if (!Known(body.FaceOf(u)) && !KnownLoop(body[u].Loop)) return false;
+            return true;
         }
 
         void CheckEnd(int e, VertexId vertex, double t, string which)
@@ -89,9 +96,9 @@ public static class BodyCheck
                 var coedge = body[c];
                 var edge = body[coedge.Edge];
                 var next = coedge.Next;
-                var where = $"face {body[loopId].Face.Index} loop {l} coedge {c.Index}";
+                string Where() => $"face {body[loopId].Face.Index} loop {l} coedge {c.Index}";
                 if (body.EndOf(c) != body.StartOf(next))
-                    Add(ProblemKind.LoopBroken, where, $"ends at vertex {body.EndOf(c).Index}, the next coedge starts at {body.StartOf(next).Index}");
+                    Add(ProblemKind.LoopBroken, Where(), $"ends at vertex {body.EndOf(c).Index}, the next coedge starts at {body.StartOf(next).Index}");
 
                 var worst = 0.0;
                 for (var i = 0; i < Samples; i++)
@@ -101,7 +108,7 @@ public static class BodyCheck
                     worst = Math.Max(worst, (surface.At(uv.X, uv.Y) - edge.Curve.At(t)).Length);
                 }
                 if (worst > edge.Tolerance)
-                    Add(ProblemKind.PcurveOffEdge, where, $"its p-curve is up to {worst:g3} off edge {coedge.Edge.Index}");
+                    Add(ProblemKind.PcurveOffEdge, Where(), $"its p-curve is up to {worst:g3} off edge {coedge.Edge.Index}");
 
                 // The jump from this p-curve's end to the next one's start, measured in space through the surface's
                 // first derivatives: a seam taken on the wrong side jumps a whole period.
@@ -109,7 +116,7 @@ public static class BodyCheck
                 var start = body[next].Pcurve.At(body.ParametersOf(next).From);
                 var jump = surface.DerivativeU(end.X, end.Y) * (start.X - end.X) + surface.DerivativeV(end.X, end.Y) * (start.Y - end.Y);
                 if (jump.Length > body[body.EndOf(c)].Tolerance)
-                    Add(ProblemKind.LoopOpenInUv, where, $"its p-curve ends at ({end.X:g6}, {end.Y:g6}), the next starts at ({start.X:g6}, {start.Y:g6})");
+                    Add(ProblemKind.LoopOpenInUv, Where(), $"its p-curve ends at ({end.X:g6}, {end.Y:g6}), the next starts at ({start.X:g6}, {start.Y:g6})");
             }
         }
 
@@ -156,23 +163,42 @@ public static class BodyCheck
     static int TwiceEuler(Body body, ShellId shell)
     {
         var faces = body[shell].Faces;
-        var coedges = faces.SelectMany(f => body[f].Loops).SelectMany(body.CoedgesOf).ToList();
-        var v = coedges.Select(body.StartOf).Distinct().Count();
-        var e = coedges.Select(c => body[c].Edge).Distinct().Count(edge => body[edge].Curve is not Pole);
-        var l = faces.Sum(f => body[f].Loops.Length);
+        var (vertexSeen, edgeSeen) = (new bool[body.Vertices.Length], new bool[body.Edges.Length]);
+        var (v, e, l) = (0, 0, 0);
+        foreach (var f in faces)
+        foreach (var loop in body[f].Loops)
+        {
+            l++;
+            foreach (var c in body.CoedgesOf(loop))
+            {
+                var start = body.StartOf(c).Index;
+                if (!vertexSeen[start]) (vertexSeen[start], v) = (true, v + 1);
+                var edge = body[c].Edge.Index;
+                if (edgeSeen[edge]) continue;
+                edgeSeen[edge] = true;
+                if (body.Edges[edge].Curve is not Pole) e++;
+            }
+        }
         return v - e + 2 * faces.Length - l;
     }
 
     static bool Connected(Body body, ShellId shell)
     {
         var faces = body[shell].Faces;
-        var seen = new HashSet<FaceId> { faces[0] };
+        var seen = new bool[body.Faces.Length];
+        seen[faces[0].Index] = true;
         var todo = new Stack<FaceId>([faces[0]]);
         while (todo.TryPop(out var f))
-            foreach (var c in body[f].Loops.SelectMany(body.CoedgesOf))
+            foreach (var loop in body[f].Loops)
+            foreach (var c in body.CoedgesOf(loop))
             foreach (var use in body.UsesOf(body[c].Edge))
-                if (seen.Add(body.FaceOf(use))) todo.Push(body.FaceOf(use));
-        return faces.All(seen.Contains);
+            {
+                var g = body.FaceOf(use);
+                if (seen[g.Index]) continue;
+                seen[g.Index] = true;
+                todo.Push(g);
+            }
+        return faces.All(f => seen[f.Index]);
     }
 
     // Whether the hole's first point lies inside the outer loop in (u, v): winding number of the outer loop's p-curves,

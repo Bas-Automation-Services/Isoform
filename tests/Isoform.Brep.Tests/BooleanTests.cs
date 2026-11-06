@@ -248,4 +248,69 @@ public class BooleanTests(ITestOutputHelper output)
         BodyCheck.Problems(wider).Should().BeEmpty();
         wider.Faces.Count(f => f.Surface is Cylinder).Should().Be(15);
     }
+
+    // The face of a body on the plane y = 0 (the front, seen from -y).
+    static Face Front(Body body) => body.Faces.Single(f => f.Surface is Plane p && Math.Abs(p.Frame.ZAxis.Y) > 0.99 && Math.Abs(p.Frame.Origin.Y) < 1e-9);
+
+    [Fact]
+    public void Ribs_joined_one_by_one_grow_the_front_and_back_by_edits()
+    {
+        // Each rib's front and back merge with the base's: one face each side that gains a tooth per join, its loop
+        // spliced, not traced again; everything else the earlier joins made is copied.
+        var body = Prism(Rectangle(0, 0, 125, 20), 0, 5);
+        for (var k = 0; k < 12; k++)
+        {
+            body = One(Booleans.Unite(body, Prism(Rectangle(5 + 10 * k, 0, 10 + 10 * k, 20), 5, 15))).Body;
+            Solid.Edited(body).Should().BeTrue($"rib {k} is joined by an edit");
+        }
+        MassProperties.Volume(body).Should().BeApproximately(125 * 20 * 5 + 12 * 5 * 20 * 10, 1e-9);
+        BodyCheck.Problems(body).Should().BeEmpty();
+        body.Faces.Should().HaveCount(4 * 12 + 6);
+        var front = Front(body);
+        front.Loops.Should().ContainSingle();
+        body.CoedgesOf(front.Loops[0]).Should().HaveCount(4 * 12 + 4);
+    }
+
+    [Fact]
+    public void A_block_filling_the_gap_between_two_posts_closes_the_front()
+    {
+        // The front of a U, and a block in its gap flush with the posts: the faces merge into one rectangle, and the top
+        // edges either side of the block's join through the corners they no longer share with anything.
+        var u = One(Booleans.Unite(Prism(Rectangle(0, 0, 30, 20), 0, 10), Prism(Rectangle(0, 0, 10, 20), 10, 20))).Body;
+        u = One(Booleans.Unite(u, Prism(Rectangle(20, 0, 30, 20), 10, 20))).Body;
+        var r = One(Booleans.Unite(u, Prism(Rectangle(10, 0, 20, 20), 10, 20))).Body;
+        MassProperties.Volume(r).Should().BeApproximately(30 * 20 * 20, 1e-9);
+        BodyCheck.Problems(r).Should().BeEmpty();
+        r.Faces.Should().HaveCount(6);
+        r.Edges.Should().HaveCount(12);
+    }
+
+    [Fact]
+    public void A_block_closing_a_c_makes_a_hole_in_the_front()
+    {
+        // The block meets the C's front along two stretches apart: the front gains a hole, which a splice cannot make, so
+        // the faces are traced again.
+        var c = One(Booleans.Unite(Prism(Rectangle(0, 0, 30, 20), 0, 10), Prism(Rectangle(0, 0, 10, 20), 10, 20))).Body;
+        c = One(Booleans.Unite(c, Prism(Rectangle(0, 0, 25, 20), 20, 30))).Body;
+        var r = One(Booleans.Unite(c, Prism(Rectangle(15, 0, 25, 20), 10, 20))).Body;
+        MassProperties.Volume(r).Should().BeApproximately((30 * 10 + 10 * 10 + 25 * 10 + 10 * 10) * 20, 1e-9);
+        BodyCheck.Problems(r).Should().BeEmpty();
+        BodyCheck.Genus(r, new ShellId(0)).Should().Be(1);
+        Front(r).Loops.Should().HaveCount(2);
+    }
+
+    [Fact]
+    public void A_rib_flush_with_the_end_merges_with_it()
+    {
+        var body = Prism(Rectangle(0, 0, 40, 20), 0, 5);
+        body = One(Booleans.Unite(body, Prism(Rectangle(5, 0, 10, 20), 5, 15))).Body;
+        var r = One(Booleans.Unite(body, Prism(Rectangle(35, 0, 40, 20), 5, 15))).Body;
+        MassProperties.Volume(r).Should().BeApproximately(40 * 20 * 5 + 2 * 5 * 20 * 10, 1e-9);
+        BodyCheck.Problems(r).Should().BeEmpty();
+        // The base's bottom, front, back and ends (the right one and rib 2's right are one face), two strips of its top,
+        // rib 1's left, top and right, rib 2's left and top.
+        r.Faces.Should().HaveCount(5 + 2 + 3 + 2);
+        body.CoedgesOf(Front(body).Loops[0]).Should().HaveCount(8);
+        r.CoedgesOf(Front(r).Loops[0]).Should().HaveCount(10);
+    }
 }

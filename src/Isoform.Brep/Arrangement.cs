@@ -14,7 +14,20 @@ internal sealed record Use(Curve3 Curve, double From, double To, Curve2 Pcurve)
     public Point3D Start => Curve.At(From);
     public Point3D End => Curve.At(To);
     public Point3D Mid => Curve.At((From + To) / 2);
-    public Use Reversed() => this with { From = To, To = From };
+
+    /// <summary>
+    /// The coedge of a boolean's first operand this use is, whole: what lets an edit keep that coedge's edge. Kept
+    /// when the use is only reversed (<see cref="Turned"/>) or its p-curve re-expressed; a use made otherwise has none.
+    /// </summary>
+    public CoedgeId? Of { get; init; }
+
+    /// <summary>Run against <see cref="Of"/>.</summary>
+    public bool Turned { get; init; }
+
+    /// <summary>The first operand's coedge this use is, whole and in its direction.</summary>
+    public CoedgeId? As => Turned ? null : Of;
+
+    public Use Reversed() => this with { From = To, To = From, Turned = !Turned };
 }
 
 /// <summary>
@@ -178,9 +191,12 @@ internal static class Arrangement
     /// A point well inside a face given by its loops (face on the left in (u, v)): on a few horizontal lines across
     /// the face, the middle of the widest stretches inside it, keeping the one farthest from every loop. In (u, v).
     /// </summary>
-    public static Point2D Inside(Surface surface, IEnumerable<IReadOnlyList<Use>> loops)
+    public static Point2D Inside(Surface surface, IEnumerable<IReadOnlyList<Use>> loops) =>
+        Inside(surface, [.. loops.SelectMany(l => l.Select(u => Uv.Flat(surface, u.Pcurve, u.From, u.To)))]);
+
+    /// <summary>A point well inside a face given by its loops' segments in flat (u, v). In (u, v).</summary>
+    public static Point2D Inside(Surface surface, List<Segment> segments)
     {
-        var segments = loops.SelectMany(l => l.Select(u => Uv.Flat(surface, u.Pcurve, u.From, u.To))).ToList();
         var ys = segments.SelectMany(Samples).Select(p => p.Y).ToList();
         var (low, high) = (ys.Min(), ys.Max());
         (Point2D Point, double Clearance)? best = null;

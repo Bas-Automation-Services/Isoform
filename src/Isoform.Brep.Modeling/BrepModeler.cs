@@ -624,8 +624,17 @@ public sealed class BrepModeler(ModelingSettings settings) : IModeler
 
     // A result body named from its operands: each face by every source of the faces it came from.
     static NamedBody Named(Shaped shaped, NamedBody[] operands) => new(shaped.Body,
-        Enumerable.Range(0, shaped.Body.Faces.Length).ToDictionary(f => new FaceId(f), f => (IReadOnlyList<string>)
-            [.. shaped.Origins[f].SelectMany(o => operands[o.Operand].Names[o.Face]).Distinct().Order(StringComparer.Ordinal)]));
+        Enumerable.Range(0, shaped.Body.Faces.Length).ToDictionary(f => new FaceId(f), f =>
+            // One origin whose names are in order already (as every boolean leaves them) keeps its list.
+            shaped.Origins[f] is [var one] && operands[one.Operand].Names[one.Face] is var names && Ordered(names) ? names
+            : (IReadOnlyList<string>)[.. shaped.Origins[f].SelectMany(o => operands[o.Operand].Names[o.Face]).Distinct().Order(StringComparer.Ordinal)]));
+
+    static bool Ordered(IReadOnlyList<string> names)
+    {
+        for (var i = 1; i < names.Count; i++)
+            if (string.CompareOrdinal(names[i - 1], names[i]) >= 0) return false;
+        return true;
+    }
 
     // The plane and regions an extrude or revolve sweeps: its inline profile, or the regions of its sketch where it
     // was solved (for a revolve round a line of the sketch, put round that line).

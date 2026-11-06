@@ -17,17 +17,20 @@ internal static class Sewing
 
     /// <summary>
     /// Patches that lie on one surface, face the same way and share an edge, merged into one face (through every
-    /// edge they share, so faces round a cylinder close into one with a seam). Their origins are pooled.
+    /// edge they share, so faces round a cylinder close into one with a seam). Their origins are pooled. Only
+    /// <paramref name="loose"/> uses can be shared (all when null): an edit knows the others' partners already.
     /// </summary>
-    public static List<Patch> MergeSurfaces(List<Patch> patches)
+    public static List<Patch> MergeSurfaces(List<Patch> patches, Func<Use, bool>? loose = null)
     {
+        var edit = loose is not null;
+        loose ??= _ => true;
         var parent = Enumerable.Range(0, patches.Count).ToArray();
         int Find(int i) => parent[i] == i ? i : parent[i] = Find(parent[i]);
         // Only patches with a use between the same two points can share an edge.
         var points = new Welded();
         var between = new Dictionary<(int, int), List<int>>();
         for (var i = 0; i < patches.Count; i++)
-        foreach (var u in patches[i].Loops.SelectMany(l => l))
+        foreach (var u in patches[i].Loops.SelectMany(l => l).Where(loose))
         {
             var (a, b) = (points[u.Start], points[u.End]);
             var key = (Math.Min(a, b), Math.Max(a, b));
@@ -37,24 +40,122 @@ internal static class Sewing
         foreach (var list in between.Values)
         for (var x = 0; x < list.Count; x++)
         for (var y = x + 1; y < list.Count; y++)
-            if (Find(list[x]) != Find(list[y]) && Mergeable(patches[list[x]], patches[list[y]])) parent[Find(list[x])] = Find(list[y]);
+            if (Find(list[x]) != Find(list[y]) && Mergeable(patches[list[x]], patches[list[y]], loose)) parent[Find(list[x])] = Find(list[y]);
 
         var result = new List<Patch>();
         foreach (var group in Enumerable.Range(0, patches.Count).GroupBy(Find))
         {
             var members = group.Select(i => patches[i]).ToList();
-            result.AddRange(members.Count == 1 ? members : Merge(members));
+            if (members.Count == 1) result.Add(members[0]);
+            else if (edit && Spliced(members, loose) is { } one) result.Add(one);
+            else result.AddRange(Merge(members));
         }
         return result;
     }
 
-    static bool Mergeable(Patch a, Patch b)
+    static bool Mergeable(Patch a, Patch b, Func<Use, bool> loose)
     {
         if (!Intersections.SameSurface(a.Surface, b.Surface)) return false;
         var p = a.Loops[0][0].Start;
         if (OutwardAt(a, p).Dot(OutwardAt(b, p)) <= 0) return false;
-        var bUses = b.Loops.SelectMany(l => l).ToList();
-        return a.Loops.SelectMany(l => l).Any(u => bUses.Any(w => Opposite(u, w)));
+        var bUses = b.Loops.SelectMany(l => l).Where(loose).ToList();
+        return a.Loops.SelectMany(l => l).Where(loose).Any(u => bUses.Any(w => Opposite(u, w)));
+    }
+
+    /// <summary>
+    /// Members on a plane joined without tracing the face again: each loop's uses kept in order, those two members
+    /// share dropped, and the stretches left joined where one ends and the next begins. For a face that grows by
+    /// pieces joined along its outer loop (a comb whose every tooth is a join). Null where that does not make one outer
+    /// loop with the holes as they were, where a corner is met twice, or where more than one member has uses that are
+    /// not loose (its own corners are then not all known): the members are traced again.
+    /// </summary>
+    static Patch? Spliced(List<Patch> members, Func<Use, bool> loose)
+    {
+        if (members[0].Surface is not Plane plane) return null;
+        if (members.Count(m => m.Loops.Any(l => l.Any(u => !loose(u)))) > 1) return null;
+        var loops = new List<(int Loop, IReadOnlyList<Use> Uses)>();
+        foreach (var m in members)
+            for (var l = 0; l < m.Loops.Count; l++)
+                loops.Add((l, ReferenceEquals(m.Surface, plane) ? m.Loops[l] : [.. m.Loops[l].Select(u => u with { Pcurve = Uv.Pcurve(plane, u.Curve) })]));
+
+        // Corners: the loose uses' ends, and the other uses' ends in the box round those (where a loose use could meet them).
+        var welded = new Welded();
+        var (lo, hi) = (new Point3D(double.MaxValue, double.MaxValue, double.MaxValue), new Point3D(double.MinValue, double.MinValue, double.MinValue));
+        foreach (var u in loops.SelectMany(l => l.Uses).Where(loose))
+            foreach (var p in new[] { u.Start, u.End })
+                (lo, hi) = (new Point3D(Math.Min(lo.X, p.X), Math.Min(lo.Y, p.Y), Math.Min(lo.Z, p.Z)), new Point3D(Math.Max(hi.X, p.X), Math.Max(hi.Y, p.Y), Math.Max(hi.Z, p.Z)));
+        bool InBox(Point3D p) => p.X >= lo.X - Snap && p.X <= hi.X + Snap && p.Y >= lo.Y - Snap && p.Y <= hi.Y + Snap && p.Z >= lo.Z - Snap && p.Z <= hi.Z + Snap;
+        int Corner(Use u, Point3D p) => loose(u) || InBox(p) ? welded[p] : -1;
+        var starts = loops.Select(l => l.Uses.Select(u => Corner(u, u.Start)).ToArray()).ToList();
+        var ends = loops.Select(l => l.Uses.Select(u => Corner(u, u.End)).ToArray()).ToList();
+
+        // Shared: a loose use and a loose use back along it.
+        var dropped = loops.Select(l => new bool[l.Uses.Count]).ToList();
+        var leaving = new Dictionary<int, List<(int Loop, int Index)>>();
+        for (var l = 0; l < loops.Count; l++)
+            for (var i = 0; i < loops[l].Uses.Count; i++)
+                if (loose(loops[l].Uses[i]))
+                {
+                    if (!leaving.TryGetValue(starts[l][i], out var list)) leaving[starts[l][i]] = list = [];
+                    list.Add((l, i));
+                }
+        for (var l = 0; l < loops.Count; l++)
+            for (var i = 0; i < loops[l].Uses.Count; i++)
+            {
+                var u = loops[l].Uses[i];
+                if (dropped[l][i] || !loose(u)) continue;
+                foreach (var (m, j) in leaving.GetValueOrDefault(ends[l][i]) ?? [])
+                    if (!dropped[m][j] && (m, j) != (l, i) && ends[m][j] == starts[l][i] && Opposite(u, loops[m].Uses[j]))
+                    {
+                        dropped[l][i] = dropped[m][j] = true;
+                        break;
+                    }
+            }
+
+        // A corner left with more than one use leaving it is a pinch: traced again.
+        var count = new Dictionary<int, int>();
+        for (var l = 0; l < loops.Count; l++)
+            for (var i = 0; i < loops[l].Uses.Count; i++)
+                if (!dropped[l][i] && starts[l][i] >= 0 && (count[starts[l][i]] = count.GetValueOrDefault(starts[l][i]) + 1) > 1) return null;
+
+        // The stretches left, by the corner they start at; loops with nothing shared kept as they are (only holes may be).
+        var runs = new List<(List<Use> Uses, int From, int To)>();
+        var holes = new List<IReadOnlyList<Use>>();
+        for (var l = 0; l < loops.Count; l++)
+        {
+            var (n, uses) = (loops[l].Uses.Count, loops[l].Uses);
+            if (!dropped[l].Contains(true))
+            {
+                if (loops[l].Loop == 0) return null;
+                holes.Add(uses);
+                continue;
+            }
+            if (loops[l].Loop != 0 || !dropped[l].Contains(false)) return null;
+            for (var i = 0; i < n; i++)
+            {
+                if (dropped[l][i] || !dropped[l][(i + n - 1) % n]) continue;
+                var run = new List<Use>();
+                var k = i;
+                for (; !dropped[l][k]; k = (k + 1) % n) run.Add(uses[k]);
+                var last = (k + n - 1) % n;
+                if (starts[l][i] < 0 || ends[l][last] < 0) return null;
+                runs.Add((run, starts[l][i], ends[l][last]));
+            }
+        }
+        var startingAt = new Dictionary<int, int>();
+        for (var r = 0; r < runs.Count; r++)
+            if (!startingAt.TryAdd(runs[r].From, r)) return null;
+        // One cycle through every stretch: the outer loop.
+        var outer = new List<Use>();
+        var seen = new bool[runs.Count];
+        for (var r = 0; !seen[r];)
+        {
+            seen[r] = true;
+            outer.AddRange(runs[r].Uses);
+            if (!startingAt.TryGetValue(runs[r].To, out r)) return null;
+        }
+        if (seen.Contains(false)) return null;
+        return new Patch(plane, members[0].SameSense, [outer, .. holes], members.SelectMany(m => m.Origins).ToHashSet());
     }
 
     static Vector3D OutwardAt(Patch patch, Point3D p)
@@ -263,119 +364,144 @@ internal static class Sewing
     /// <summary>
     /// A boolean's result as an edit of its first operand <paramref name="a"/>: the faces in <paramref name="whole"/>
     /// come through untouched and are copied as they are, with their edges, vertices and p-curves, but for those next
-    /// to the rest on the same surface (which merge with it). The rest (the other kept pieces) is sewn as
-    /// <see cref="Sew"/> sews, onto the copied faces' own edges where it meets them, its edges joined through a corner
-    /// only where the copied faces leave none there either. Null where that does not fit (a use nothing pairs, a vertex
-    /// claimed twice, more than one shell, a copied corner left with two edges on one curve): the caller then sews
-    /// everything.
+    /// to a changed face on the same surface (which merge with its pieces). The rest (the other kept pieces) is sewn as
+    /// <see cref="Sew"/> sews, onto the copied faces' own edges where it meets them. A use that is the first operand's
+    /// coedge whole, on an edge a copied face also uses, keeps that edge (settled: it is neither welded nor matched);
+    /// the others are welded and paired, a corner where a loop goes on from a settled use being that use's vertex.
+    /// Edges are joined through a corner only where the copied faces leave none there either. Null where that does
+    /// not fit (a use nothing pairs, a vertex claimed twice, more than one shell, a copied corner left with two edges
+    /// on one curve): the caller then sews everything.
     /// </summary>
     internal static Shaped? Edit(Solid solid, IReadOnlySet<int> whole, List<Patch> rest, double tolerance)
     {
         var a = solid.Body;
-        // Untouched faces next to a face that is not, on a surface of the rest: they merge with it, so are sewn again.
+        // Untouched faces next to a changed one on the same surface (a first operand not in merged form): they merge
+        // with its pieces, so are sewn again. A whole face misses the other solid's box, so it meets nothing else.
         var ring = new HashSet<int>();
-        for (var e = 0; e < a.Edges.Length; e++)
+        for (var f = 0; f < a.Faces.Length; f++)
         {
-            var faces = a.UsesOf(new EdgeId(e)).Select(u => a.FaceOf(u).Index).Distinct().ToList();
-            if (faces.All(whole.Contains)) continue;
-            foreach (var f in faces.Where(whole.Contains))
-                if (rest.Any(p => Intersections.SameSurface(p.Surface, a.Faces[f].Surface))) ring.Add(f);
-        }
-        var copied = whole.Where(f => !ring.Contains(f)).Order().ToList();
-        if (copied.Count == 0) return null;
-        var isCopied = new HashSet<int>(copied);
-
-        // Where the region meets the copied faces: a's edges between a copied face and one sewn again, by curve and range,
-        // and how many copied coedges leave each of their ends (for joining).
-        var boundary = new Dictionary<(Curve3, double, double), int>(new BoundaryKey());
-        var ends = new HashSet<VertexId>();
-        for (var e = 0; e < a.Edges.Length; e++)
-        {
-            var faces = a.UsesOf(new EdgeId(e)).Select(u => a.FaceOf(u).Index).ToList();
-            if (!faces.Any(isCopied.Contains) || faces.All(isCopied.Contains)) continue;
-            boundary[(a.Edges[e].Curve, a.Edges[e].T0, a.Edges[e].T1)] = e;
-            ends.Add(a.Edges[e].Start);
-            ends.Add(a.Edges[e].End);
-        }
-        // Carried holes stay whole where every edge of theirs runs along a copied face and their patch merges with
-        // nothing; otherwise they are sewn with the rest.
-        bool Keeps(Carried c) => a.CoedgesOf(c.Loop).All(co => a.UsesOf(a[co].Edge).Any(u => isCopied.Contains(a.FaceOf(u).Index)));
-        var patches = rest.Concat(ring.Select(f => Booleans.PatchOf(a, new FaceId(f), 0) with { Unchanged = true })).ToList();
-        patches = [.. patches.Select(p => p.Carried.Count == 0 ? p
-            : p.Carried.All(Keeps) && !patches.Any(q => q != p && Mergeable(p, q)) ? p
-            : p.Expanded())];
-        var carried = patches.SelectMany(p => p.Carried).Select(c => c.Loop).ToHashSet();
-        var touched = new Welded();
-        foreach (var u in patches.SelectMany(p => p.Loops).SelectMany(l => l)) (_, _) = (touched[u.Start], touched[u.End]);
-        var leavingCopied = new List<Point3D>();
-        for (var c = 0; c < a.Coedges.Length; c++)
-        {
-            var co = new CoedgeId(c);
-            var from = a.StartOf(co);
-            if (ends.Contains(from) && (isCopied.Contains(a.FaceOf(co).Index) || carried.Contains(a[co].Loop)) && touched.Find(a[from].Point) is not null)
-                leavingCopied.Add(a[from].Point);
-        }
-        var region = JoinEdges(MergeSurfaces(patches), leavingCopied);
-
-        var uses = region.SelectMany((p, pi) => p.Loops.SelectMany((l, li) => l.Select((u, ui) => (Patch: pi, Loop: li, Index: ui, Use: u)))).ToList();
-        var welded = new Welded();
-        var start = uses.Select(u => welded[u.Use.Start]).ToArray();
-        var end = uses.Select(u => welded[u.Use.End]).ToArray();
-        var indexOf = Enumerable.Range(0, uses.Count).ToDictionary(i => (uses[i].Patch, uses[i].Loop, uses[i].Index));
-        // Each use's partner: another use, itself (a pole), or ~e for a's edge e on the boundary.
-        var partner = Enumerable.Repeat(int.MinValue, uses.Count).ToArray();
-        // The welded points that are a's vertices.
-        var vertexOfPoint = new Dictionary<int, VertexId>();
-        bool Claim(int point, VertexId v) => vertexOfPoint.TryGetValue(point, out var had) ? had == v : (vertexOfPoint[point] = v) == v;
-        for (var i = 0; i < uses.Count; i++)
-        {
-            var u = uses[i].Use;
-            if (u.Curve is Pole) partner[i] = i;
-            else if (boundary.TryGetValue((u.Curve, Math.Min(u.From, u.To), Math.Max(u.From, u.To)), out var e))
+            if (whole.Contains(f)) continue;
+            foreach (var loop in a.Faces[f].Loops)
+            foreach (var c in a.CoedgesOf(loop))
+            foreach (var u in a.UsesOf(a[c].Edge))
             {
-                var edge = a.Edges[e];
-                var (s0, s1) = u.From < u.To ? (edge.Start, edge.End) : (edge.End, edge.Start);
-                if (!Claim(start[i], s0) || !Claim(end[i], s1)) return null;
-                partner[i] = ~e;
+                var x = a.FaceOf(u).Index;
+                if (x != f && whole.Contains(x) && Intersections.SameSurface(a.Faces[x].Surface, a.Faces[f].Surface)) ring.Add(x);
             }
         }
-        var byStart = Enumerable.Range(0, uses.Count).Where(i => partner[i] == int.MinValue).ToLookup(i => start[i]);
+        var isCopied = new bool[a.Faces.Length];
+        foreach (var f in whole) isCopied[f] = !ring.Contains(f);
+        var copied = Enumerable.Range(0, a.Faces.Length).Where(f => isCopied[f]).ToList();
+        if (copied.Count == 0) return null;
+
+        // The edge a settled use keeps: its coedge's, used by a copied face too.
+        EdgeId? Settled(Use u)
+        {
+            if (u.As is not { } c) return null;
+            foreach (var o in a.UsesOf(a[c].Edge))
+                if (o != c && isCopied[a.FaceOf(o).Index]) return a[c].Edge;
+            return null;
+        }
+        bool Loose(Use u) => Settled(u) is null;
+
+        // Carried holes stay whole where every edge of theirs runs along a copied face and their patch merges with
+        // nothing; otherwise they are sewn with the rest.
+        bool Keeps(Carried c) => a.CoedgesOf(c.Loop).All(co => a.UsesOf(a[co].Edge).Any(u => isCopied[a.FaceOf(u).Index]));
+        var patches = rest.Concat(ring.Select(f => Booleans.PatchOf(a, new FaceId(f), 0) with { Unchanged = true })).ToList();
+        patches = [.. patches.Select(p => p.Carried.Count == 0 ? p
+            : p.Carried.All(Keeps) && !patches.Any(q => q != p && Mergeable(p, q, Loose)) ? p
+            : p.Expanded())];
+        var carried = patches.SelectMany(p => p.Carried).Select(c => c.Loop).ToHashSet();
+        // The copied faces' and carried holes' coedges leaving a point (asked only where two uses could be joined).
+        int LeavingCopied(Point3D p)
+        {
+            var n = 0;
+            for (var c = 0; c < a.Coedges.Length; c++)
+            {
+                var co = new CoedgeId(c);
+                if ((isCopied[a.FaceOf(co).Index] || carried.Contains(a[co].Loop)) && Near(a[a.StartOf(co)].Point, p)) n++;
+            }
+            return n;
+        }
+        var region = JoinEdges(MergeSurfaces(patches, Loose), LeavingCopied);
+
+        var uses = region.SelectMany((p, pi) => p.Loops.SelectMany(l => l.Select(u => (Patch: pi, Use: u)))).ToList();
+        var settled = uses.Select(u => Settled(u.Use)).ToArray();
+        var welded = new Welded();
+        var start = new int[uses.Count];
+        var end = new int[uses.Count];
+        for (var i = 0; i < uses.Count; i++)
+            (start[i], end[i]) = settled[i] is null ? (welded[uses[i].Use.Start], welded[uses[i].Use.End]) : (-1, -1);
+        // The welded points that are a's vertices: where a loop goes from a settled use to another, or back.
+        var vertexOfPoint = new Dictionary<int, VertexId>();
+        bool Claim(int point, VertexId v) => vertexOfPoint.TryGetValue(point, out var had) ? had == v : (vertexOfPoint[point] = v) == v;
+        var first = 0;
+        foreach (var loop in region.SelectMany(p => p.Loops))
+        {
+            for (var k = 0; k < loop.Count; k++)
+            {
+                var (x, y) = (first + k, first + (k + 1) % loop.Count);
+                if (settled[x] is not null && settled[y] is null && !Claim(start[y], a.EndOf(uses[x].Use.As!.Value))) return null;
+                if (settled[x] is null && settled[y] is not null && !Claim(end[x], a.StartOf(uses[y].Use.As!.Value))) return null;
+            }
+            first += loop.Count;
+        }
+        // Each other use's partner: another use, or itself (a pole).
+        var partner = Enumerable.Repeat(-1, uses.Count).ToArray();
+        var byStart = Enumerable.Range(0, uses.Count).Where(i => settled[i] is null).ToLookup(i => start[i]);
         for (var i = 0; i < uses.Count; i++)
         {
-            if (partner[i] != int.MinValue) continue;
+            if (settled[i] is not null || partner[i] >= 0) continue;
+            if (uses[i].Use.Curve is Pole)
+            {
+                partner[i] = i;
+                continue;
+            }
             foreach (var j in byStart[end[i]])
             {
-                if (j == i || partner[j] != int.MinValue || end[j] != start[i] || !Opposite(uses[i].Use, uses[j].Use)) continue;
+                if (j == i || partner[j] >= 0 || end[j] != start[i] || !Opposite(uses[i].Use, uses[j].Use)) continue;
                 (partner[i], partner[j]) = (j, i);
                 break;
             }
-            if (partner[i] == int.MinValue) return null;
+            if (partner[i] < 0) return null;
         }
 
         // One shell, or the full sewing sorts solids from voids.
         var parent = Enumerable.Range(0, region.Count + a.Faces.Length).ToArray();
         int Find(int i) => parent[i] == i ? i : parent[i] = Find(parent[i]);
         void Union(int x, int y) => parent[Find(x)] = Find(y);
+        int CopiedFaceOf(EdgeId e)
+        {
+            foreach (var u in a.UsesOf(e))
+                if (isCopied[a.FaceOf(u).Index]) return a.FaceOf(u).Index;
+            throw new InvalidOperationException("a settled use's edge has no copied face");
+        }
         for (var i = 0; i < uses.Count; i++)
-            if (partner[i] >= 0) Union(uses[i].Patch, uses[partner[i]].Patch);
-            else Union(uses[i].Patch, region.Count + a.UsesOf(new EdgeId(~partner[i])).Select(c => a.FaceOf(c).Index).First(isCopied.Contains));
+            if (settled[i] is { } e) Union(uses[i].Patch, region.Count + CopiedFaceOf(e));
+            else Union(uses[i].Patch, uses[partner[i]].Patch);
         for (var e = 0; e < a.Edges.Length; e++)
         {
-            var faces = a.UsesOf(new EdgeId(e)).Select(c => a.FaceOf(c).Index).Where(isCopied.Contains).ToList();
-            for (var k = 1; k < faces.Count; k++) Union(region.Count + faces[0], region.Count + faces[k]);
+            var one = -1;
+            foreach (var u in a.UsesOf(new EdgeId(e)))
+            {
+                var f = a.FaceOf(u).Index;
+                if (!isCopied[f]) continue;
+                if (one < 0) one = f;
+                else Union(region.Count + one, region.Count + f);
+            }
         }
         for (var pi = 0; pi < region.Count; pi++)
         foreach (var c in region[pi].Carried)
-            Union(pi, region.Count + a.UsesOf(a[a[c.Loop].First].Edge).Select(u => a.FaceOf(u).Index).First(isCopied.Contains));
+            Union(pi, region.Count + CopiedFaceOf(a[a[c.Loop].First].Edge));
         var roots = Enumerable.Range(0, region.Count).Select(Find).Concat(copied.Select(f => Find(region.Count + f))).Distinct().Count();
         if (roots != 1) return null;
 
         var builder = new BodyBuilder(tolerance);
         var shell = builder.AddShell();
-        var vertexOfA = new Dictionary<VertexId, VertexId>();
-        VertexId VA(VertexId v) => vertexOfA.TryGetValue(v, out var id) ? id : vertexOfA[v] = builder.AddVertex(a[v].Point);
-        var edgeOfA = new Dictionary<int, EdgeId>();
-        EdgeId EA(int e) => edgeOfA.TryGetValue(e, out var id) ? id : edgeOfA[e] = builder.AddEdge(a.Edges[e].Curve, a.Edges[e].T0, a.Edges[e].T1, VA(a.Edges[e].Start), VA(a.Edges[e].End));
+        var vertexOfA = new VertexId?[a.Vertices.Length];
+        VertexId VA(VertexId v) => vertexOfA[v.Index] ??= builder.AddVertex(a[v].Point);
+        var edgeOfA = new EdgeId?[a.Edges.Length];
+        EdgeId EA(EdgeId e) => edgeOfA[e.Index] ??= builder.AddEdge(a[e].Curve, a[e].T0, a[e].T1, VA(a[e].Start), VA(a[e].End));
         var pointIds = new Dictionary<int, VertexId>();
         VertexId V(int point) => vertexOfPoint.TryGetValue(point, out var v) ? VA(v) : pointIds.TryGetValue(point, out var id) ? id : pointIds[point] = builder.AddVertex(welded.Points[point]);
 
@@ -387,11 +513,12 @@ internal static class Sewing
             unchanged.Add(face.Index);
             origins.Add([new Origin(0, new FaceId(f))]);
             foreach (var loop in a.Faces[f].Loops)
-                builder.AddLoop(face, [.. a.CoedgesOf(loop).Select(c => new BodyBuilder.Use(EA(a[c].Edge.Index), a[c].Forward, a[c].Pcurve))]);
+                builder.AddLoop(face, [.. a.CoedgesOf(loop).Select(c => new BodyBuilder.Use(EA(a[c].Edge), a[c].Forward, a[c].Pcurve))]);
         }
         var edgeOf = new Dictionary<int, (EdgeId Edge, bool Forward, Curve2 Pcurve)>();
         var knownLoops = new HashSet<int>();
         var flatLoops = new Dictionary<int, Dictionary<int, (ProfileLoop, (Point2D, Point2D))>>();
+        var next = 0;
         for (var pi = 0; pi < region.Count; pi++)
         {
             var patch = region[pi];
@@ -399,23 +526,19 @@ internal static class Sewing
             // Carried holes after the patch's own loops, with a's edges (shared with copied faces) and p-curves.
             var hints = new Dictionary<int, (ProfileLoop, (Point2D, Point2D))>();
             for (var k = 0; k < patch.Carried.Count; k++)
-            {
-                var c = patch.Carried[k];
-                hints[patch.Loops.Count + k] = (c.Flat, c.Box);
-            }
+                hints[patch.Loops.Count + k] = (patch.Carried[k].Flat, patch.Carried[k].Box);
             if (hints.Count > 0) flatLoops[face.Index] = hints;
             if (patch.Unchanged) unchanged.Add(face.Index);
             origins.Add([.. patch.Origins.OrderBy(o => o.Operand).ThenBy(o => o.Face.Index)]);
-            for (var li = 0; li < patch.Loops.Count; li++)
+            foreach (var loop in patch.Loops)
             {
-                var loopUses = new List<BodyBuilder.Use>();
-                for (var ui = 0; ui < patch.Loops[li].Count; ui++)
+                var loopUses = new List<BodyBuilder.Use>(loop.Count);
+                foreach (var u in loop)
                 {
-                    var i = indexOf[(pi, li, ui)];
-                    var u = uses[i].Use;
-                    if (partner[i] < 0 && partner[i] != int.MinValue)
+                    var i = next++;
+                    if (settled[i] is { } kept)
                     {
-                        loopUses.Add(new BodyBuilder.Use(EA(~partner[i]), u.From < u.To, u.Pcurve));
+                        loopUses.Add(new BodyBuilder.Use(EA(kept), u.From < u.To, u.Pcurve));
                         continue;
                     }
                     if (!edgeOf.TryGetValue(i, out var e))
@@ -436,30 +559,27 @@ internal static class Sewing
                 builder.AddLoop(face, loopUses);
             }
             foreach (var c in patch.Carried)
-                knownLoops.Add(builder.AddLoop(face, [.. a.CoedgesOf(c.Loop).Select(co => new BodyBuilder.Use(EA(a[co].Edge.Index), a[co].Forward, a[co].Pcurve))]).Index);
+                knownLoops.Add(builder.AddLoop(face, [.. a.CoedgesOf(c.Loop).Select(co => new BodyBuilder.Use(EA(a[co].Edge), a[co].Forward, a[co].Pcurve))]).Index);
         }
         var body = builder.Build();
         // A corner where the region meets the copied faces, left with two edges on one curve: the full sewing joins them.
-        var corners = ends.Where(vertexOfA.ContainsKey).Select(v => vertexOfA[v]).ToHashSet();
-        var at = corners.ToDictionary(v => v, _ => new List<int>());
+        var corner = new bool[body.Vertices.Length];
+        foreach (var e in settled)
+            if (e is { } kept)
+                corner[body[EA(kept)].Start.Index] = corner[body[EA(kept)].End.Index] = true;
+        var at = new List<int>?[body.Vertices.Length];
         for (var e = 0; e < body.Edges.Length; e++)
-            foreach (var v in new[] { body.Edges[e].Start, body.Edges[e].End }.Distinct())
-                if (at.TryGetValue(v, out var list)) list.Add(e);
-        if (at.Values.Any(l => l.Count == 2 && SameCarrier(body.Edges[l[0]].Curve, body.Edges[l[1]].Curve))) return null;
+        {
+            var (s, f) = (body.Edges[e].Start.Index, body.Edges[e].End.Index);
+            if (corner[s]) (at[s] ??= []).Add(e);
+            if (f != s && corner[f]) (at[f] ??= []).Add(e);
+        }
+        if (at.Any(l => l is { Count: 2 } && SameCarrier(body.Edges[l[0]].Curve, body.Edges[l[1]].Curve))) return null;
         // The copied faces come first; the next boolean on the body takes their flat faces as they were.
         var flat = new FlatFace?[body.Faces.Length];
-        for (var k = 0; k < copied.Count; k++) flat[k] = solid.Faces[copied[k]].Renumbered(e => edgeOfA[e.Index]);
+        for (var k = 0; k < copied.Count; k++) flat[k] = solid.Faces[copied[k]].Renumbered(e => edgeOfA[e.Index]!.Value);
         Solid.Carry(body, flat, flatLoops);
         return Checked((new Shaped(body, origins), unchanged), knownLoops);
-    }
-
-    // A curve by reference and a range to the snap: a's edge as a use of it runs.
-    sealed class BoundaryKey : IEqualityComparer<(Curve3 Curve, double T0, double T1)>
-    {
-        public bool Equals((Curve3 Curve, double T0, double T1) x, (Curve3 Curve, double T0, double T1) y) =>
-            ReferenceEquals(x.Curve, y.Curve) && Math.Abs(x.T0 - y.T0) <= 1e-9 && Math.Abs(x.T1 - y.T1) <= 1e-9;
-
-        public int GetHashCode((Curve3 Curve, double T0, double T1) x) => System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(x.Curve);
     }
 
     static Shaped Checked((Shaped Shaped, HashSet<int> Unchanged) built, IReadOnlySet<int>? loops = null) => BodyCheck.Problems(built.Shaped.Body, built.Unchanged, loops) is [var first, ..]
@@ -467,16 +587,27 @@ internal static class Sewing
         : built.Shaped;
 
     // Consecutive uses on one curve through a vertex where only their two edges meet, joined into one use.
-    // `more`: the starts of uses outside the patches that leave their corners too (faces an edit copies).
-    static List<Patch> JoinEdges(List<Patch> patches, IEnumerable<Point3D>? more = null)
+    // `more`: how many uses outside the patches leave a point too (faces an edit copies). The uses leaving a corner are
+    // counted only once two uses on one curve meet somewhere.
+    static List<Patch> JoinEdges(List<Patch> patches, Func<Point3D, int>? more = null)
     {
-        var points = new Welded();
-        int Vertex(Point3D p) => points[p];
+        Welded? points = null;
         var leaving = new Dictionary<int, int>();
-        foreach (var start in patches.SelectMany(p => p.Loops).SelectMany(l => l).Select(u => u.Start).Concat(more ?? []))
+        var asked = new HashSet<int>();
+        int Leaving(Point3D p)
         {
-            var v = Vertex(start);
-            leaving[v] = leaving.GetValueOrDefault(v) + 1;
+            if (points is null)
+            {
+                points = new Welded();
+                foreach (var start in patches.SelectMany(q => q.Loops).SelectMany(l => l).Select(u => u.Start))
+                {
+                    var n = points[start];
+                    leaving[n] = leaving.GetValueOrDefault(n) + 1;
+                }
+            }
+            var v = points[p];
+            if (more is not null && asked.Add(v)) leaving[v] = leaving.GetValueOrDefault(v) + more(p);
+            return leaving.GetValueOrDefault(v);
         }
 
         return [.. patches.Select(p => p with { Loops = [.. p.Loops.Select(Join)] })];
@@ -490,7 +621,7 @@ internal static class Sewing
                 for (var i = 0; i < list.Count && list.Count > 1; i++)
                 {
                     var (x, y) = (list[i], list[(i + 1) % list.Count]);
-                    if (leaving[Vertex(x.End)] != 2 || Opposite(x, y) || !SameCarrier(x.Curve, y.Curve)) continue;
+                    if (!SameCarrier(x.Curve, y.Curve) || Opposite(x, y) || Leaving(x.End) != 2) continue;
                     list[i] = Joined(x, y);
                     list.RemoveAt((i + 1) % list.Count);
                     changed = true;
@@ -523,7 +654,7 @@ internal static class Sewing
             if (turn <= Snap) turn = 2 * Math.PI;
             t = x.To + direction * turn;
         }
-        return x with { To = t };
+        return x with { To = t, Of = null };
     }
 }
 
