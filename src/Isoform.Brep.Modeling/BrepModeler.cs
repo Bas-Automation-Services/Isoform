@@ -563,6 +563,19 @@ public sealed class BrepModeler(ModelingSettings settings) : IModeler
     // cut out of each. Other bodies are left as they are.
     static Diagnostic? Apply(List<(NamedBody Solid, string Body)> solids, string current, List<NamedBody> tools, BooleanOp op, string id)
     {
+        // A body too thin for the tolerance (a sliver) fails its own merge: refused as a failing boolean is.
+        try
+        {
+            return Applied(solids, current, tools, op, id);
+        }
+        catch (BooleanFailure failure)
+        {
+            return Unsupported(id, $"{id}: {failure.Message}");
+        }
+    }
+
+    static Diagnostic? Applied(List<(NamedBody Solid, string Body)> solids, string current, List<NamedBody> tools, BooleanOp op, string id)
+    {
         switch (op)
         {
             case BooleanOp.New:

@@ -19,6 +19,13 @@ public class BackendTests(ITestOutputHelper output)
     static List<string> Describe(Topology t) =>
         t.Faces.Select(f => $"{string.Join("+", f.Sources)} | {string.Join(",", t.Signature(f.Index))}").Order().ToList();
 
+    [Fact]
+    public void A_sliver_thinner_than_the_snap_is_refused_not_thrown()
+    {
+        var result = new BrepModeler(Settings).Regenerate(new PartDocument([new Block("sliver", BooleanOp.New, [0, 0, 0], [10, 10, 1e-6])]));
+        result.Diagnostics.Should().ContainSingle().Which.FeatureId.Should().Be("sliver");
+    }
+
     [Theory]
     [MemberData(nameof(Documents.All), MemberType = typeof(Documents))]
     public void Volume_is_exact(string name, PartDocument document, double volume)

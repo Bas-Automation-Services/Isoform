@@ -644,9 +644,10 @@ internal static class Uv
         return new Point2D(Math.Atan2(q.Y, q.X), Math.Atan2(q.Z, Math.Sqrt(q.X * q.X + q.Y * q.Y) - t.Major));
     }
 
-    /// <summary>How flat (u, v) scales u: the radius on a cylinder, the major radius on a torus, the radius at the
+    /// <summary>How flat (u, v) scales u: the radius on a cylinder, the major radius on a torus (its size: a tube across
+    /// the axis has its centre circle on the far side, a negative major radius), the radius at the
     /// frame's origin on a cone.</summary>
-    public static double Scale(Surface s) => s switch { Cylinder c => c.Radius, Torus t => t.Major, Cone k => k.Radius, Sphere o => o.Radius, _ => 1 };
+    public static double Scale(Surface s) => s switch { Cylinder c => c.Radius, Torus t => Math.Abs(t.Major), Cone k => k.Radius, Sphere o => o.Radius, _ => 1 };
 
     /// <summary>How flat (u, v) scales v: the minor radius on a torus, the radius on a sphere.</summary>
     public static double ScaleV(Surface s) => s switch { Torus t => t.Minor, Sphere o => o.Radius, _ => 1 };
@@ -772,8 +773,9 @@ internal static class Uv
             }
             case (Torus t, Circle3 k):
             {
-                // Round the tube (a meridian): u fixed, v runs with t.
-                var u = TorusUv(t, k.Frame.Origin).X;
+                // Round the tube (a meridian): u fixed, v runs with t. A negative major radius puts the tube's centre
+                // on the far side of the axis from the half-plane at u.
+                var u = TorusUv(t, k.Frame.Origin).X + (t.Major < 0 ? Math.PI : 0);
                 var (su, cu) = Math.SinCos(u);
                 var radial = t.Frame.XAxis * cu + t.Frame.YAxis * su;
                 var (x, y) = (k.Frame.XAxis, k.Frame.YAxis);

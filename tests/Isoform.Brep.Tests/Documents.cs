@@ -385,8 +385,17 @@ public static class Documents
 
     static readonly double DomedPostVolume = Math.PI * 25 * 10 + 2 * Math.PI / 3 * 125;
 
+    // A circular segment's area: radius r, the arc's angle θ.
+    static double Segment(double r, double theta) => r * r * (theta - Math.Sin(theta)) / 2;
+
     static readonly (string Name, PartDocument Document, double Volume)[] Domes =
     [
+        // A barrel: a rectangle 10 out and 15 up whose side bulges out 1.5 (bulge 0.2: a circle of radius 19.5 round
+        // (−8, 7.5), across the axis, so its torus has a negative major radius). Pappus: the rectangle's 150 at 5, and the
+        // circular segment's r²(θ − sin θ)/2 at −8 + 4r sin³(θ/2) / (3(θ − sin θ)), θ = 4 atan 0.2.
+        ("barrel", new([new Revolve("barrel", BooleanOp.New, Upright(0, 0), new Profile([0, 0],
+            [new ProfileEdge("base", [10, 0]), new ProfileEdge("side", [10, 15], 0.2), new ProfileEdge("top", [0, 15]), new ProfileEdge("axis", [0, 0])]))]),
+            2 * Math.PI * (150 * 5 + Segment(19.5, 4 * Math.Atan(0.2)) * (-8 + 4 * 19.5 * Math.Pow(Math.Sin(Math.Atan(0.2) * 2), 3) / (3 * (4 * Math.Atan(0.2) - Math.Sin(4 * Math.Atan(0.2))))))),
         // The playground's turned shaft: a quarter circle of radius 4 round (0, 52) closes it on the axis; an undercut
         // fillet at the step and a chamfered lead at the base.
         ("turned shaft", new(

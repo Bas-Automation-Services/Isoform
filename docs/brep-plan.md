@@ -733,6 +733,32 @@ top edges then the profile's corner: one ball each (`r3/corner:r1+r2+r3`), faces
 core's, exact faces and corners as `ExactBrep`'s, volumes in closed form to 1e-12, read back by OCCT. The F-rep core's
 own `CornerFilletTests` take the extruded corner at 90° and 120°. The square ball corners are unchanged.
 
+## Survey: what the kernel refuses and where it disagrees (2026-11-06)
+
+Every document the repo holds run through both engines: the 13 playground examples, the pump stand, the edit suite's
+base, and 200 seeds each of the robustness generators (`Common`: blocks, holes, plane cuts, fillets; `FrepOnly`:
+sketches, patterns, loops, chamfers, shells, offsets, blends, bodies), 414 parts. Per part: the kernel's first
+refusal (by reason), or whether its B-rep's faces, names and neighbours equal the F-rep core's (as `ExactStep` asks).
+The scratch test that does it is not kept; it is a page of code over `RobustnessDocuments`.
+
+- *Disagreements on clean input:* where the F-rep core raised no diagnostic and the kernel builds the part, three
+  differ, none the kernel's: the clamp's circle of two named halves (experiment 18); a corner where four faces meet,
+  which the F-rep core's mesh splits into a short edge (experiment 7); and a boss wholly inside a plate whose corner a
+  later fillet cuts through: the kernel rounds the joined body, as CAD does, while the F-rep core rounds the plate's
+  term alone and the hidden boss comes back out (an F-rep issue, noted, not handled).
+- *Disagreements the generator makes:* most of the others are parts the F-rep core warns about: faces closer than its
+  cells resolve (the kernel keeps them exactly), and features it skips with a diagnostic where the kernel stops at
+  them (both refuse; the F-rep core goes on without the feature).
+- *Fixed:* a revolved arc whose centre lies across the axis (a barrel's bulge: a torus of negative major radius) did
+  not build (19 parts): the meridian's p-curve took u from its centre's side of the axis, half a turn off; flat (u, v)
+  now scales u by the major radius's size. STEP writes such a face as the meridian circle's surface of revolution
+  (readers take the inner part of a spindle torus apart from its toroidal form); OCCT reads it back unhealed. A body
+  thinner than the snap (a sliver) threw out of the modeler from its merge; it is now refused like any failing boolean.
+- *Left, by count:* by design 26 (blended blocks and extrudes, lattices); a cone met off its axis, by a cylinder (8) or
+  an oblique plane (5, a conic); a plane not square to a torus's axis (4); cylinders crossing at an angle (4, a
+  quartic); slivers at the tolerance (about 10: curve ends 1e-7 from their vertex, faces that do not close); a few
+  offsets and shells of more than one body or of part turns. No part met arcs meeting lines in a loop fillet.
+
 ## Next: candidates (to decide)
 
 What still stops the playground's examples, and what is left from before:
@@ -740,8 +766,11 @@ What still stops the playground's examples, and what is left from before:
 1. **Ball corners of other kinds:** unequal radii (the F-rep core mitres them with a warning, and its exact export
    does not follow the mitre either; the kernel would need unequal cylinders crossing, a quartic). Corners that are
    not square: done (experiment 21).
-2. **Balls on extruded profiles after an offset or shell:** the F-rep core drops them there (experiment 21).
-3. **Arcs meeting lines at a corner** in loop fillets (a quartic, unless the radii make it a circle or ellipse).
+3. **Arcs meeting lines at a corner** in loop fillets (a quartic, unless the radii make it a circle or ellipse). The
+   survey met none.
+7. **A cone met off its axis** (the survey's most common refusal past the ones by design): an oblique plane cuts it in
+   an ellipse (a parabola or hyperbola where it runs parallel to a generator or steeper), a cylinder across it in a
+   quartic. The ellipse first: a countersink or chamfered bore on an angled face.
 4. **Inventor as a second STEP reader**, parked.
 5. **Local booleans, further:** a body edited in place, not copied whole by every boolean (experiment 20 left that
    as the cost); a grown face's flat loops spliced too, not flattened again.
@@ -758,4 +787,4 @@ What still stops the playground's examples, and what is left from before:
 
 Blended extrudes and shells (smooth F-rep blends) and lattices stay with the F-rep core.
 
-Recommended: 3 (arcs meeting lines in loop fillets); 5 only if real parts reach hundreds of features.
+Recommended: 7 (its ellipse case); 5 only if real parts reach hundreds of features.

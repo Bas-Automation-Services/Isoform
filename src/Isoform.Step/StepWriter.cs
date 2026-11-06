@@ -173,6 +173,10 @@ public static class StepWriter
             SurfaceKind.Cylinder => w.Add($"CYLINDRICAL_SURFACE('',{place},{R(s.Radius)})"),
             SurfaceKind.Cone => w.Add($"CONICAL_SURFACE('',{place},0.,{R(s.Angle)})"),
             SurfaceKind.Sphere => w.Add($"SPHERICAL_SURFACE('',{place},{R(s.Radius)})"),
+            // A negative major radius: the tube's centre circle lies across the axis (a barrel's bulge), the inner part
+            // of a spindle torus, which readers take apart from its toroidal form; the meridian circle turned round the
+            // axis has the same parameters (u round the axis, v along the circle from x).
+            SurfaceKind.Torus when s.Radius < 0 => w.Add($"SURFACE_OF_REVOLUTION('',{w.Add($"CIRCLE('',{w.Placement(s.Origin + x * s.Radius, -s.Axis.Cross(x), x)},{R(s.Minor)})")},{w.Add($"AXIS1_PLACEMENT('',{w.Point(s.Origin)},{w.Direction(s.Axis)})")})"),
             SurfaceKind.Torus => w.Add($"TOROIDAL_SURFACE('',{place},{R(s.Radius)},{R(s.Minor)})"),
             _ => throw new NotSupportedException($"{s.Kind} surface"),
         };
