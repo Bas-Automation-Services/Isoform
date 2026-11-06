@@ -120,6 +120,16 @@ internal sealed class FlatFace
     {
         yield return e.Curve.At(e.T0);
         yield return e.Curve.At(e.T1);
+        if (e.Curve is Hyperbola3 h)
+        {
+            var (fx, fy) = (h.Frame.XAxis, h.Frame.YAxis);
+            foreach (var (x, y) in new[] { (fx.X, fy.X), (fx.Y, fy.Y), (fx.Z, fy.Z) })
+            {
+                var r = -h.Minor * y / (h.Major * x);
+                if (Math.Abs(x) > 1e-15 && Math.Abs(r) < 1 && Math.Atanh(r) is var t && t > e.T0 && t < e.T1) yield return h.At(t);
+            }
+            yield break;
+        }
         var (frame, a, b) = e.Curve switch
         {
             Circle3 c => (c.Frame, c.Radius, c.Radius),

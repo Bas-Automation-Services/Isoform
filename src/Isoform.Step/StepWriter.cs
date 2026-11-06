@@ -142,6 +142,7 @@ public static class StepWriter
         Line l => w.Add($"LINE('',{w.Point(l.Origin)},{w.Add($"VECTOR('',{w.Direction(l.Direction)},1.)")})"),
         Circle c => w.Add($"CIRCLE('',{w.Placement(c.Center, c.Normal, c.X)},{R(c.Radius)})"),
         Ellipse e => w.Add($"ELLIPSE('',{w.Placement(e.Center, e.Normal, e.X)},{R(e.Major)},{R(e.Minor)})"),
+        Hyperbola h => w.Add($"HYPERBOLA('',{w.Placement(h.Center, h.Normal, h.X)},{R(h.Major)},{R(h.Minor)})"),
         _ => throw new NotSupportedException(curve.GetType().Name),
     };
 

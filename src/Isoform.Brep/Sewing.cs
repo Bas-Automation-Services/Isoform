@@ -638,6 +638,8 @@ internal static class Sewing
                               (q.Origin - p.Origin - p.Direction * (q.Origin - p.Origin).Dot(p.Direction)).Length <= Snap,
         (Circle3 p, Circle3 q) => p.Frame.ZAxis.Cross(q.Frame.ZAxis).Length < 1e-9 && Near(p.Frame.Origin, q.Frame.Origin) &&
                                   Math.Abs(p.Radius - q.Radius) <= Snap,
+        (Hyperbola3 p, Hyperbola3 q) => p.Frame.ZAxis.Cross(q.Frame.ZAxis).Length < 1e-9 && p.Frame.XAxis.Dot(q.Frame.XAxis) > 1 - 1e-9 &&
+                                        Near(p.Frame.Origin, q.Frame.Origin) && Math.Abs(p.Major - q.Major) <= Snap && Math.Abs(p.Minor - q.Minor) <= Snap,
         (Ellipse3 p, Ellipse3 q) => p.Frame.ZAxis.Cross(q.Frame.ZAxis).Length < 1e-9 && p.Frame.XAxis.Cross(q.Frame.XAxis).Length < 1e-9 &&
                                     Near(p.Frame.Origin, q.Frame.Origin) && Math.Abs(p.Major - q.Major) <= Snap && Math.Abs(p.Minor - q.Minor) <= Snap,
         _ => false,

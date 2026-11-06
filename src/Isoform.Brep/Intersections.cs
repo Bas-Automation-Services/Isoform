@@ -187,7 +187,7 @@ internal static class Intersections
         var (n, a) = (p.Frame.ZAxis, k.Frame.ZAxis);
         if (Math.Abs(n.Dot(a)) >= 1 - Parallel) return Ring(k, (p.Frame.Origin - k.Frame.Origin).Dot(a));
         if (Math.Abs((k.Apex - p.Frame.Origin).Dot(n)) > Snap)
-            return Section(p, k) ?? SurfaceMeeting.Refused("a plane at an angle to a cone's axis, not through its apex and as steep as its side or steeper (a parabola or hyperbola)");
+            return Section(p, k) ?? Branch(p, k) ?? SurfaceMeeting.Refused("a plane at an angle to a cone's axis, not through its apex and as steep as its side (a parabola)");
         var (nx, ny) = (n.Dot(k.Frame.XAxis), n.Dot(k.Frame.YAxis));
         var m = Math.Sqrt(nx * nx + ny * ny);
         var phi = Math.Atan2(ny, nx);
@@ -227,6 +227,50 @@ internal static class Intersections
         var off = (centre - k.Frame.Origin - a * h0).Length;
         var minor = Math.Sqrt(k.RadiusAt(h0) * k.RadiusAt(h0) - off * off);
         return SurfaceMeeting.Along(new Ellipse3(RigidTransform3D.FromFrame(centre, n, along.Normalized()), along.Length / 2, minor));
+    }
+
+    // A plane steeper than the cone's side cuts both nappes in a hyperbola, one branch each: the branch on the nappe
+    // whose radius is positive (the cone's own). In the plane, with its axis through the cone's: x along the plane's
+    // fall line (the axis's direction in the plane), y across, a point at height h has ρ² = x_perp² + y² with ρ = R + s h;
+    // that is (x − x0)²/a² − y²/b² = 1 along the fall line. Null for a plane along a generator (a parabola).
+    static SurfaceMeeting? Branch(Plane p, Cone k)
+    {
+        var (n, a) = (p.Frame.ZAxis, k.Frame.ZAxis);
+        var na = n.Dot(a);
+        var radial = n - a * na;
+        var m = radial.Length;
+        if (Math.Abs(Math.Abs(na) - m * Math.Abs(k.Slope)) <= 1e-9 * m) return null;
+        // In the plane: f along the axis's projection, g across (square to the axis), o the axis's crossing (or, for a
+        // plane along the axis, its foot).
+        var e = radial / m;
+        var f = (a - n * na).Normalized();
+        var g = n.Cross(f);
+        var d = n.Dot(p.Frame.Origin - k.Frame.Origin);
+        // A point o + x f + y g: its height h = (o − O)·a + x (f·a), its distance from the axis² = (o + x f − O)_⊥² + y²
+        // (g is square to the axis). With o the foot of the cone's origin on the plane: o − O = d n.
+        var o = k.Frame.Origin + n * d;
+        var (h0, fa) = (d * na, f.Dot(a));
+        var (r0, fr) = (d * m, f.Dot(e));
+        // (R + s (h0 + fa x))² = (r0 + fr x)² + y²: in x, A x² + B x + C = y², A = (s fa)² − fr² > 0 for a steep plane.
+        var (s, R0) = (k.Slope, k.Radius + k.Slope * h0);
+        var A = s * fa * s * fa - fr * fr;
+        var B = 2 * (R0 * s * fa - r0 * fr);
+        var C = R0 * R0 - r0 * r0;
+        if (A <= 0) return null;
+        var x0 = -B / (2 * A);
+        var top = C - B * B / (4 * A);
+        if (top >= -Snap * Snap) return SurfaceMeeting.Refused("a plane through a cone's apex at an angle (two lines)");
+        // y² = A (x − x0)² + top with top < 0: (x − x0)² / (−top / A) − y² / −top = 1, on the side where the cone's
+        // radius is positive (R0 + s fa x > 0 at the vertex).
+        var (major, minor) = (Math.Sqrt(-top / A), Math.Sqrt(-top));
+        foreach (var side in new[] { 1, -1 })
+        {
+            var vertex = x0 + side * major;
+            if (R0 + s * fa * vertex <= Snap) continue;
+            var centre = o + f * x0;
+            return SurfaceMeeting.Along(new Hyperbola3(RigidTransform3D.FromFrame(centre, n, f * side), major, minor));
+        }
+        return SurfaceMeeting.Nothing;
     }
 
     // The straight line of the cone at angle u, from its point at the frame's height, running up the axis.
@@ -324,19 +368,24 @@ internal static class Intersections
         (Line3 p, Circle3 c) => (LineCircle(p, c), false),
         (Circle3 c, Line3 p) => (LineCircle(p, c), false),
         (Circle3 c, Circle3 d) => CircleCircle(c, d),
-        (Line3 p, Ellipse3 e) => (LineConic(p, e), false),
-        (Ellipse3 e, Line3 p) => (LineConic(p, e), false),
+        (Line3 p, Ellipse3 or Hyperbola3) => (LineConic(p, b), false),
+        (Ellipse3 or Hyperbola3, Line3 p) => (LineConic(p, a), false),
         (Ellipse3 or Circle3, Ellipse3 or Circle3) => ConicConic(a, b),
+        (Hyperbola3, Ellipse3 or Circle3) => ConicConic(b, a),
+        (Ellipse3 or Circle3, Hyperbola3) => ConicConic(a, b),
+        (Hyperbola3, Hyperbola3) => HyperbolaHyperbola(a, b),
         (Pole q, _) => (OnConic(b, q.Point) ? [q.Point] : [], false),
         (_, Pole q) => (OnConic(a, q.Point) ? [q.Point] : [], false),
         _ => throw new NotSupportedException($"{a.GetType().Name} against {b.GetType().Name}"),
     };
 
-    // A circle or an ellipse: its frame and semi-axes (along its X and Y).
-    static (RigidTransform3D Frame, double A, double B) Conic(Curve3 c) => c switch
+    // A circle, an ellipse or a hyperbola: its frame and semi-axes (along its X and Y), and the sign of y² in its
+    // equation (x/a)² ± (y/b)² = 1 (+1, or −1 for a hyperbola, whose other branch OnConic leaves out).
+    static (RigidTransform3D Frame, double A, double B, int Sign) Conic(Curve3 c) => c switch
     {
-        Circle3 k => (k.Frame, k.Radius, k.Radius),
-        Ellipse3 e => (e.Frame, e.Major, e.Minor),
+        Circle3 k => (k.Frame, k.Radius, k.Radius, 1),
+        Ellipse3 e => (e.Frame, e.Major, e.Minor, 1),
+        Hyperbola3 h => (h.Frame, h.Major, h.Minor, -1),
         _ => throw new NotSupportedException(c.GetType().Name),
     };
 
@@ -345,7 +394,7 @@ internal static class Intersections
 
     static List<Point3D> LineConic(Line3 line, Curve3 conic)
     {
-        var (f, a, b) = Conic(conic);
+        var (f, a, b, sign) = Conic(conic);
         var z = f.ZAxis;
         var dz = line.Direction.Dot(z);
         if (Math.Abs(dz) > Parallel)
@@ -354,23 +403,31 @@ internal static class Intersections
             return OnConic(conic, p) ? [p] : [];
         }
         if (Math.Abs((line.Origin - f.Origin).Dot(z)) > Snap) return [];
-        // In the conic's frame: (x/a)² + (y/b)² = 1 along the line.
+        // In the conic's frame: (x/a)² ± (y/b)² = 1 along the line.
         var (o, d) = (f.ApplyInverse(line.Origin), f.ApplyInverse(line.Direction));
-        var qa = d.X * d.X / (a * a) + d.Y * d.Y / (b * b);
-        var qb = 2 * (o.X * d.X / (a * a) + o.Y * d.Y / (b * b));
-        var qc = o.X * o.X / (a * a) + o.Y * o.Y / (b * b) - 1;
+        var qa = d.X * d.X / (a * a) + sign * d.Y * d.Y / (b * b);
+        var qb = 2 * (o.X * d.X / (a * a) + sign * o.Y * d.Y / (b * b));
+        var qc = o.X * o.X / (a * a) + sign * o.Y * o.Y / (b * b) - 1;
+        if (sign < 0 && Math.Abs(qa) <= 1e-12 * (d.X * d.X / (a * a) + d.Y * d.Y / (b * b)))
+        {
+            // Along an asymptote: one crossing at most.
+            if (Math.Abs(qb) <= 1e-15) return [];
+            var p = line.At(-qc / qb);
+            return OnConic(conic, p) ? [p] : [];
+        }
         var disc = qb * qb - 4 * qa * qc;
-        var scale = 4 * qa * Snap / Math.Min(a, b);
+        var scale = 4 * Math.Abs(qa) * Snap / Math.Min(a, b);
         if (disc < -scale) return [];
-        if (disc <= scale) return [line.At(-qb / (2 * qa))];
-        var root = Math.Sqrt(disc);
-        return [line.At((-qb - root) / (2 * qa)), line.At((-qb + root) / (2 * qa))];
+        List<Point3D> found = disc <= scale ? [line.At(-qb / (2 * qa))]
+            : [line.At((-qb - Math.Sqrt(disc)) / (2 * qa)), line.At((-qb + Math.Sqrt(disc)) / (2 * qa))];
+        return sign > 0 ? found : [.. found.Where(p => OnConic(conic, p))];
     }
 
+    // c a circle or an ellipse (bounded: sampled round), d any conic.
     static (List<Point3D>, bool) ConicConic(Curve3 c, Curve3 d)
     {
-        var (f, _, _) = Conic(c);
-        var (g, a, b) = Conic(d);
+        var (f, _, _, _) = Conic(c);
+        var (g, a, b, sign) = Conic(d);
         if (f.ZAxis.Cross(g.ZAxis).Length >= Parallel)
         {
             // Planes at an angle: the line they share against one, kept where it is on the other.
@@ -378,11 +435,12 @@ internal static class Intersections
             return ([.. LineConic(line, c).Where(p => OnConic(d, p))], false);
         }
         if (Math.Abs((g.Origin - f.Origin).Dot(f.ZAxis)) > Snap) return ([], false);
-        // One plane: the same conic, or where d's equation changes sign along c (tangency is not found).
+        // One plane: the same conic, or where d's equation changes sign along c (tangency is not found); a hyperbola's
+        // other branch kept out.
         double Implicit(Point3D p)
         {
             var q = g.ApplyInverse(p);
-            return q.X * q.X / (a * a) + q.Y * q.Y / (b * b) - 1;
+            return q.X * q.X / (a * a) + sign * q.Y * q.Y / (b * b) - 1;
         }
         const int n = 720;
         var values = Enumerable.Range(0, n + 1).Select(i => Implicit(c.At(2 * Math.PI * i / n))).ToArray();
@@ -398,9 +456,22 @@ internal static class Intersections
                 if (Implicit(c.At(mid)) * values[i] > 0) lo = mid; else hi = mid;
             }
             var p = c.At((lo + hi) / 2);
-            if (points.All(q => (q - p).Length > Snap)) points.Add(p);
+            if (points.All(q => (q - p).Length > Snap) && (sign > 0 || OnConic(d, p))) points.Add(p);
         }
         return (points, false);
+    }
+
+    // Two hyperbolas' branches: in planes at an angle, the line the planes share against one, kept where it is on the
+    // other; in one plane, the same branch or refused.
+    static (List<Point3D>, bool) HyperbolaHyperbola(Curve3 c, Curve3 d)
+    {
+        var (f, g) = (((Hyperbola3)c).Frame, ((Hyperbola3)d).Frame);
+        if (f.ZAxis.Cross(g.ZAxis).Length >= Parallel)
+            return ([.. LineConic(PlanesLine(f.Origin, f.ZAxis, g.Origin, g.ZAxis), c).Where(p => OnConic(d, p))], false);
+        if (Math.Abs((g.Origin - f.Origin).Dot(f.ZAxis)) > Snap) return ([], false);
+        if (c == d || (f.Origin - g.Origin).Length <= Snap && f.XAxis.Dot(g.XAxis) > 1 - 1e-9 && Math.Abs(((Hyperbola3)c).Major - ((Hyperbola3)d).Major) <= Snap
+            && Math.Abs(((Hyperbola3)c).Minor - ((Hyperbola3)d).Minor) <= Snap) return ([], true);
+        throw new BooleanFailure("two hyperbolas in one plane, which the managed kernel does not meet yet");
     }
 
     static (List<Point3D>, bool) LineLine(Line3 p, Line3 q)
@@ -464,6 +535,7 @@ internal static class Intersections
         Line3 l => (p - l.Origin).Dot(l.Direction),
         Circle3 k => Math.Atan2((p - k.Frame.Origin).Dot(k.Frame.YAxis), (p - k.Frame.Origin).Dot(k.Frame.XAxis)),
         Ellipse3 e => Math.Atan2((p - e.Frame.Origin).Dot(e.Frame.YAxis) / e.Minor, (p - e.Frame.Origin).Dot(e.Frame.XAxis) / e.Major),
+        Hyperbola3 h => Math.Asinh((p - h.Frame.Origin).Dot(h.Frame.YAxis) / h.Minor),
         Pole => 0,
         _ => throw new NotSupportedException(c.GetType().Name),
     };
@@ -482,7 +554,7 @@ internal static class Intersections
             // A point just before t0 wraps to near t0 + 2π.
             if (t > t1 && (p - c.At(t0)).Length <= Snap) t = t0;
         }
-        var slack = c switch { Circle3 k => Snap / k.Radius, Ellipse3 e => Snap / e.Minor, _ => Snap };
+        var slack = c switch { Circle3 k => Snap / k.Radius, Ellipse3 e => Snap / e.Minor, Hyperbola3 h => Snap / h.Minor, _ => Snap };
         if (t < t0 - slack || t > t1 + slack) return null;
         t = Math.Clamp(t, t0, t1);
         return (c.At(t) - p).Length <= Snap ? t : null;
@@ -491,7 +563,7 @@ internal static class Intersections
     /// <summary>The distance from a point to the piece of a curve over [t0, t1] (t0 &lt; t1).</summary>
     public static double Distance(Curve3 c, double t0, double t1, Point3D p)
     {
-        if (c is Ellipse3) return Nearest(c, t0, t1, p);
+        if (c is Ellipse3 or Hyperbola3) return Nearest(c, t0, t1, p);
         var t = Param(c, p);
         if (c.Period is not null) t = t0 + Wrap(t - t0);
         if (t >= t0 && t <= t1) return (c.At(t) - p).Length;
@@ -820,9 +892,15 @@ internal static class Uv
                 var v = Of(o, k.At(0)).Y;
                 return new Line2(new Point2D(phase, v), new Vector2D(k.Frame.ZAxis.Dot(o.Frame.ZAxis) > 0 ? 1 : -1, 0));
             }
-            case (Cone k, Ellipse3 e):
-                // A plane's section round the axis: u round it, v the height.
-                return ConeSection2.Of(k, e);
+            case (Cone k, Ellipse3 or Hyperbola3):
+                // A plane's section: u round the axis, v the height.
+                return ConeSection2.Of(k, c);
+            case (Plane p, Hyperbola3 h):
+            {
+                var x = h.Frame.XAxis;
+                var rotation = Math.Atan2(x.Dot(p.Frame.YAxis), x.Dot(p.Frame.XAxis));
+                return new Hyperbola2(Of(p, h.Frame.Origin), h.Major, h.Minor, rotation, h.Frame.ZAxis.Dot(p.Frame.ZAxis) > 0 ? 1 : -1, 0);
+            }
             case (Sphere o, Circle3 k) when Math.Abs(k.Frame.ZAxis.Dot(o.Frame.ZAxis)) > 1e-9 || (k.Frame.Origin - o.Frame.Origin).Length > Intersections.Snap:
                 // Any other circle: longitude and latitude along it.
                 return SphereCircle2.Of(o, k) ?? throw new NotSupportedException("a circle through a sphere's pole");
@@ -876,6 +954,7 @@ internal static class Uv
         Wave2 w => w with { U0 = w.U0 + du },
         SphereCircle2 c => c with { U0 = c.U0 + du },
         ConeSection2 c => c with { U0 = c.U0 + du },
+        Hyperbola2 h => h with { Center = new Point2D(h.Center.X + du, h.Center.Y) },
         _ => throw new NotSupportedException(pc.GetType().Name),
     };
 
@@ -888,6 +967,7 @@ internal static class Uv
         Wave2 w => w with { U0 = w.U0 + w.Slope * beta, Slope = w.Slope * (int)Math.Round(alpha), Phase = alpha * (beta + w.Phase) },
         SphereCircle2 c => c with { Phase = c.Phase + c.Sense * beta, Sense = c.Sense * (int)Math.Round(alpha) },
         ConeSection2 c => c with { Phase = c.Phase + c.Sense * beta, Sense = c.Sense * (int)Math.Round(alpha) },
+        Hyperbola2 h => h with { Offset = h.Offset + h.Sense * beta, Sense = h.Sense * (int)Math.Round(alpha) },
         _ => throw new NotSupportedException(pc.GetType().Name),
     };
 
@@ -903,6 +983,7 @@ internal static class Uv
             case Circle2 c when k == 1:
                 return new ArcSegment(c.Center, c.Radius, c.Phase + c.Sense * from, c.Sense * (to - from));
             case Ellipse2 when k == 1:
+            case Hyperbola2 when k == 1:
             case Wave2 when s is Cylinder:
                 return new CurveSegment(pc, from, to, k);
             case SphereCircle2 when s is Sphere:

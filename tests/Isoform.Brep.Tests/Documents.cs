@@ -185,6 +185,14 @@ public static class Documents
     // Experiment 8: chamfers round circles and arcs are cones. Pappus: the triangle d²/2, its centroid d/3 from the wall.
     static double Triangle(double d) => d * d / 2;
 
+    // ∫ (r² acos(2/r) − 2√(r² − 4)) dr, by parts: (r³/3) acos(2/r) − (2/3)((r/2) S + 2 ln(r + S)) − (r S − 4 ln(r + S)),
+    // S = √(r² − 4).
+    static double SegmentIntegral(double r)
+    {
+        var s = Math.Sqrt(r * r - 4);
+        return r * r * r / 3 * Math.Acos(2 / r) - 2.0 / 3 * (r / 2 * s + 2 * Math.Log(r + s)) - (r * s - 4 * Math.Log(r + s));
+    }
+
     static double ObliqueTip()
     {
         var (x1, x2) = (2.5 / 0.8125, -2.5 / 1.1875);
@@ -204,6 +212,12 @@ public static class Documents
         ("oblique cut off a cone", new([new Revolve("cone", BooleanOp.New, Upright(0, 0), new Profile([0, 0],
             [new ProfileEdge("bottom", [5, 0]), new ProfileEdge("side", [0, 8]), new ProfileEdge("axis", [0, 0])])),
             new PlaneCut("cut", [0, 0, 4], [0.3, 0, 1])]), Math.PI * 25 * 8 / 3 - ObliqueTip()),
+        // The cone cut by the plane x = 2, along its axis (a hyperbola, its vertex at z = 4.8), and its tip off at z = 6
+        // (radius 1.25): the frustum less, at each height, the circle's segment past x = 2.
+        ("frustum cut along its axis", new([new Revolve("cone", BooleanOp.New, Upright(0, 0), new Profile([0, 0],
+            [new ProfileEdge("bottom", [5, 0]), new ProfileEdge("side", [0, 8]), new ProfileEdge("axis", [0, 0])])),
+            new PlaneCut("cut", [2, 0, 0], [1, 0, 0]), new PlaneCut("top", [0, 0, 6], [0, 0, 1])]),
+            Math.PI * 6 * (25 + 5 * 1.25 + 1.25 * 1.25) / 3 - 8.0 / 5 * (SegmentIntegral(5) - SegmentIntegral(2))),
         ("chamfered hole edge", OnSlab(new Hole("hole", [30, 25], 10), new Chamfer("bevel", ["plate/z+", "hole/wall"], 1.5)),
             50_000 - Math.PI * 250 - 2 * Math.PI * (5 + 0.5) * Triangle(1.5)),
         ("hole chamfered at both ends", OnSlab(new Hole("hole", [30, 25], 10), new Chamfer("top", ["plate/z+", "hole/wall"], 1), new Chamfer("bottom", ["plate/z-", "hole/wall"], 1)),
@@ -606,6 +620,11 @@ public static class Documents
         ("conical dimple", new([Plate40, new Revolve("dimple", BooleanOp.Cut, Upright(20, 15), new Profile([0, 6],
             [new ProfileEdge("side", [4, 10]), new ProfileEdge("over", [4, 11]), new ProfileEdge("top", [0, 11]), new ProfileEdge("axis", [0, 6])]))]),
             12000 - Math.PI * 16 * 4 / 3),
+        // A cone (radius 5, apex 8 up) cut by the plane x = 2, along its axis: a hyperbola; the apex stays. What goes is, at each height, the circle's
+        // segment past x = 2 (r² acos(2/r) − 2√(r² − 4) at radius r), over r from 5 down to 2 (dz = (8/5) dr).
+        ("cone cut along its axis", new([new Revolve("cone", BooleanOp.New, Upright(0, 0), new Profile([0, 0],
+            [new ProfileEdge("bottom", [5, 0]), new ProfileEdge("side", [0, 8]), new ProfileEdge("axis", [0, 0])])),
+            new PlaneCut("cut", [2, 0, 0], [1, 0, 0])]), Math.PI * 25 * 8 / 3 - 8.0 / 5 * (SegmentIntegral(5) - SegmentIntegral(2))),
         // Cut in half through its axis: the cut runs through the apex.
         ("half a cone", new([new Revolve("cone", BooleanOp.New, Upright(0, 0), new Profile([0, 0],
             [new ProfileEdge("bottom", [5, 0]), new ProfileEdge("side", [0, 8]), new ProfileEdge("axis", [0, 0])])), new PlaneCut("cut", [0, 0, 0], [0, 1, 0])]),

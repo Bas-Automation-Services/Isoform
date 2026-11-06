@@ -33,7 +33,7 @@ public static class SurfaceIntersection
         if (a.Kind == SurfaceKind.Plane && b.Kind == SurfaceKind.Cylinder) return Oblique(a, b);
         if (a.Kind == SurfaceKind.Cylinder && b.Kind == SurfaceKind.Cylinder) return Mitre(a, b, seed);
         if (a.Kind == SurfaceKind.Cone && b.Kind == SurfaceKind.Plane) (a, b) = (b, a);
-        if (a.Kind == SurfaceKind.Plane && b.Kind == SurfaceKind.Cone) return ConeSection(a, b);
+        if (a.Kind == SurfaceKind.Plane && b.Kind == SurfaceKind.Cone) return (Curve?)ConeSection(a, b) ?? ConeBranch(a, b);
         if (a.Kind == SurfaceKind.Torus && b.Kind == SurfaceKind.Cylinder) (a, b) = (b, a);
         if (a.Kind == SurfaceKind.Cylinder && b.Kind == SurfaceKind.Torus) return TubeCircle(a, b);
         return null;
@@ -62,6 +62,39 @@ public static class SurfaceIntersection
         var hc = a.Dot(centre - cone.Origin);
         var off = (centre - cone.Origin - a * hc).Length;
         return new Ellipse(centre, n, (v2 - v1).Normalized(), (v2 - v1).Length / 2, Math.Sqrt(tan * hc * tan * hc - off * off));
+    }
+
+    /// <summary>
+    /// A plane steeper than a cone's side cuts its open nappe in one branch of a hyperbola. In the plane, x along the
+    /// axis's direction there from the foot of the apex, y across: a point's height h = h0 + x (f · a) and distance from
+    /// the axis² = (r0 + x (f · e))² + y² meet ρ = h tan α in A x² + B x + C = y² the branch on the side
+    /// where h &gt; 0, with A &gt; 0 (a steep plane). Null for a plane along a generator, through the apex, or one that
+    /// misses the open nappe.
+    /// </summary>
+    static Hyperbola? ConeBranch(Surface plane, Surface cone)
+    {
+        var (n, a, tan) = (plane.Axis, cone.Axis, Math.Tan(cone.Angle));
+        var na = n.Dot(a);
+        var radial = n - a * na;
+        var m = radial.Length;
+        if (m <= Parallel || Math.Abs(Math.Abs(na) - m * tan) <= 1e-9 * m) return null;
+        var e = radial / m;
+        var f = (a - n * na).Normalized();
+        var d = n.Dot(plane.Origin - cone.Origin);
+        var o = cone.Origin + n * d;
+        var (h0, fa, r0, fr) = (d * na, f.Dot(a), d * m, f.Dot(e));
+        var A = tan * fa * tan * fa - fr * fr;
+        var B = 2 * (tan * h0 * tan * fa - r0 * fr);
+        var C = tan * h0 * tan * h0 - r0 * r0;
+        if (A <= 0) return null;
+        var x0 = -B / (2 * A);
+        var top = C - B * B / (4 * A);
+        if (top >= -OnAxis * OnAxis) return null;
+        var (major, minor) = (Math.Sqrt(-top / A), Math.Sqrt(-top));
+        foreach (var side in new[] { 1, -1 })
+            if (h0 + fa * (x0 + side * major) > OnAxis)
+                return new Hyperbola(o + f * x0, n, f * side, major, minor);
+        return null;
     }
 
     /// <summary>

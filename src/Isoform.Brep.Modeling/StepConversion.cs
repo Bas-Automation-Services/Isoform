@@ -3,6 +3,7 @@ using Isoform.Step;
 using IsoCircle = Isoform.Geometry.Circle;
 using IsoCurve = Isoform.Geometry.Curve;
 using IsoEllipse = Isoform.Geometry.Ellipse;
+using IsoHyperbola = Isoform.Geometry.Hyperbola;
 using IsoLine = Isoform.Geometry.Line;
 using IsoSurface = Isoform.Geometry.Surface;
 using SurfaceKind = Isoform.Geometry.SurfaceKind;
@@ -94,6 +95,13 @@ public static class StepConversion
                 var t = Turn(ellipse.Parameter(p));
                 if (t < quarter || t > 3 * quarter) (ellipse, t) = (ellipse with { X = -ellipse.X }, Turn(t + Math.PI));
                 return new BrepEdge(index, ellipse, start, end, t, t + (e.IsClosed ? 2 * Math.PI : Turn(ellipse.Parameter(q) - t)));
+            }
+            case Hyperbola3 k:
+            {
+                // An open branch: turned (Y the other way) where needed, so that the edge runs up its parameter.
+                var hyperbola = new IsoHyperbola(k.Frame.Origin, k.Frame.ZAxis, k.Frame.XAxis, k.Major, k.Minor);
+                if (hyperbola.Parameter(q) < hyperbola.Parameter(p)) hyperbola = hyperbola with { Normal = -hyperbola.Normal };
+                return new BrepEdge(index, hyperbola, start, end, hyperbola.Parameter(p), hyperbola.Parameter(q));
             }
             default:
                 throw new NotSupportedException(e.Curve.GetType().Name);

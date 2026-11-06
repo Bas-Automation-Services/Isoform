@@ -818,6 +818,10 @@ public static class ExactBrep
                     var t = Turn(e.Parameter(p));
                     if (t < quarter || t > 3 * quarter) (e, t) = (e with { X = -e.X }, Turn(t + Math.PI));
                     return new BrepEdge(i, e, start, end, t, t + (start == end ? 2 * Math.PI : Turn(e.Parameter(q) - t)));
+                case Hyperbola h:
+                    // An open branch, turned where needed so that the edge runs up its parameter.
+                    if (h.Parameter(q) < h.Parameter(p)) h = h with { Normal = -h.Normal };
+                    return new BrepEdge(i, h, start, end, h.Parameter(p), h.Parameter(q));
                 default:
                     throw new NotSupportedException(curve.GetType().Name);
             }
@@ -912,9 +916,11 @@ public static class ExactBrep
                 ?? throw new NotSupportedException($"no closed-form edge between {Name(face)} and {Name(run.Other)} ({_surface[face].Kind}–{_surface[run.Other].Kind})");
         }
 
-        /// <summary>A circle or ellipse turned so that it runs the way the mesh walks it.</summary>
+        /// <summary>A circle or ellipse turned so that it runs the way the mesh walks it; a hyperbola's open branch is
+        /// turned where its edge is made, by its ends.</summary>
         Curve Winding(Curve curve, Run run)
         {
+            if (curve is Hyperbola) return curve;
             var (centre, normal) = curve switch
             {
                 Circle c => (c.Center, c.Normal),

@@ -30,6 +30,15 @@ public sealed record Circle(Point3D Center, Vector3D Normal, Vector3D X, double 
     public override double Parameter(Point3D p) => Math.Atan2(Y.Dot(p - Center), X.Dot(p - Center));
 }
 
+/// <summary>One branch of a hyperbola, <c>Center + Major cosh t X + Minor sinh t Y</c>, Y = Normal × X.</summary>
+public sealed record Hyperbola(Point3D Center, Vector3D Normal, Vector3D X, double Major, double Minor) : Curve
+{
+    public Vector3D Y => Normal.Cross(X);
+    public override Point3D At(double t) => Center + X * (Major * Math.Cosh(t)) + Y * (Minor * Math.Sinh(t));
+    public override Vector3D Tangent(double t) => X * (Major * Math.Sinh(t)) + Y * (Minor * Math.Cosh(t));
+    public override double Parameter(Point3D p) => Math.Asinh(Y.Dot(p - Center) / Minor);
+}
+
 /// <summary>An ellipse counter-clockwise round <see cref="Normal"/>, its major axis along <see cref="X"/>.</summary>
 public sealed record Ellipse(Point3D Center, Vector3D Normal, Vector3D X, double Major, double Minor) : Curve
 {

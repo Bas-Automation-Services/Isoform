@@ -220,6 +220,35 @@ public sealed record Torus(RigidTransform3D Frame, double Major, double Minor) :
 /// An ellipse in its frame's XY plane round the frame's origin, counter-clockwise about the frame's Z:
 /// <c>Origin + Major · cos t · X + Minor · sin t · Y</c>. A plane at an angle to a cylinder meets it in one.
 /// </summary>
+/// <summary>
+/// One branch of a hyperbola, <c>Origin + Major cosh t · X + Minor sinh t · Y</c>: its vertex at t = 0 on X, opening
+/// along it, Y round the normal Z (a plane's section of a cone as steep as its side or steeper).
+/// </summary>
+public sealed record Hyperbola3(RigidTransform3D Frame, double Major, double Minor) : Curve3
+{
+    public override Point3D At(double t) => Frame.Origin + Frame.XAxis * (Major * Math.Cosh(t)) + Frame.YAxis * (Minor * Math.Sinh(t));
+
+    public override Vector3D Derivative(double t) => Frame.XAxis * (Major * Math.Sinh(t)) + Frame.YAxis * (Minor * Math.Cosh(t));
+}
+
+/// <summary>A hyperbola's branch in a plane's (u, v), with the curve's own parameter (see <see cref="Hyperbola3"/>).</summary>
+public sealed record Hyperbola2(Point2D Center, double Major, double Minor, double Rotation, int Sense, double Offset) : Curve2
+{
+    public override Point2D At(double t)
+    {
+        var (x, y) = (Major * Math.Cosh(Sense * t + Offset), Minor * Math.Sinh(Sense * t + Offset));
+        var (rs, rc) = Math.SinCos(Rotation);
+        return new Point2D(Center.X + x * rc - y * rs, Center.Y + x * rs + y * rc);
+    }
+
+    public override Vector2D Derivative(double t)
+    {
+        var (x, y) = (Major * Math.Sinh(Sense * t + Offset) * Sense, Minor * Math.Cosh(Sense * t + Offset) * Sense);
+        var (rs, rc) = Math.SinCos(Rotation);
+        return new Vector2D(x * rc - y * rs, x * rs + y * rc);
+    }
+}
+
 public sealed record Ellipse3(RigidTransform3D Frame, double Major, double Minor) : Curve3
 {
     public override Point3D At(double t)
@@ -324,27 +353,26 @@ public sealed record SphereCircle2(Sphere Sphere, Circle3 Circle, double Phase, 
 }
 
 /// <summary>
-/// A plane's ellipse round a cone's axis in the cone's (u, v): the point at angle θ = Phase + Sense · t round the ellipse,
-/// as the angle u round the axis and the height v along it. u runs on continuously, within half a turn of
-/// U0 + Winding · θ: the ellipse goes once round the axis, Winding ±1 by which way.
+/// A plane's section of a cone in the cone's (u, v): the curve's point at θ = Phase + Sense · t, as the angle u round the
+/// axis and the height v along it. u runs on continuously, within half a turn of U0 + Winding · θ: an ellipse goes once
+/// round the axis (Winding ±1 by which way), a hyperbola's branch stays beside it (Winding 0, within half a turn of U0).
 /// </summary>
-public sealed record ConeSection2(Cone Cone, Ellipse3 Ellipse, double Phase, int Sense, double U0, int Winding) : Curve2
+public sealed record ConeSection2(Cone Cone, Curve3 Section, double Phase, int Sense, double U0, int Winding) : Curve2
 {
-    /// <summary>The p-curve of the ellipse with θ = t.</summary>
-    public static ConeSection2 Of(Cone cone, Ellipse3 ellipse)
+    /// <summary>The p-curve of the section (an <see cref="Ellipse3"/> or a <see cref="Hyperbola3"/>) with θ = t.</summary>
+    public static ConeSection2 Of(Cone cone, Curve3 section)
     {
-        var winding = ellipse.Frame.ZAxis.Dot(cone.Frame.ZAxis) > 0 ? 1 : -1;
-        var p = new ConeSection2(cone, ellipse, 0, 1, 0, winding).Local(0).P;
-        return new ConeSection2(cone, ellipse, 0, 1, Math.Atan2(p.Y, p.X), winding);
+        var winding = section is Hyperbola3 ? 0 : section is Ellipse3 e && e.Frame.ZAxis.Dot(cone.Frame.ZAxis) > 0 ? 1 : -1;
+        var p = new ConeSection2(cone, section, 0, 1, 0, winding).Local(0).P;
+        return new ConeSection2(cone, section, 0, 1, Math.Atan2(p.Y, p.X), winding);
     }
 
     // The point at t less the cone's origin, and its derivative, in the cone's frame.
     (Vector3D P, Vector3D D) Local(double t)
     {
-        var (sin, cos) = Math.SinCos(Phase + Sense * t);
-        var f = Ellipse.Frame;
-        var p = f.Origin - Cone.Frame.Origin + f.XAxis * (Ellipse.Major * cos) + f.YAxis * (Ellipse.Minor * sin);
-        var d = (f.YAxis * (Ellipse.Minor * cos) - f.XAxis * (Ellipse.Major * sin)) * Sense;
+        var theta = Phase + Sense * t;
+        var p = Section.At(theta) - Cone.Frame.Origin;
+        var d = Section.Derivative(theta) * Sense;
         var (x, y, z) = (Cone.Frame.XAxis, Cone.Frame.YAxis, Cone.Frame.ZAxis);
         return (new Vector3D(p.Dot(x), p.Dot(y), p.Dot(z)), new Vector3D(d.Dot(x), d.Dot(y), d.Dot(z)));
     }
