@@ -65,7 +65,8 @@ public static class SurfaceParameters
     /// <summary>
     /// The image of <paramref name="curve"/> over [t0, t1] in the surface's parameters, continuous (angles are
     /// unwrapped, so a closed edge round the axis ends 2π from where it starts). Straight images are exact; others
-    /// are degree-9 pieces interpolating the curve at Chebyshev points, split until they are within 1e-11.
+    /// are degree-9 pieces interpolating the curve at Chebyshev points, split until they are within 1e-11 (on a
+    /// B-spline, pieces of its spans, within which it is smooth).
     /// </summary>
     public static UvCurve Image(Surface s, Curve curve, double t0, double t1)
     {
@@ -80,25 +81,31 @@ public static class SurfaceParameters
             }))
             return new UvCurve(1, [track[0], track[^1]], [t0, t1], [2, 2]);
 
-        for (var spans = Math.Max(1, (int)Math.Ceiling((t1 - t0) / (Math.PI / 8))); ; spans *= 2)
+        List<double> coarse = curve is BSpline b ? [t0, .. b.Knots.Where(k => k > t0 + 1e-12 && k < t1 - 1e-12), t1]
+            : [.. Even(t0, t1, Math.Max(1, (int)Math.Ceiling((t1 - t0) / (Math.PI / 8))))];
+        for (var split = 1; ; split *= 2)
         {
-            var (poles, error) = Pieces(s, curve, t0, t1, spans);
-            if (error <= 1e-11 || spans >= 512)
+            var knots = coarse.Zip(coarse.Skip(1)).SelectMany((x, k) => Even(x.First, x.Second, split).Skip(k == 0 ? 0 : 1)).ToList();
+            var (poles, error) = Pieces(s, curve, knots);
+            var spans = knots.Count - 1;
+            if (error <= 1e-11 || (curve is BSpline ? split >= 8 : spans >= 512))
             {
-                var knots = Enumerable.Range(0, spans + 1).Select(k => k == spans ? t1 : t0 + (t1 - t0) * k / spans).ToList();
                 var mults = Enumerable.Range(0, spans + 1).Select(k => k == 0 || k == spans ? Degree + 1 : Degree).ToList();
                 return new UvCurve(Degree, poles, knots, mults);
             }
         }
     }
 
+    // n equal pieces from a to b, the ends exact.
+    static IEnumerable<double> Even(double a, double b, int n) => Enumerable.Range(0, n + 1).Select(k => k == n ? b : a + (b - a) * k / n);
+
     /// <summary>
     /// Bézier pieces of the image, joined end to end, and the largest error halfway between their nodes. The nodes of
     /// all pieces are tracked together, so every piece lies on the same unwrapped branch.
     /// </summary>
-    static (List<(double U, double V)> Poles, double Error) Pieces(Surface s, Curve curve, double t0, double t1, int spans)
+    static (List<(double U, double V)> Poles, double Error) Pieces(Surface s, Curve curve, IReadOnlyList<double> knots)
     {
-        var h = (t1 - t0) / spans;
+        var spans = knots.Count - 1;
         var nodes = Enumerable.Range(0, Degree + 1).Select(i => (1 - Math.Cos(Math.PI * i / Degree)) / 2).ToArray();
         var checks = Enumerable.Range(0, Degree).Select(i => (nodes[i] + nodes[i + 1]) / 2).ToArray();
         // Every node and check point in order along the curve, so the unwrapping follows it closely.
@@ -106,7 +113,7 @@ public static class SurfaceParameters
         var ts = new List<double>();
         for (var k = 0; k < spans; k++)
             foreach (var x in local)
-                if (k == 0 || x > 0) ts.Add(k == spans - 1 && x == 1 ? t1 : t0 + h * (k + x));
+                if (k == 0 || x > 0) ts.Add(x == 1 ? knots[k + 1] : knots[k] + (knots[k + 1] - knots[k]) * x);
         var track = Track(s, curve, ts);
 
         var basis = new double[Degree + 1, Degree + 1];

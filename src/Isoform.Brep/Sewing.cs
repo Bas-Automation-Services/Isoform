@@ -640,6 +640,10 @@ internal static class Sewing
                                   Math.Abs(p.Radius - q.Radius) <= Snap,
         (Hyperbola3 p, Hyperbola3 q) => p.Frame.ZAxis.Cross(q.Frame.ZAxis).Length < 1e-9 && p.Frame.XAxis.Dot(q.Frame.XAxis) > 1 - 1e-9 &&
                                         Near(p.Frame.Origin, q.Frame.Origin) && Math.Abs(p.Major - q.Major) <= Snap && Math.Abs(p.Minor - q.Minor) <= Snap,
+        // Traced along the same surfaces, the same branch (traced apart, each within the accuracy of it).
+        (Trace3 p, Trace3 q) => ReferenceEquals(p, q) || (Intersections.SameSurface(p.A, q.A) && Intersections.SameSurface(p.B, q.B)
+                                                          || Intersections.SameSurface(p.A, q.B) && Intersections.SameSurface(p.B, q.A)) &&
+                                                         p.Nearest(q.At(q.End / 3)).Distance <= Snap,
         (Ellipse3 p, Ellipse3 q) => p.Frame.ZAxis.Cross(q.Frame.ZAxis).Length < 1e-9 && p.Frame.XAxis.Cross(q.Frame.XAxis).Length < 1e-9 &&
                                     Near(p.Frame.Origin, q.Frame.Origin) && Math.Abs(p.Major - q.Major) <= Snap && Math.Abs(p.Minor - q.Minor) <= Snap,
         _ => false,

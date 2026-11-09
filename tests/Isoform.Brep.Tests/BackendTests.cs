@@ -32,7 +32,7 @@ public class BackendTests(ITestOutputHelper output)
     {
         var result = new BrepModeler(Settings).Regenerate(document);
         result.Diagnostics.Should().BeEmpty(name);
-        result.Bodies.Sum(b => MassProperties.Volume(b.Body)).Should().BeApproximately(volume, 1e-12 * volume);
+        result.Bodies.Sum(b => MassProperties.Volume(b.Body)).Should().BeApproximately(volume, Documents.VolumeTolerance(name) * volume);
     }
 
     [Theory]

@@ -179,6 +179,25 @@ public static class Booleans
                 // Surfaces the kernel cannot intersect, but faces that only touch (a fillet's cylinder running on into
                 // the next one's torus): where neither face crosses the other's surface inside that face, no cut.
                 if (!x.Crosses(y) && !y.Crosses(x)) break;
+                // No closed form: the curves followed where both faces' boxes overlap.
+                if (meeting.Traceable)
+                {
+                    var (lo, hi) = (x.Box, y.Box);
+                    var box = (new Point3D(Math.Max(lo.Min.X, hi.Min.X), Math.Max(lo.Min.Y, hi.Min.Y), Math.Max(lo.Min.Z, hi.Min.Z)),
+                        new Point3D(Math.Min(lo.Max.X, hi.Max.X), Math.Min(lo.Max.Y, hi.Max.Y), Math.Min(lo.Max.Z, hi.Max.Z)));
+                    // As far as both faces' boxes together reach, and as far again: a closed curve all the way round.
+                    var all = (new Point3D(Math.Min(lo.Min.X, hi.Min.X), Math.Min(lo.Min.Y, hi.Min.Y), Math.Min(lo.Min.Z, hi.Min.Z)),
+                        new Point3D(Math.Max(lo.Max.X, hi.Max.X), Math.Max(lo.Max.Y, hi.Max.Y), Math.Max(lo.Max.Z, hi.Max.Z)));
+                    var grow = all.Item2 - all.Item1;
+                    if (!ops[0].Traced.TryGetValue((x.Surface, y.Surface), out var known)) ops[0].Traced[(x.Surface, y.Surface)] = known = [];
+                    var traced = Tracing.Trace(x.Surface, y.Surface, box, (all.Item1 - grow, all.Item2 + grow), known);
+                    if (traced.Kind != Meeting.Unsupported)
+                    {
+                        foreach (var c in traced.Curves) Along(ops, fa, fb, c);
+                        break;
+                    }
+                    meeting = traced;
+                }
                 throw new BooleanFailure($"two faces meet as {meeting.Why}, which the managed kernel does not handle yet");
             case Meeting.Curves:
                 foreach (var c in meeting.Curves) Along(ops, fa, fb, c);
@@ -313,6 +332,9 @@ public static class Booleans
 
         /// <summary>A box round an edge (see <see cref="FlatFace.BoxOf(Edge)"/>), made once.</summary>
         public (Point3D Min, Point3D Max) BoxOf(EdgeId e) => boxes[e.Index] ??= FlatFace.BoxOf(Body[e]);
+
+        /// <summary>Curves traced in this boolean, by the two surfaces they lie on (the first operand's first).</summary>
+        public Dictionary<(Surface, Surface), List<Trace3>> Traced { get; } = [];
 
         public void Cut(int face, Curve3 c, double t0, double t1) => (cuts[face] ??= []).Add((c, t0, t1));
 

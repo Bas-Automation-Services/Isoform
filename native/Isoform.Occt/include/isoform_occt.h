@@ -42,6 +42,8 @@ ISO_API int iso_is_valid(IsoShape* shape, int* valid);
 // What BRepCheck finds wrong, one line per problem ("edge 3 on face 1: InvalidCurveOnSurface"), as UTF-8.
 ISO_API int iso_check_report(IsoShape* shape, char* buffer, int capacity);
 ISO_API int iso_volume(IsoShape* shape, double* volume);
+/* The volume by adaptive integration, to the relative error eps (for faces bounded by fitted B-spline images). */
+ISO_API int iso_volume_within(IsoShape* shape, double eps, double* volume);
 ISO_API int iso_write_step(IsoShape* shape, const char* utf8_path);
 // Reads a STEP file and transfers every root into one shape (with the reader's default shape healing).
 ISO_API int iso_read_step(const char* utf8_path, IsoShape** out);

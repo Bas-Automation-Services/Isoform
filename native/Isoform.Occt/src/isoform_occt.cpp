@@ -339,6 +339,16 @@ int iso_volume(IsoShape* s, double* volume)
     });
 }
 
+int iso_volume_within(IsoShape* s, double eps, double* volume)
+{
+    return guard([&] {
+        GProp_GProps props;
+        BRepGProp::VolumeProperties(s->shape, props, eps);
+        *volume = props.Mass();
+        return 0;
+    });
+}
+
 int iso_write_step(IsoShape* s, const char* path)
 {
     return guard([&] {

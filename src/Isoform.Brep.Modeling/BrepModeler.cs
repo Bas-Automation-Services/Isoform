@@ -750,7 +750,7 @@ public sealed class BrepModeler(ModelingSettings settings) : IModeler
 
     // How far a face's surface can stand from its corners: a whole circle round a cylinder's or a cone's axis is
     // that far out (a cone's radius here taken at its frame, which lies on the face), a torus's tube further.
-    static double Reach(Surface s) => s switch { Cylinder c => c.Radius, Cone k => k.Radius, Torus t => t.Major + t.Minor, Sphere o => o.Radius, _ => 0 };
+    static double Reach(Surface s) => s switch { Cylinder c => c.Radius, Cone k => k.Radius, Torus t => Math.Abs(t.Major) + t.Minor, Sphere o => o.Radius, _ => 0 };
 
     static Point3D P(double[] a) => new(a[0], a[1], a[2]);
     static Vector3D V(double[] a) => new(a[0], a[1], a[2]);

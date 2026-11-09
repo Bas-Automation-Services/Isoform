@@ -61,6 +61,16 @@ public sealed class OcctShape
         }
     }
 
+    /// <summary>
+    /// The volume by OCCT's adaptive integration, to the relative error <paramref name="eps"/>: its default Gauss orders
+    /// (<see cref="Volume"/>) are exact on closed-form faces but miss by 1e-9 on faces bounded by fitted B-spline images.
+    /// </summary>
+    public double VolumeWithin(double eps)
+    {
+        Check(iso_volume_within(Handle, eps, out var v));
+        return v;
+    }
+
     public OcctFace Face(int face)
     {
         var data = new double[8];

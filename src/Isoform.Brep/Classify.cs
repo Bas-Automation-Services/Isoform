@@ -120,6 +120,12 @@ internal sealed class FlatFace
     {
         yield return e.Curve.At(e.T0);
         yield return e.Curve.At(e.T1);
+        if (e.Curve is Trace3 trace)
+        {
+            // Its spans' control points, whose hull holds it.
+            foreach (var p in trace.Hull(e.T0, e.T1)) yield return p;
+            yield break;
+        }
         if (e.Curve is Hyperbola3 h)
         {
             var (fx, fy) = (h.Frame.XAxis, h.Frame.YAxis);

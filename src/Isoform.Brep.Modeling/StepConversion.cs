@@ -1,5 +1,6 @@
 using BasAutomation.Geometry;
 using Isoform.Step;
+using IsoBSpline = Isoform.Geometry.BSpline;
 using IsoCircle = Isoform.Geometry.Circle;
 using IsoCurve = Isoform.Geometry.Curve;
 using IsoEllipse = Isoform.Geometry.Ellipse;
@@ -30,12 +31,13 @@ public static class StepConversion
             var (body, names) = (bodies[b].Body, bodies[b].Names);
             var v0 = vertices.Count;
             foreach (var v in body.Vertices) vertices.Add(new BrepVertex(vertices.Count, v.Point));
+            var flip = SeamsForwardLast(body);
             // A pole's edge is not written (a loop through a pole closes there, as Isoform's export has it).
             var edgeOf = new int[body.Edges.Length];
             for (var i = 0; i < body.Edges.Length; i++)
             {
                 edgeOf[i] = body.Edges[i].Curve is Pole ? -1 : edges.Count;
-                if (edgeOf[i] >= 0) edges.Add(Finish(edges.Count, body.Edges[i], body, v0));
+                if (edgeOf[i] >= 0) edges.Add(Finish(edges.Count, body.Edges[i], body, v0, flip[i]));
             }
 
             BrepShell Shell(Shell shell, bool isVoid) => new([.. shell.Faces.Select(f =>
@@ -43,9 +45,10 @@ public static class StepConversion
                 var face = body[f];
                 var surface = Surface(face.Surface, faceOffset + f.Index, string.Join("+", names[f]));
                 // Each coedge, or for a pole how far it turns u.
-                var loops = face.Loops.Select(l => SeamFirst(body, l, face.SameSense, isVoid).Select(c =>
+                var loops = face.Loops.Select(l => body.CoedgesOf(l).Select(c =>
                 {
-                    if (edgeOf[body[c].Edge.Index] >= 0) return (Coedge: (BrepCoedge?)new BrepCoedge(edgeOf[body[c].Edge.Index], body[c].Forward, null), Turn: 0.0);
+                    var e = body[c].Edge.Index;
+                    if (edgeOf[e] >= 0) return (Coedge: (BrepCoedge?)new BrepCoedge(edgeOf[e], body[c].Forward != flip[e], null), Turn: 0.0);
                     var (from, to) = body.ParametersOf(c);
                     return (null, body[c].Pcurve.At(to).X - body[c].Pcurve.At(from).X);
                 }).ToList()).ToList();
@@ -58,24 +61,40 @@ public static class StepConversion
         return new Step.Brep(vertices, edges, solids);
     }
 
-    // A loop's coedges, started so that a seam's last use as written runs as the face is oriented (along the edge on a
-    // face with its surface's sense, against it otherwise): OCCT's reader gives a seam's p-curves to its uses one at a
-    // time and the last decides (ExactBrep.SeamsForwardLast turns the edge round for the same reason). The writer turns
-    // a void's loops round, so there it is the first use.
-    static IEnumerable<CoedgeId> SeamFirst(Body body, LoopId loop, bool sameSense, bool turned)
+    // The seams to turn round, so that each one's last use in its loop as written runs as the face is oriented (along
+    // the edge on a face with its surface's sense, against it otherwise): OCCT's reader gives a seam's p-curves to its
+    // uses one at a time and the last decides (ExactBrep.SeamsForwardLast does the same). One loop can hold several
+    // seams (a seam cut in pieces by a hole across it). The writer turns a void's loops round, so there it is the
+    // first use.
+    static bool[] SeamsForwardLast(Body body)
     {
-        var coedges = body.CoedgesOf(loop).ToList();
-        var seam = coedges.GroupBy(c => body[c].Edge).FirstOrDefault(g => g.Count() == 2);
-        if (seam is null) return coedges;
-        var first = coedges.FindIndex(c => body[c].Edge == seam.Key && body[c].Forward != sameSense != turned);
-        return [.. coedges.Skip(first), .. coedges.Take(first)];
+        var flip = new bool[body.Edges.Length];
+        for (var s = 0; s < body.Shells.Length; s++)
+        foreach (var f in body.Shells[s].Faces)
+        foreach (var l in body[f].Loops)
+        foreach (var seam in body.CoedgesOf(l).GroupBy(c => body[c].Edge).Where(g => g.Count() == 2))
+        {
+            var use = s > 0 ? seam.First() : seam.Last();
+            flip[seam.Key.Index] = body[use].Forward != body[f].SameSense;
+        }
+        return flip;
     }
 
-    // The edge on Isoform's curve, parametrised as Isoform's export does.
-    static BrepEdge Finish(int index, Edge e, Body body, int v0)
+    // The edge on Isoform's curve, parametrised as Isoform's export does; a seam turned round where it must be.
+    static BrepEdge Finish(int index, Edge e, Body body, int v0, bool turned = false)
     {
         var (p, q) = (body[e.Start].Point, body[e.End].Point);
         var (start, end) = (v0 + e.Start.Index, v0 + e.End.Index);
+        if (turned)
+        {
+            (p, q, start, end) = (q, p, end, start);
+            e = e.Curve switch
+            {
+                Line3 l => e with { Curve = l with { Direction = -l.Direction } },
+                Circle3 k => e with { Curve = new Circle3(RigidTransform3D.FromFrame(k.Frame.Origin, -k.Frame.ZAxis, k.Frame.XAxis), k.Radius) },
+                _ => throw new NotSupportedException($"a seam on a {e.Curve.GetType().Name}"),
+            };
+        }
         const double quarter = Math.PI / 2;
         static double Turn(double a) => a - 2 * Math.PI * Math.Floor(a / (2 * Math.PI));
         switch (e.Curve)
@@ -103,9 +122,86 @@ public static class StepConversion
                 if (hyperbola.Parameter(q) < hyperbola.Parameter(p)) hyperbola = hyperbola with { Normal = -hyperbola.Normal };
                 return new BrepEdge(index, hyperbola, start, end, hyperbola.Parameter(p), hyperbola.Parameter(q));
             }
+            case Trace3 k:
+                return new BrepEdge(index, Spline(k, e.T0, e.T1), start, end, e.T0, e.T1);
             default:
                 throw new NotSupportedException(e.Curve.GetType().Name);
         }
+    }
+
+    // A traced curve over [t0, t1] as degree-9 Bézier pieces through the curve itself at Chebyshev points, in as many
+    // equal pieces as keep them within 1e-9 of both its surfaces halfway between those points: the kernel's spline has a
+    // span every few tenths of a millimetre, which readers work through one by one. Its parameter is smooth only within
+    // those spans, so the pieces' points can run a little along the curve from the spline's at the same t: the faces'
+    // images, made from these pieces, follow them.
+    static IsoBSpline Spline(Trace3 c, double t0, double t1)
+    {
+        const int degree = 9;
+        var nodes = Enumerable.Range(0, degree + 1).Select(i => (1 - Math.Cos(Math.PI * i / degree)) / 2).ToArray();
+        var basis = new double[degree + 1, degree + 1];
+        for (var i = 0; i <= degree; i++)
+            for (var j = 0; j <= degree; j++) basis[i, j] = Bernstein(degree, j, nodes[i]);
+        for (var spans = Math.Max(1, (int)Math.Ceiling((t1 - t0) / (Math.PI / 8))); ; spans *= 2)
+        {
+            var knots = Enumerable.Range(0, spans + 1).Select(k => k == spans ? t1 : t0 + (t1 - t0) * k / spans).ToList();
+            var poles = new List<Point3D>();
+            var error = 0.0;
+            for (var k = 0; k < spans; k++)
+            {
+                var (a, b) = (knots[k], knots[k + 1]);
+                var at = nodes.Select(x => c.Exact(a + (b - a) * x)).ToArray();
+                var (x0, y0, z0) = (Solve(basis, [.. at.Select(p => p.X)]), Solve(basis, [.. at.Select(p => p.Y)]), Solve(basis, [.. at.Select(p => p.Z)]));
+                // The ends exactly the curve's, so that pieces meet.
+                (x0[0], y0[0], z0[0]) = (at[0].X, at[0].Y, at[0].Z);
+                (x0[degree], y0[degree], z0[degree]) = (at[^1].X, at[^1].Y, at[^1].Z);
+                for (var j = k == 0 ? 0 : 1; j <= degree; j++) poles.Add(new Point3D(x0[j], y0[j], z0[j]));
+                for (var i = 0; i < degree; i++)
+                {
+                    var x = (nodes[i] + nodes[i + 1]) / 2;
+                    var (px, py, pz) = (0.0, 0.0, 0.0);
+                    for (var j = 0; j <= degree; j++)
+                    {
+                        var w = Bernstein(degree, j, x);
+                        (px, py, pz) = (px + x0[j] * w, py + y0[j] * w, pz + z0[j] * w);
+                    }
+                    error = Math.Max(error, c.Gap(new Point3D(px, py, pz)));
+                }
+            }
+            if (error <= 1e-9 || spans >= 512) return new IsoBSpline(degree, poles, knots);
+        }
+    }
+
+    static double Bernstein(int n, int j, double x)
+    {
+        var binomial = 1.0;
+        for (var i = 1; i <= j; i++) binomial = binomial * (n - j + i) / i;
+        return binomial * Math.Pow(x, j) * Math.Pow(1 - x, n - j);
+    }
+
+    // Gaussian elimination with partial pivoting (a small, well-conditioned system).
+    static double[] Solve(double[,] a, double[] b)
+    {
+        var n = b.Length;
+        var m = (double[,])a.Clone();
+        var x = (double[])b.Clone();
+        for (var c = 0; c < n; c++)
+        {
+            var p = Enumerable.Range(c, n - c).MaxBy(r => Math.Abs(m[r, c]));
+            for (var k = 0; k < n; k++) (m[c, k], m[p, k]) = (m[p, k], m[c, k]);
+            (x[c], x[p]) = (x[p], x[c]);
+            for (var r = c + 1; r < n; r++)
+            {
+                var f = m[r, c] / m[c, c];
+                for (var k = c; k < n; k++) m[r, k] -= f * m[c, k];
+                x[r] -= f * x[c];
+            }
+        }
+        for (var r = n - 1; r >= 0; r--)
+        {
+            for (var k = r + 1; k < n; k++) x[r] -= m[r, k] * x[k];
+            x[r] /= m[r, r];
+        }
+        return x;
     }
 
     // A curved face's loops with every coedge's image, each starting where the one before it ended (or across a pole,
@@ -115,6 +211,7 @@ public static class StepConversion
         if (s.Kind == SurfaceKind.Plane) return [.. loops.Select((l, i) => new BrepLoop([.. l.Select(c => c.Coedge!.Value)], Outer: i == 0))];
         var images = new Dictionary<int, UvCurve>();
         (double U, double V)? anchor = null;
+        var outer = (U: 0.0, V: 0.0);
         var result = new List<BrepLoop>();
         foreach (var (loop, index) in loops.Select((l, i) => (l, i)))
         {
@@ -136,9 +233,24 @@ public static class StepConversion
                 anchor ??= c.Forward ? image.Start : image.End;
                 last = c.Forward ? image.End : image.Start;
             }
+            // A hole moved by whole turns to lie across the middle of the outer loop's span: started from its first
+            // point, one half a turn round from it can come out a turn off.
+            if (index > 0 && coedges.Count > 0)
+            {
+                var (u, v) = (Middle(coedges, p => p.U), Middle(coedges, p => p.V));
+                var (du, dv) = (SurfaceParameters.Turns(outer.U - u), SurfaceParameters.PeriodicV(s) ? SurfaceParameters.Turns(outer.V - v) : 0);
+                if (du != 0 || dv != 0) coedges = [.. coedges.Select(c => c with { Uv = c.Uv!.Shifted(du, dv) })];
+            }
+            if (index == 0) outer = (Middle(coedges, p => p.U), Middle(coedges, p => p.V));
             result.Add(new BrepLoop(coedges, Outer: index == 0));
         }
         return result;
+
+        static double Middle(List<BrepCoedge> coedges, Func<(double U, double V), double> along)
+        {
+            var values = coedges.SelectMany(c => c.Uv!.Poles).Select(along).ToList();
+            return (values.Min() + values.Max()) / 2;
+        }
     }
 
     // An image with every u that rounding left a hair off a whole turn put on it (a seam at u = 0 written at −2e-16

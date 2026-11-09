@@ -631,6 +631,76 @@ public static class Documents
             Math.PI * 25 * 8 / 6),
     ];
 
+    // Curves without a closed form, traced (experiment 24). The volumes by quadrature of smooth integrands (substituted so
+    // that no square root is left at an end), far finer than the traced curves.
+    static readonly (string Name, PartDocument Document, double Volume)[] Quartics =
+    [
+        // A shaft Ø20 along z drilled across by Ø8 along x through its axis: what goes is, at each y across the bore,
+        // a rectangle 2√(100 − y²) by 2√(16 − y²) (y = 4 sin θ).
+        ("shaft drilled across", new(
+        [
+            new Extrude("shaft", BooleanOp.New, Xy, Circle(0, 0, 10), 0, 40),
+            new Extrude("bore", BooleanOp.Cut, new SketchPlane([-20, 0, 20], [0, 1, 0], [1, 0, 0]), Circle(0, 0, 4), 0, 40),
+        ]), Math.PI * 100 * 40 - 8 * Smooth(t => Math.Sqrt(100 - 16 * Math.Sin(t) * Math.Sin(t)) * 16 * Math.Cos(t) * Math.Cos(t), 0, Math.PI / 2)),
+        // A frustum (radius 10 at the bottom, 2 at 16 up, on a cone with its apex 20 up) bored Ø4 along its axis 5 off
+        // it: what goes is the cone's height 20 − 2ρ over the bore's disc, ρ the distance from the axis (polar round the
+        // bore's centre).
+        ("frustum with an offset bore", new(
+        [
+            new Revolve("cone", BooleanOp.New, Upright(0, 0), new Profile([0, 0], [new("bottom", [10, 0]), new("side", [2, 16]), new("top", [0, 16]), new("axis", [0, 0])])),
+            new Hole("bore", [5, 0], 4),
+        ]), Math.PI * 16 * 124 / 3 - (20 * Math.PI * 4 - 2 * Smooth(phi => Smooth(r => r * Math.Sqrt(25 + r * r + 10 * r * Math.Cos(phi)), 0, 2, 8), 0, 2 * Math.PI, 16))),
+        // A ring (tube r 3 round a circle R 10) cut by the plane x = 8, along its axis: what goes is, at each distance ρ
+        // from the axis past 8, the arc 2ρ acos(8/ρ) of the tube's height 2√(9 − (ρ − 10)²) (ρ = 8 + 5 sin² θ).
+        ("ring cut along its axis", new(
+        [
+            new Revolve("ring", BooleanOp.New, Upright(0, 0), new Profile([7, 0], [new("in", [13, 0], 1), new("out", [7, 0], 1)])),
+            new PlaneCut("cut", [8, 0, 0], [1, 0, 0]),
+        ]), 2 * Math.PI * Math.PI * 10 * 9 - Smooth(t =>
+        {
+            var (sin, cos) = Math.SinCos(t);
+            var rho = 8 + 5 * sin * sin;
+            return 2 * rho * Math.Acos(8 / rho) * 2 * Math.Sqrt(9 - (rho - 10) * (rho - 10)) * 10 * sin * cos;
+        }, 0, Math.PI / 2)),
+        // The same frustum drilled Ø4 across, along x at 8 up: what goes is, over the bore's disc in (y, z), the chord
+        // 2√(R(z)² − y²) of the cone's circle R(z) = 10 − z/2 (polar round the bore's axis).
+        ("frustum drilled across", new(
+        [
+            new Revolve("cone", BooleanOp.New, Upright(0, 0), new Profile([0, 0], [new("bottom", [10, 0]), new("side", [2, 16]), new("top", [0, 16]), new("axis", [0, 0])])),
+            new Extrude("bore", BooleanOp.Cut, new SketchPlane([-15, 0, 8], [0, 1, 0], [1, 0, 0]), Circle(0, 0, 2), 0, 30),
+        ]), Math.PI * 16 * 124 / 3 - Smooth(phi => Smooth(r =>
+        {
+            var (y, z) = (r * Math.Cos(phi), 8 + r * Math.Sin(phi));
+            var radius = 10 - z / 2;
+            return r * 2 * Math.Sqrt(radius * radius - y * y);
+        }, 0, 2, 8), 0, 2 * Math.PI, 16)),
+        // The ring drilled Ø4 along its axis through the middle of its tube: what goes is the tube's height
+        // 2√(9 − (ρ − 10)²) over the bore's disc, ρ the distance from the axis (polar round the bore's centre).
+        ("ring drilled through its tube", new(
+        [
+            new Revolve("ring", BooleanOp.New, Upright(0, 0), new Profile([7, 0], [new("in", [13, 0], 1), new("out", [7, 0], 1)])),
+            new Hole("bore", [10, 0], 4),
+        ]), 2 * Math.PI * Math.PI * 10 * 9 - Smooth(phi => Smooth(r =>
+        {
+            var rho = Math.Sqrt(100 + r * r + 20 * r * Math.Cos(phi));
+            return r * 2 * Math.Sqrt(9 - (rho - 10) * (rho - 10));
+        }, 0, 2, 8), 0, 2 * Math.PI, 16)),
+    ];
+
+    // ∫ f from a to b, 20-point Gauss–Legendre on equal pieces: exact to rounding for a smooth f.
+    internal static double Smooth(Func<double, double> f, double a, double b, int pieces = 400)
+    {
+        double[] x = [0.0765265211334973, 0.2277858511416451, 0.3737060887154195, 0.5108670019508271, 0.6360536807265150, 0.7463319064601508, 0.8391169718222188, 0.9122344282513259, 0.9639719272779138, 0.9931285991850949];
+        double[] w = [0.1527533871307258, 0.1491729864726037, 0.1420961093183820, 0.1316886384491766, 0.1181945319615184, 0.1019301198172404, 0.0832767415767048, 0.0626720483341091, 0.0406014298003869, 0.0176140071391521];
+        var (h, total) = ((b - a) / pieces, 0.0);
+        for (var p = 0; p < pieces; p++)
+        {
+            var mid = a + (p + 0.5) * h;
+            for (var i = 0; i < x.Length; i++) total += w[i] * (f(mid + h / 2 * x[i]) + f(mid - h / 2 * x[i]));
+        }
+        return total * h / 2;
+    }
+
     public static IEnumerable<object[]> All =>
     [
         ["mounting plate", MountingPlate, MountingPlateVolume],
@@ -648,20 +718,30 @@ public static class Documents
         .. Shells.Select(b => new object[] { b.Name, b.Document, b.Volume }),
         .. Balls.Select(b => new object[] { b.Name, b.Document, b.Volume }),
         .. Points.Select(b => new object[] { b.Name, b.Document, b.Volume }),
+        .. Quartics.Select(b => new object[] { b.Name, b.Document, b.Volume }),
     ];
+
+    /// <summary>
+    /// How near the volume comes, relative: to rounding where every curve has a closed form; where some are traced,
+    /// as near as the traced splines (within 1e-10 mm of their curves) let it.
+    /// </summary>
+    public static double VolumeTolerance(string name) => IsTraced(name) ? 1e-10 : 1e-12;
+
+    /// <summary>Whether the document has curves without a closed form, which the kernel traces.</summary>
+    public static bool IsTraced(string name) => Quartics.Any(q => q.Name == name);
 
     /// <summary>
     /// The documents the F-rep core's own exact B-rep (<c>ExactBrep</c>) can be built for, to compare exact faces with:
     /// not the pointed cones, whose apex it cannot cut open, nor a dome cut through its pole (it sees the solid touch
-    /// itself there).
+    /// itself there), nor the traced curves, which have no closed form for it to give.
     /// </summary>
-    public static IEnumerable<object[]> ExactInTheFrep => All.Where(d => !Points.Any(p => p.Name == (string)d[0]) && (string)d[0] != "half a domed post");
+    public static IEnumerable<object[]> ExactInTheFrep => All.Where(d => !Points.Any(p => p.Name == (string)d[0]) && !Quartics.Any(q => q.Name == (string)d[0]) && (string)d[0] != "half a domed post");
 
     public static PartDocument Named(string name) => name switch
     {
         "mounting plate" => MountingPlate,
         "bracket" => Bracket,
         "two pads" => TwoPads,
-        _ => Booleans.Concat(Holes).Concat(Angles).Concat(Rounds).Concat(Cones).Concat(Copies).Concat(Sweeps).Concat(Domes).Concat(Offsets).Concat(Shells).Concat(Balls).Concat(Points).Single(b => b.Name == name).Document,
+        _ => Booleans.Concat(Holes).Concat(Angles).Concat(Rounds).Concat(Cones).Concat(Copies).Concat(Sweeps).Concat(Domes).Concat(Offsets).Concat(Shells).Concat(Balls).Concat(Points).Concat(Quartics).Single(b => b.Name == name).Document,
     };
 }

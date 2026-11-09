@@ -791,6 +791,66 @@ corners with the topology: where a seam ends on a hyperbola the file has the bra
 The survey's five hyperbola parts all build now (four agree with the F-rep core, one is among the parts it warns
 about); its clean-input disagreements are still the three known ones.
 
+## Experiment 24: curves without a closed form, traced (2026-11-09)
+
+Chosen from the candidates (7's other half, and the quartics left by the survey): two cylinders crossing at an angle,
+a cylinder across a cone or off a torus's axis, a plane at an angle to a torus's axis. None has a closed form the
+kernel could carry, so the curve is traced, as CAD kernels do with their intersection curves.
+
+- *The curve (`Trace3`):* a cubic Hermite spline through points on both surfaces (to rounding), with the curve's unit
+  tangents there, knots by chord length. A closed one runs round in t from 0 to 2π (the period every closed curve of
+  the kernel has), an open one (cut off where it leaves the region traced) over its length. Between its points it
+  stays within `Tracing.Accuracy` = 1e-10 mm of the true curve (some 1 000 to 2 000 points for a loop of a few
+  centimetres); `Exact(t)` projects back onto both surfaces where that matters (the STEP fit).
+- *Tracing (`Tracing`):* lines of a ruled surface (a plane's in two directions, a cylinder's or cone's generators,
+  192 a family) laid across the region where both faces' boxes overlap, cut with the other surface by the existing
+  ray hits, give a point on every branch wider than their spacing; each new one is followed both ways, stepping along
+  the normals' cross product and projecting back onto both surfaces (Newton on their signed distances), each step as
+  long as the spline halfway stays within the accuracy and the tangent turns less than 0.2. A branch ends where it
+  comes round to its start, or leaves twice the box of both faces. Surfaces that touch (normals parallel) are
+  refused, and so are pairs with no ruled surface (sphere or torus against a torus).
+- *In the boolean:* `Intersections.Of` still refuses these pairs, but as traceable; only where the faces cross is
+  the curve traced, and once per pair of surfaces per boolean, shared by every pair of their faces (a circle of two
+  named halves makes four face pairs of one loop). Meetings with other curves are where that curve crosses whichever
+  of the traced curve's surfaces it does not lie on (a line by the ray hits, any other by sign changes along it),
+  kept where they are on the traced curve; its p-curve (`Trace2`) is the surface's (u, v) of its points, unwrapped
+  along its knots, the derivative by least squares in the tangent plane. Mass properties integrate along it span by
+  span, where it is smooth.
+- *STEP:* the edge is written as degree-9 Bézier pieces through the curve itself (`Exact`), as many equal pieces as
+  keep them within 1e-9 of both surfaces halfway (5 to 36 for the test parts); measured against the surfaces, not the
+  spline at the same t, since the spline's parameter is smooth only within its spans. Faces' images are fitted to
+  those pieces, span by span. Written as the spline itself (1 000+ spans) OCCT took 20 to 50 s to read a part.
+- *Export fixes on the way:* a face whose seam a hole crosses has the seam in several pieces; `StepConversion` turned
+  only one seam per loop the way OCCT's reader needs (by where the loop starts), so it now turns each seam edge round
+  instead (as `ExactBrep.SeamsForwardLast` does); this also makes the turned shaft read back valid without healing. A
+  hole's images were placed within a turn of the outer loop's first point, and one half a turn round from it (a bore
+  out the far side of a cone) could come out a turn off; holes now lie across the middle of the outer loop's span.
+- *Measuring:* `BRepGProp`'s default Gauss orders, which the OCCT shim's volume used, are exact on closed-form faces
+  but miss by 1e-10 to 1e-8 on faces bounded by fitted images; its adaptive integration does the opposite (2e-11 off
+  on a stepped shaft). The shim gains `VolumeWithin(eps)`, which the read-back test uses for traced parts only.
+
+- *Barrels:* a ray against a torus of negative major radius (a barrel, since the survey) looked for its crossings
+  within R + r of the centre, less than r for a barrel and too near for its ends, and took roots on the spindle
+  torus's outer part, which is not the barrel; it now looks within |R| + r and keeps only roots on the surface. Tracing met it first (a plane
+  along a barrel's axis whose edges end on the barrel), but the kernel's own point classification casts the same rays.
+
+**Survey again:** the six quartic refusal reasons (19 parts) are gone. The `FrepOnly` seeds go from 56 refused, 46
+agreeing and 87 differing to 47, 51 and 91; the parts that now build and differ are among those the F-rep core warns
+about, or the one below; others go on to a later refusal of a kind already known (a chamfer of a split circle, a
+blended block). Two remain refused: unequal fillets meeting at a corner (common 88 and 193), whose cylinders meet
+where the curve cannot be followed (the F-rep core mitres them with a warning; candidate 1). One new clean-input
+disagreement, all the F-rep core's: a pocketed plate whose fillet dips below the pockets' floor (frep-only 177) keeps
+a strip of one pocket's floor 0.1 mm wide that the cells do not resolve, and its +x face, which the fillet (radius the
+plate's thickness) shrinks to a line, comes back 0.3 tall after an offset in the kernel (which grows the history's
+tools) but not in the F-rep core.
+
+**Tests:** five parts (a shaft drilled across, a frustum bored beside its axis and drilled across, a ring cut by a
+plane along its axis and drilled through its tube) against volumes by quadrature of smooth integrands: the kernel
+within 1e-11 relative (the documents' tolerance is 1e-10), the faces, names and neighbours the F-rep core's, and OCCT
+reading them back unhealed within 1e-12 (adaptive volume). A plate's hole crossed by a bore (the boolean test that
+had them refused) against the crossing cylinders' volume. The tracer: every point of the spline within twice the
+accuracy of both surfaces, points found on it again, p-curves that follow it on both surfaces.
+
 ## Next: candidates (to decide)
 
 What still stops the playground's examples, and what is left from before:
@@ -800,9 +860,11 @@ What still stops the playground's examples, and what is left from before:
    not square: done (experiment 21).
 3. **Arcs meeting lines at a corner** in loop fillets (a quartic, unless the radii make it a circle or ellipse). The
    survey met none.
-7. **A cone met off its axis:** the ellipse is done (experiment 22); the survey's five oblique cuts are all
-   hyperbolas (a wall parallel to a bore's axis through its drill point or countersink); a cylinder across a cone is a
-   quartic (8 in the survey).
+7. **A cone met off its axis:** done (ellipse 22, hyperbola 23, a cylinder across it traced in 24).
+8. **Traced curves, further:** the F-rep core's exact export (`ExactBrep`) has no traced curve, so parts with one
+   export through the kernel only (as `ExactStep` does where the topologies agree); pairs with no ruled surface
+   (sphere or torus against a torus) and surfaces that touch along the curve are refused; a branch smaller than the
+   seed lines' spacing (1/192 of the region) can be missed.
 4. **Inventor as a second STEP reader**, parked.
 5. **Local booleans, further:** a body edited in place, not copied whole by every boolean (experiment 20 left that
    as the cost); a grown face's flat loops spliced too, not flattened again.
@@ -819,4 +881,5 @@ What still stops the playground's examples, and what is left from before:
 
 Blended extrudes and shells (smooth F-rep blends) and lattices stay with the F-rep core.
 
-Recommended: 7, the hyperbola; 5 only if real parts reach hundreds of features.
+Recommended: 1, unequal ball corners (the survey's last quartic refusals, now that the kernel can trace the curve); 5
+only if real parts reach hundreds of features.

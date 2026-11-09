@@ -11,6 +11,11 @@ internal sealed record SurfaceMeeting(Meeting Kind, IReadOnlyList<Curve3> Curves
     public static readonly SurfaceMeeting Same = new(Meeting.Coincident, []);
     public static SurfaceMeeting Along(params Curve3[] curves) => new(Meeting.Curves, curves);
     public static SurfaceMeeting Refused(string why) => new(Meeting.Unsupported, [], why);
+
+    /// <summary>No closed form, but a curve <see cref="Tracing"/> can follow (where the faces show where to look).</summary>
+    public static SurfaceMeeting Traced(string why) => new(Meeting.Unsupported, [], why) { Traceable = true };
+
+    public bool Traceable { get; init; }
 }
 
 /// <summary>
@@ -34,17 +39,17 @@ internal static class Intersections
         (Torus t, Plane p) => PlaneTorus(p, t),
         (Cylinder c, Torus t) => CylinderTorus(c, t),
         (Torus t, Cylinder c) => CylinderTorus(c, t),
-        (Torus t, Torus u) => SameTorus(t, u) ? SurfaceMeeting.Same : SurfaceMeeting.Refused("two tori that are not the same"),
+        (Torus t, Torus u) => SameTorus(t, u) ? SurfaceMeeting.Same : SurfaceMeeting.Traced("two tori that are not the same"),
         (Plane p, Sphere o) => PlaneSphere(p, o),
         (Sphere o, Plane p) => PlaneSphere(p, o),
         (Cylinder c, Sphere o) => CylinderSphere(c, o),
         (Sphere o, Cylinder c) => CylinderSphere(c, o),
-        (Sphere o, Sphere q) => SameSphere(o, q) ? SurfaceMeeting.Same : SurfaceMeeting.Refused("two spheres that are not the same"),
+        (Sphere o, Sphere q) => SameSphere(o, q) ? SurfaceMeeting.Same : SurfaceMeeting.Traced("two spheres that are not the same"),
         (Plane p, Cone k) => PlaneCone(p, k),
         (Cone k, Plane p) => PlaneCone(p, k),
         (Cone k, _) => Coaxial(k, b),
         (_, Cone k) => Coaxial(k, a),
-        _ => SurfaceMeeting.Refused($"a {a.GetType().Name.ToLowerInvariant()} against a {b.GetType().Name.ToLowerInvariant()}"),
+        _ => SurfaceMeeting.Traced($"a {a.GetType().Name.ToLowerInvariant()} against a {b.GetType().Name.ToLowerInvariant()}"),
     };
 
     static SurfaceMeeting PlanePlane(Plane p, Plane q)
@@ -120,7 +125,7 @@ internal static class Intersections
     static SurfaceMeeting PlaneTorus(Plane p, Torus t)
     {
         var (n, a) = (p.Frame.ZAxis, t.Frame.ZAxis);
-        if (Math.Abs(n.Dot(a)) < 1 - Parallel) return SurfaceMeeting.Refused("a plane that is not square to a torus's axis");
+        if (Math.Abs(n.Dot(a)) < 1 - Parallel) return SurfaceMeeting.Traced("a plane that is not square to a torus's axis");
         var h = (p.Frame.Origin - t.Frame.Origin).Dot(a);
         return Rings(t, h, Math.Abs(h) > t.Minor + Snap ? null : Math.Sqrt(Math.Max(0, t.Minor * t.Minor - h * h)), radial: true);
     }
@@ -145,7 +150,7 @@ internal static class Intersections
     {
         var w = c.Frame.Origin - o.Frame.Origin;
         return c.Frame.ZAxis.Cross(o.Frame.ZAxis).Length >= Parallel || (w - o.Frame.ZAxis * w.Dot(o.Frame.ZAxis)).Length > Snap
-            ? SurfaceMeeting.Refused("a cylinder that is not round a sphere's axis")
+            ? SurfaceMeeting.Traced("a cylinder that is not round a sphere's axis")
             : CylinderTorus(c, AsTorus(o));
     }
 
@@ -158,7 +163,7 @@ internal static class Intersections
         var a = t.Frame.ZAxis;
         var w = c.Frame.Origin - t.Frame.Origin;
         if (c.Frame.ZAxis.Cross(a).Length >= Parallel || (w - a * w.Dot(a)).Length > Snap)
-            return SurfaceMeeting.Refused("a cylinder that is not round a torus's axis");
+            return SurfaceMeeting.Traced("a cylinder that is not round a torus's axis");
         var d = c.Radius - t.Major;
         return Rings(t, d, Math.Abs(d) > t.Minor + Snap ? null : Math.Sqrt(Math.Max(0, t.Minor * t.Minor - d * d)), radial: false);
     }
@@ -187,7 +192,7 @@ internal static class Intersections
         var (n, a) = (p.Frame.ZAxis, k.Frame.ZAxis);
         if (Math.Abs(n.Dot(a)) >= 1 - Parallel) return Ring(k, (p.Frame.Origin - k.Frame.Origin).Dot(a));
         if (Math.Abs((k.Apex - p.Frame.Origin).Dot(n)) > Snap)
-            return Section(p, k) ?? Branch(p, k) ?? SurfaceMeeting.Refused("a plane at an angle to a cone's axis, not through its apex and as steep as its side (a parabola)");
+            return Section(p, k) ?? Branch(p, k) ?? SurfaceMeeting.Traced("a plane at an angle to a cone's axis, not through its apex and as steep as its side (a parabola)");
         var (nx, ny) = (n.Dot(k.Frame.XAxis), n.Dot(k.Frame.YAxis));
         var m = Math.Sqrt(nx * nx + ny * ny);
         var phi = Math.Atan2(ny, nx);
@@ -304,7 +309,7 @@ internal static class Intersections
         };
         var w = frame.Origin - k.Frame.Origin;
         if (frame.ZAxis.Cross(a).Length >= Parallel || (w - a * w.Dot(a)).Length > Snap)
-            return SurfaceMeeting.Refused($"a {other.GetType().Name.ToLowerInvariant()} that is not round a cone's axis");
+            return SurfaceMeeting.Traced($"a {other.GetType().Name.ToLowerInvariant()} that is not round a cone's axis");
         var h0 = w.Dot(a);
         switch (other)
         {
@@ -350,7 +355,7 @@ internal static class Intersections
         var (p, q) = (new Line3(c.Frame.Origin, a), new Line3(d.Frame.Origin, b));
         var (crossing, _) = LineLine(p, q);
         if (Math.Abs(c.Radius - d.Radius) > Snap || crossing is not [var o])
-            return SurfaceMeeting.Refused("two cylinders whose axes are not parallel (they meet in a quartic)");
+            return SurfaceMeeting.Traced("two cylinders whose axes are not parallel (they meet in a quartic)");
         var curves = new List<Curve3>();
         foreach (var n in new[] { (a - b).Normalized(), (a + b).Normalized() })
         {
@@ -364,6 +369,8 @@ internal static class Intersections
     /// <summary>Where two curves meet, or that they are the same curve (<c>Overlap</c>, no points).</summary>
     public static (List<Point3D> Points, bool Overlap) Meet(Curve3 a, Curve3 b) => (a, b) switch
     {
+        (Trace3 t, _) => Tracing.Meet(t, b),
+        (_, Trace3 t) => Tracing.Meet(t, a),
         (Line3 p, Line3 q) => LineLine(p, q),
         (Line3 p, Circle3 c) => (LineCircle(p, c), false),
         (Circle3 c, Line3 p) => (LineCircle(p, c), false),
@@ -536,6 +543,7 @@ internal static class Intersections
         Circle3 k => Math.Atan2((p - k.Frame.Origin).Dot(k.Frame.YAxis), (p - k.Frame.Origin).Dot(k.Frame.XAxis)),
         Ellipse3 e => Math.Atan2((p - e.Frame.Origin).Dot(e.Frame.YAxis) / e.Minor, (p - e.Frame.Origin).Dot(e.Frame.XAxis) / e.Major),
         Hyperbola3 h => Math.Asinh((p - h.Frame.Origin).Dot(h.Frame.YAxis) / h.Minor),
+        Trace3 t => t.Nearest(p).T,
         Pole => 0,
         _ => throw new NotSupportedException(c.GetType().Name),
     };
@@ -554,7 +562,7 @@ internal static class Intersections
             // A point just before t0 wraps to near t0 + 2π.
             if (t > t1 && (p - c.At(t0)).Length <= Snap) t = t0;
         }
-        var slack = c switch { Circle3 k => Snap / k.Radius, Ellipse3 e => Snap / e.Minor, Hyperbola3 h => Snap / h.Minor, _ => Snap };
+        var slack = c switch { Circle3 k => Snap / k.Radius, Ellipse3 e => Snap / e.Minor, Hyperbola3 h => Snap / h.Minor, Trace3 r => Snap / r.Speed, _ => Snap };
         if (t < t0 - slack || t > t1 + slack) return null;
         t = Math.Clamp(t, t0, t1);
         return (c.At(t) - p).Length <= Snap ? t : null;
@@ -563,6 +571,7 @@ internal static class Intersections
     /// <summary>The distance from a point to the piece of a curve over [t0, t1] (t0 &lt; t1).</summary>
     public static double Distance(Curve3 c, double t0, double t1, Point3D p)
     {
+        if (c is Trace3 trace) return trace.Nearest(p, t0, t1).Distance;
         if (c is Ellipse3 or Hyperbola3) return Nearest(c, t0, t1, p);
         var t = Param(c, p);
         if (c.Period is not null) t = t0 + Wrap(t - t0);
@@ -676,7 +685,9 @@ internal static class Intersections
     }
 
     // The ray against the torus's quartic (|q|² + R² − r²)² = 4R²(qx² + qy²), within the sphere round it: sign changes
-    // on a fine grid, refined by bisection. A ray grazing the tube finds no root there, as for any tangent ray.
+    // on a fine grid, refined by bisection. A ray grazing the tube finds no root there, as for any tangent ray. The
+    // quartic holds the whole spindle torus where the tube crosses the axis; a barrel (R &lt; 0) is only its inner part,
+    // so roots off the surface itself are left out.
     static IEnumerable<double> TorusHits(Point3D p, Vector3D d, Torus t)
     {
         var (q0, dq) = (t.Frame.ApplyInverse(p), t.Frame.ApplyInverse(d));
@@ -687,7 +698,7 @@ internal static class Intersections
             var k = x * x + y * y + z * z + big * big - small * small;
             return k * k - 4 * big * big * (x * x + y * y);
         }
-        var reach = big + small;
+        var reach = Math.Abs(big) + small;
         var (b, c) = (q0.X * dq.X + q0.Y * dq.Y + q0.Z * dq.Z, q0.X * q0.X + q0.Y * q0.Y + q0.Z * q0.Z - reach * reach);
         var disc = b * b - c;
         if (disc < 0) yield break;
@@ -706,7 +717,8 @@ internal static class Intersections
                     var mid = (lo + hi) / 2;
                     if (F(mid) * previous > 0) lo = mid; else hi = mid;
                 }
-                yield return (lo + hi) / 2;
+                var root = (lo + hi) / 2;
+                if (big >= 0 || Math.Abs(Uv.Side(t, p + d * root)) <= Snap) yield return root;
             }
             previous = value;
         }
@@ -918,6 +930,8 @@ internal static class Uv
             case (Sphere o, Pole q):
                 // A pole: v at plus or minus a quarter turn, u runs with t.
                 return new Line2(new Point2D(0, Math.Sign((q.Point - o.Frame.Origin).Dot(o.Frame.ZAxis)) * Math.PI / 2), new Vector2D(1, 0));
+            case (_, Trace3 t):
+                return Trace2.Of(s, t);
             case (Cone k, Pole):
                 // The apex: v where the radius is zero, u runs with t.
                 return new Line2(new Point2D(0, -k.Radius / k.Slope), new Vector2D(1, 0));
@@ -945,6 +959,7 @@ internal static class Uv
     public static Curve2 Shift(Curve2 pc, double du, double dv = 0) => du == 0 && dv == 0 ? pc : dv != 0 ? pc switch
     {
         Line2 l => l with { Origin = new Point2D(l.Origin.X + du, l.Origin.Y + dv) },
+        Trace2 t => t with { DU = t.DU + du, DV = t.DV + dv },
         _ => throw new NotSupportedException($"a {pc.GetType().Name} moved in v"),
     } : pc switch
     {
@@ -955,6 +970,7 @@ internal static class Uv
         SphereCircle2 c => c with { U0 = c.U0 + du },
         ConeSection2 c => c with { U0 = c.U0 + du },
         Hyperbola2 h => h with { Center = new Point2D(h.Center.X + du, h.Center.Y) },
+        Trace2 t => t with { DU = t.DU + du },
         _ => throw new NotSupportedException(pc.GetType().Name),
     };
 
@@ -968,6 +984,7 @@ internal static class Uv
         SphereCircle2 c => c with { Phase = c.Phase + c.Sense * beta, Sense = c.Sense * (int)Math.Round(alpha) },
         ConeSection2 c => c with { Phase = c.Phase + c.Sense * beta, Sense = c.Sense * (int)Math.Round(alpha) },
         Hyperbola2 h => h with { Offset = h.Offset + h.Sense * beta, Sense = h.Sense * (int)Math.Round(alpha) },
+        Trace2 t => t with { Offset = t.Offset + t.Sense * beta, Sense = t.Sense * (int)Math.Round(alpha) },
         _ => throw new NotSupportedException(pc.GetType().Name),
     };
 
@@ -988,6 +1005,7 @@ internal static class Uv
                 return new CurveSegment(pc, from, to, k);
             case SphereCircle2 when s is Sphere:
             case ConeSection2 when s is Cone:
+            case Trace2:
                 return new CurveSegment(pc, from, to, k, kv);
             default:
                 throw new NotSupportedException($"a {pc.GetType().Name} on a {s.GetType().Name}");

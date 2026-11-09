@@ -204,13 +204,18 @@ public class BooleanTests(ITestOutputHelper output)
     }
 
     [Fact]
-    public void Cylinders_at_an_angle_are_refused()
+    public void Cylinders_at_an_angle_meet_in_traced_curves()
     {
+        // A plate with a Ø8 hole, drilled Ø4 along x through the hole's axis: the bore's volume in the plate less what
+        // it shares with the hole (two cylinders crossing square, radii 2 and 4: 8 ∫ √(4 − y²) √(16 − y²) dy over [0, 2]).
         var across = RigidTransform3D.FromFrame(new Point3D(-1, 30, 5), new Vector3D(1, 0, 0), new Vector3D(0, 1, 0));
         var holed = Prism(Rectangle(0, 0, 100, 60), 0, 10, null, Circle(50, 30, 4));
         var r = Booleans.Subtract(holed, Prism(Circle(0, 0, 2), 0, 102, across));
-        r.Bodies.Should().BeNull();
-        r.Problem.Should().Contain("not parallel");
+        r.Problem.Should().BeNull();
+        var shared = 8 * Documents.Smooth(t => 4 * Math.Cos(t) * Math.Cos(t) * Math.Sqrt(16 - 4 * Math.Sin(t) * Math.Sin(t)), 0, Math.PI / 2);
+        var volume = 60_000 - 160 * Math.PI - (400 * Math.PI - shared);
+        MassProperties.Volume(r.Bodies![0].Body).Should().BeApproximately(volume, 1e-10 * volume);
+        r.Bodies[0].Body.Edges.Should().Contain(e => e.Curve is Trace3);
     }
 
     [Theory]

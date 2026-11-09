@@ -118,7 +118,7 @@ public static class MassProperties
                     }
                     return Arc(to) - Arc(from);
                 default:
-                    return Quadrature.Integrate(t => pc.At(t).X * pc.Derivative(t).Y, from, to, body[body[c].Edge].Curve.Period is null ? null : Quadrature.AngleStep);
+                    return Quadrature.Along(body[body[c].Edge].Curve, t => pc.At(t).X * pc.Derivative(t).Y, from, to);
             }
         });
 
@@ -136,14 +136,13 @@ public static class MassProperties
         {
             var pc = body[c].Pcurve;
             var (from, to) = body.ParametersOf(c);
-            double? tStep = body[body[c].Edge].Curve.Period is null ? null : Quadrature.AngleStep;
-            total += Quadrature.Integrate(t =>
+            total += Quadrature.Along(body[body[c].Edge].Curve, t =>
             {
                 var dv = pc.Derivative(t).Y;
                 if (dv == 0) return 0;
                 var uv = pc.At(t);
                 return (integral(uv.X, uv.Y) - integral(uStar, uv.Y)) * dv;
-            }, from, to, tStep);
+            }, from, to);
         }
         return total;
     }
@@ -158,6 +157,18 @@ static class Quadrature
     // 24 points: exact for polynomials up to degree 47; for trigonometric integrands over π/4 the error is far
     // below rounding.
     static readonly (double[] X, double[] W) Rule = Legendre(24);
+
+    /// <summary>
+    /// ∫ f from a to b along a curve's parameter: on a closed curve in pieces of <see cref="AngleStep"/>, on a traced
+    /// one span by span (smooth within each, its second derivative jumping between them).
+    /// </summary>
+    public static double Along(Curve3 curve, Func<double, double> f, double a, double b)
+    {
+        if (curve is not Trace3 trace) return Integrate(f, a, b, curve.Period is null ? null : AngleStep);
+        var (lo, hi) = a <= b ? (a, b) : (b, a);
+        var total = trace.Spans(lo, hi).Sum(s => Integrate(f, s.From, s.To));
+        return a <= b ? total : -total;
+    }
 
     /// <summary>
     /// ∫ f from a to b (signed: negative when b &lt; a), in pieces no longer than <paramref name="step"/> (one piece

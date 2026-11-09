@@ -29,10 +29,12 @@ public class BrepKernelStepTests(ITestOutputHelper output)
         StepWriter.Write(step, path, name);
         var (shape, raw) = (OcctShape.ReadStep(path), OcctShape.ReadStep(path, heal: false));
         File.Delete(path);
+        // OCCT's default Gauss orders miss by 1e-9 on faces bounded by fitted B-spline images (traced curves).
+        double Volume(OcctShape s) => Documents.IsTraced(name) ? s.VolumeWithin(1e-13) : s.Volume;
 
         output.WriteLine($"kernel: {t.Faces.Count}F {t.Edges.Count}E {t.Vertices.Count}V {t.BodyCount}B");
         output.WriteLine($"OCCT:   {StepExportTests.Counts(shape)}, valid {shape.IsValid}, {shape.SolidCount} solid(s), max tolerance {shape.MaxTolerance:E2}");
-        output.WriteLine($"unhealed: valid {raw.IsValid}, max tolerance {raw.MaxTolerance:E2}, relative volume error {Math.Abs(raw.Volume - volume) / volume:E2}");
+        output.WriteLine($"unhealed: valid {raw.IsValid}, max tolerance {raw.MaxTolerance:E2}, relative volume error {Math.Abs(Volume(raw) - volume) / volume:E2}");
         if (!raw.IsValid) output.WriteLine(raw.CheckReport);
 
         shape.IsValid.Should().BeTrue();
@@ -44,12 +46,13 @@ public class BrepKernelStepTests(ITestOutputHelper output)
         var file = StepExportTests.Counts(step);
         StepExportTests.Counts(shape).Should().Be(file);
         if (!pole) (file.Faces, file.Vertices).Should().Be((t.Faces.Count, t.Vertices.Count));
-        shape.Volume.Should().BeApproximately(volume, volume * 1e-11);
+        var tolerance = Math.Max(1e-11, Documents.VolumeTolerance(name));
+        Volume(shape).Should().BeApproximately(volume, volume * tolerance);
         // A sphere cap holding a pole needs the reader's healing, as Isoform's own export does (StepExportTests): the
         // degenerate edge there is one STEP cannot say.
         if (pole) return;
         raw.IsValid.Should().BeTrue("the file needs no healing");
         raw.MaxTolerance.Should().BeLessThanOrEqualTo(1e-7);
-        raw.Volume.Should().BeApproximately(volume, volume * 1e-11);
+        Volume(raw).Should().BeApproximately(volume, volume * tolerance);
     }
 }
